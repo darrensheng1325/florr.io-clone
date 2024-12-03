@@ -24,10 +24,6 @@ class P2PGame:
         # Main game loop
         running = True
         while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-            
             # Handle local player movement
             position = self.game.handle_local_input()
             if position:
