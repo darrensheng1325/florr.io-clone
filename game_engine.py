@@ -12,6 +12,29 @@ class Item:
         self.damage = damage
         self.radius = radius
 
+class DroppedItem:
+    def __init__(self, item, x, y):
+        self.item = item
+        self.x = x
+        self.y = y
+        self.radius = 15
+        self.bob_offset = 0
+        self.bob_speed = 0.1
+
+    def update(self):
+        # Make the item bob up and down
+        self.bob_offset = math.sin(pygame.time.get_ticks() * self.bob_speed) * 5
+
+    def render(self, surface):
+        # Draw the item with a slight glow effect
+        glow_radius = self.radius + 5
+        pygame.draw.circle(surface, (255, 255, 255, 128), 
+                         (int(self.x), int(self.y + self.bob_offset)), 
+                         glow_radius)
+        pygame.draw.circle(surface, self.item.color, 
+                         (int(self.x), int(self.y + self.bob_offset)), 
+                         self.radius)
+
 class GameEngine:
     def __init__(self, width=1600, height=1200, initial_monster_count=5):
         pygame.init()
@@ -49,6 +72,9 @@ class GameEngine:
         
         # Show inventory flag
         self.show_inventory = False
+        
+        # Add dropped items list
+        self.dropped_items = []
         
     def create_monster(self):
         x = random.randint(50, self.world_width - 50)
@@ -180,6 +206,29 @@ class GameEngine:
         for y in range(0, self.world_height, grid_size):
             pygame.draw.line(world_surface, (200, 200, 200), (0, y), (self.world_width, y))
         
+        # Render dropped items
+        for dropped_item in self.dropped_items:
+            dropped_item.update()
+            dropped_item.render(world_surface)
+        
+        # Check for item pickup
+        if self.my_id in self.players:
+            player = self.players[self.my_id]
+            items_to_remove = []
+            
+            for dropped_item in self.dropped_items:
+                distance = math.sqrt((player['x'] - dropped_item.x)**2 + 
+                                   (player['y'] - dropped_item.y)**2)
+                if distance < 30:  # Pickup radius
+                    if len(player['inventory']) < 16:  # Check inventory space
+                        player['inventory'].append(dropped_item.item)
+                        items_to_remove.append(dropped_item)
+                        print(f"Picked up: {dropped_item.item.name}")
+            
+            # Remove collected items
+            for item in items_to_remove:
+                self.dropped_items.remove(item)
+        
         for player_id, player in self.players.items():
             # Draw player
             world_surface.blit(
@@ -204,29 +253,28 @@ class GameEngine:
                     if self.check_collision(petal_x, petal_y, monster, petal=petal):
                         if monster.take_damage(petal.damage):
                             monsters_to_remove.append(monster)
-                            # Drop item when monster dies
+                            # Create dropped item at monster's position
                             dropped_item = random.choice(self.possible_items)
-                            if len(self.players[self.my_id]['inventory']) < 16:  # Inventory limit
-                                print(f"Got new item: {dropped_item.name}")  # Debug print
-                                self.players[self.my_id]['inventory'].append(dropped_item)
+                            self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
                 
                 # Remove dead monsters and add new ones
                 for monster in monsters_to_remove:
                     self.monsters.remove(monster)
                     self.monsters.append(self.create_monster())
+        
+        # Update and render monsters
+        for monster in self.monsters:
+            monster.update(self.players)  # Update monster AI
+            monster.render(world_surface)
             
-            # Move monsters and check collision with player
-            for monster in self.monsters:
-                monster.move_towards(player['x'], player['y'])
+            # Check collision with player
+            if self.my_id in self.players:
+                player = self.players[self.my_id]
                 if self.check_collision(player['x'], player['y'], monster, player_collision=True):
-                    player['health'] -= 1  # Damage to player
+                    player['health'] -= 1
                     if player['health'] <= 0:
                         self.show_death_screen()
                         return
-        
-        # Render monsters
-        for monster in self.monsters:
-            monster.render(world_surface)
         
         # Determine camera position
         player = self.players[self.my_id]
@@ -376,6 +424,9 @@ class Monster:
         self.radius = 20  # Size of the monster
         self.color = (0, 0, 255)  # Blue color for monsters
         self.speed = 2  # Speed of the monster
+        self.target_x = x  # Add target position
+        self.target_y = y
+        self.update_delay = 0  # Add delay for target updates
 
     def take_damage(self, amount):
         self.health -= amount
@@ -383,17 +434,43 @@ class Monster:
             return True  # Monster is dead
         return False
 
-    def move_towards(self, target_x, target_y):
-        # Calculate direction vector
-        dx = target_x - self.x
-        dy = target_y - self.y
-        distance = math.sqrt(dx ** 2 + dy ** 2)
+    def find_nearest_player(self, players):
+        nearest_distance = float('inf')
+        nearest_x = self.x
+        nearest_y = self.y
+        
+        for player in players.values():
+            dx = player['x'] - self.x
+            dy = player['y'] - self.y
+            distance = math.sqrt(dx * dx + dy * dy)
+            
+            if distance < nearest_distance:
+                nearest_distance = distance
+                nearest_x = player['x']
+                nearest_y = player['y']
+        
+        return nearest_x, nearest_y
+
+    def update(self, players):
+        # Update target every 30 frames
+        self.update_delay += 1
+        if self.update_delay >= 30:
+            self.target_x, self.target_y = self.find_nearest_player(players)
+            self.update_delay = 0
+        
+        # Move towards target
+        dx = self.target_x - self.x
+        dy = self.target_y - self.y
+        distance = math.sqrt(dx * dx + dy * dy)
+        
         if distance > 0:
-            dx /= distance
-            dy /= distance
-        # Move monster towards the target
-        self.x += dx * self.speed
-        self.y += dy * self.speed
+            # Add some randomness to movement
+            dx = dx / distance + random.uniform(-0.2, 0.2)
+            dy = dy / distance + random.uniform(-0.2, 0.2)
+            
+            # Move monster towards the target
+            self.x += dx * self.speed
+            self.y += dy * self.speed
 
     def render(self, screen):
         pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
