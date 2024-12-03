@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="30" height="30" version="1.1" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
+ <g transform="translate(0 0)">
+  <!-- Body (oval from top view) -->
+  <ellipse cx="15" cy="15" rx="10" ry="15" fill="#808080" stroke="#404040"/>
+  
+  <!-- Ears -->
+  <circle cx="11" cy="7" r="3" fill="#pink"/>
+  <circle cx="19" cy="7" r="3" fill="#pink"/>
+  
+  <!-- Eyes -->
+  <circle cx="13" cy="11" r="1" fill="#000"/>
+  <circle cx="17" cy="11" r="1" fill="#000"/>
+  
+  <!-- Nose -->
+  <circle cx="15" cy="5" r="1.5" fill="#000"/>
+  
+  <!-- Tail -->
+  <path d="M 15,28 C 18,32 22,30 24,28" fill="none" stroke="#808080" stroke-width="2"/>
+ </g>
+</svg> 

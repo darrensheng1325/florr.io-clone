@@ -70,6 +70,13 @@ class GameEngine:
         self.players = {}
         self.my_id = None
         
+        # Define monster types and their spawn weights
+        self.monster_types = {
+            Mouse: 50,    # 50% chance for mouse
+            Cat: 30,      # 30% chance for cat
+            Tank: 20      # 20% chance for tank
+        }
+        
         # Monster properties
         self.monsters = [self.create_monster() for _ in range(initial_monster_count)]
         self.max_monsters = initial_monster_count
@@ -80,10 +87,27 @@ class GameEngine:
         # Add dropped items list
         self.dropped_items = []
         
+        # Load monster images
+        self.mouse_image = pygame.image.load("mouse.svg")
+        self.mouse_image = pygame.transform.scale(self.mouse_image, (30, 30))
+        self.cat_image = pygame.image.load("cat.svg")
+        self.cat_image = pygame.transform.scale(self.cat_image, (50, 50))
+        
+        # Pass images to monster classes
+        Mouse.image = self.mouse_image
+        Cat.image = self.cat_image
+        
     def create_monster(self):
         x = random.randint(50, self.world_width - 50)
         y = random.randint(50, self.world_height - 50)
-        return Monster(x, y)
+        
+        # Choose monster type based on weights
+        monster_type = random.choices(
+            list(self.monster_types.keys()),
+            weights=list(self.monster_types.values())
+        )[0]
+        
+        return monster_type(x, y)
         
     def add_player(self, player_id, x=800, y=600):
         self.players[player_id] = {
@@ -311,7 +335,7 @@ class GameEngine:
             if self.my_id in self.players:
                 player = self.players[self.my_id]
                 if self.check_collision(player['x'], player['y'], monster, player_collision=True):
-                    player['health'] -= 1
+                    player['health'] -= monster.damage
                     if player['health'] <= 0:
                         self.show_death_screen()
                         return
@@ -478,16 +502,12 @@ class Monster:
         self.target_x = x
         self.target_y = y
         self.update_delay = 0
-        self.knockback_resistance = 0.95  # Add knockback resistance (0-1)
-        self.velocity_x = 0  # Add velocity for smooth knockback
+        self.knockback_resistance = 0.95
+        self.velocity_x = 0
         self.velocity_y = 0
-        
-    def take_damage(self, amount):
-        self.health -= amount
-        if self.health <= 0:
-            return True  # Monster is dead
-        return False
-
+        self.damage = 1
+        self.name = "Basic Monster"
+    
     def find_nearest_player(self, players):
         nearest_distance = float('inf')
         nearest_x = self.x
@@ -533,9 +553,31 @@ class Monster:
                 self.x += dx * self.speed
                 self.y += dy * self.speed
 
+    def take_damage(self, amount):
+        self.health -= amount
+        if self.health <= 0:
+            return True  # Monster is dead
+        return False
+
+    def get_angle_to_target(self):
+        # Calculate angle to target for rotation
+        dx = self.target_x - self.x
+        dy = self.target_y - self.y
+        return math.degrees(math.atan2(dy, dx))
+
     def render(self, screen):
-        pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
-        # Draw monster health bar
+        if hasattr(self, 'image') and self.image:
+            # Rotate image to face target
+            angle = self.get_angle_to_target()
+            rotated_image = pygame.transform.rotate(self.image, -angle - 90)  # -90 to adjust for image orientation
+            screen.blit(rotated_image, 
+                       (int(self.x - rotated_image.get_width()/2), 
+                        int(self.y - rotated_image.get_height()/2)))
+        else:
+            # Fallback to circle if no image
+            pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        
+        # Draw health bar
         self.draw_health_bar(screen, self.x, self.y - 30, self.health, 100)
 
     def draw_health_bar(self, surface, x, y, current_health, max_health):
@@ -546,3 +588,61 @@ class Monster:
         fill_rect = pygame.Rect(x - bar_length // 2, y, fill, bar_height)
         pygame.draw.rect(surface, (255, 0, 0), fill_rect)
         pygame.draw.rect(surface, (255, 255, 255), outline_rect, 1)
+
+class Mouse(Monster):
+    image = None  # Will be set by GameEngine
+    
+    def __init__(self, x, y):
+        super().__init__(x, y, health=50)
+        self.color = (150, 150, 150)
+        self.speed = 3
+        self.radius = 15
+        self.knockback_resistance = 0.98
+        self.damage = 0.5
+        self.name = "Mouse"
+    
+    def render(self, screen):
+        if self.image:
+            angle = self.get_angle_to_target()
+            rotated_image = pygame.transform.rotate(self.image, -angle - 90)
+            screen.blit(rotated_image, 
+                       (int(self.x - rotated_image.get_width()/2), 
+                        int(self.y - rotated_image.get_height()/2)))
+        else:
+            super().render(screen)
+        self.draw_health_bar(screen, self.x, self.y - 30, self.health, 50)
+
+class Cat(Monster):
+    image = None  # Will be set by GameEngine
+    
+    def __init__(self, x, y):
+        super().__init__(x, y, health=150)
+        self.color = (255, 140, 0)
+        self.speed = 2.5
+        self.radius = 25
+        self.knockback_resistance = 0.9
+        self.damage = 2
+        self.name = "Cat"
+        self.dash_cooldown = 0
+        self.is_dashing = False
+    
+    def render(self, screen):
+        if self.image:
+            angle = self.get_angle_to_target()
+            rotated_image = pygame.transform.rotate(self.image, -angle + 90)
+            screen.blit(rotated_image, 
+                       (int(self.x - rotated_image.get_width()/2), 
+                        int(self.y - rotated_image.get_height()/2)))
+        else:
+            super().render(screen)
+        self.draw_health_bar(screen, self.x, self.y - 40, self.health, 150)
+
+class Tank(Monster):
+    def __init__(self, x, y):
+        super().__init__(x, y, health=300)
+        self.color = (139, 69, 19)
+        self.speed = 1
+        self.radius = 30
+        self.knockback_resistance = 0.8
+        self.damage = 3
+        self.name = "Tank"

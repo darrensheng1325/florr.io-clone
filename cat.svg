@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="50" height="50" version="1.1" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+ <g transform="translate(0 0)">
+  <!-- Body (oval from top view) -->
+  <ellipse cx="25" cy="25" rx="15" ry="23" fill="#ff8c00" stroke="#804600"/>
+  
+  <!-- Pointed ears -->
+  <path d="M 15,35 L 20,30 L 10,30 Z" fill="#ff8c00" stroke="#804600"/>
+  <path d="M 35,35 L 40,30 L 30,30 Z" fill="#ff8c00" stroke="#804600"/>
+  
+  <!-- Eyes -->
+  <ellipse cx="20" cy="32" rx="2" ry="1" fill="#000"/>
+  <ellipse cx="30" cy="32" rx="2" ry="1" fill="#000"/>
+  
+  <!-- Nose -->
+  <path d="M 25,35 L 26,33 L 24,33 Z" fill="#000"/>
+  
+  <!-- Whiskers -->
+  <path d="M 15,33 L 5,33" stroke="#804600" stroke-width="1"/>
+  <path d="M 15,34 L 5,35" stroke="#804600" stroke-width="1"/>
+  <path d="M 35,33 L 45,33" stroke="#804600" stroke-width="1"/>
+  <path d="M 35,34 L 45,35" stroke="#804600" stroke-width="1"/>
+  
+  <!-- Tail -->
+  <path d="M 25,5 C 30,0 35,2 38,5" fill="none" stroke="#ff8c00" stroke-width="3"/>
+ </g>
+</svg> 
