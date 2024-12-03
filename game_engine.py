@@ -11,6 +11,10 @@ class Item:
         self.color = color
         self.damage = damage
         self.radius = radius
+        
+    def __eq__(self, other):
+        # Items are equal if they have the same name
+        return isinstance(other, Item) and self.name == other.name
 
 class DroppedItem:
     def __init__(self, item, x, y):
@@ -88,8 +92,8 @@ class GameEngine:
             'image': self.player_image,
             'angle': 0,
             'health': 100,
-            'inventory': [],  # List to store collected items
-            'equipped_petals': [self.possible_items[0] for _ in range(self.petal_count)]  # Start with basic petals
+            'inventory': {},  # Changed to dictionary for stacking: {item_name: count}
+            'equipped_petals': [self.possible_items[0] for _ in range(self.petal_count)]
         }
     
     def update_player(self, player_id, x, y):
@@ -136,12 +140,19 @@ class GameEngine:
             }
         return None
     
+    def add_item_to_inventory(self, player, item):
+        if item.name in player['inventory']:
+            player['inventory'][item.name]['count'] += 1
+        else:
+            player['inventory'][item.name] = {'item': item, 'count': 1}
+    
     def render_inventory(self):
         inventory_surface = pygame.Surface((600, 400))
         inventory_surface.fill((50, 50, 50))
         
         player = self.players[self.my_id]
         font = pygame.font.Font(None, 36)
+        small_font = pygame.font.Font(None, 24)
         
         # Draw equipped petals
         text = font.render("Equipped Petals:", True, (255, 255, 255))
@@ -154,24 +165,43 @@ class GameEngine:
         text = font.render("Inventory:", True, (255, 255, 255))
         inventory_surface.blit(text, (20, 120))
         
-        for i, item in enumerate(player['inventory']):
+        # Render stacked items
+        i = 0
+        for item_name, item_data in player['inventory'].items():
             pos_x = 50 + (i % 8) * 60
             pos_y = 170 + (i // 8) * 60
-            pygame.draw.circle(inventory_surface, item.color, (pos_x, pos_y), 20)
+            
+            # Draw item
+            pygame.draw.circle(inventory_surface, item_data['item'].color, (pos_x, pos_y), 20)
+            
+            # Draw count
+            count_text = small_font.render(str(item_data['count']), True, (255, 255, 255))
+            count_rect = count_text.get_rect(bottomright=(pos_x + 25, pos_y + 25))
+            inventory_surface.blit(count_text, count_rect)
             
             # Handle clicking on inventory items
             mouse_pos = pygame.mouse.get_pos()
-            inventory_pos = (mouse_pos[0] - 100, mouse_pos[1] - 100)  # Adjust for inventory position
+            inventory_pos = (mouse_pos[0] - 100, mouse_pos[1] - 100)
             
             if pygame.mouse.get_pressed()[0]:  # Left click
                 distance = math.sqrt((inventory_pos[0] - pos_x)**2 + (inventory_pos[1] - pos_y)**2)
                 if distance < 20:
-                    # Ask which slot to equip to
                     slot = self.show_slot_selection()
                     if slot is not None:
-                        player['equipped_petals'][slot] = item
-                        player['inventory'].remove(item)
+                        # Equip item and decrease stack count
+                        old_petal = player['equipped_petals'][slot]
+                        player['equipped_petals'][slot] = item_data['item']
+                        item_data['count'] -= 1
+                        
+                        # Remove item from inventory if count reaches 0
+                        if item_data['count'] <= 0:
+                            del player['inventory'][item_name]
+                        
+                        # Add old petal back to inventory
+                        self.add_item_to_inventory(player, old_petal)
+                        
                         self.show_inventory = False
+            i += 1
         
         self.screen.blit(inventory_surface, (100, 100))
         pygame.display.flip()
@@ -220,10 +250,9 @@ class GameEngine:
                 distance = math.sqrt((player['x'] - dropped_item.x)**2 + 
                                    (player['y'] - dropped_item.y)**2)
                 if distance < 30:  # Pickup radius
-                    if len(player['inventory']) < 16:  # Check inventory space
-                        player['inventory'].append(dropped_item.item)
-                        items_to_remove.append(dropped_item)
-                        print(f"Picked up: {dropped_item.item.name}")
+                    self.add_item_to_inventory(player, dropped_item.item)
+                    items_to_remove.append(dropped_item)
+                    print(f"Picked up: {dropped_item.item.name}")
             
             # Remove collected items
             for item in items_to_remove:
@@ -251,9 +280,20 @@ class GameEngine:
                 monsters_to_remove = []
                 for monster in self.monsters:
                     if self.check_collision(petal_x, petal_y, monster, petal=petal):
+                        # Calculate knockback direction
+                        dx = monster.x - player['x']
+                        dy = monster.y - player['y']
+                        distance = math.sqrt(dx * dx + dy * dy)
+                        if distance > 0:
+                            # Normalize direction and apply knockback
+                            knockback_strength = 20  # Adjust this value to change knockback force
+                            dx = (dx / distance) * knockback_strength
+                            dy = (dy / distance) * knockback_strength
+                            monster.x += dx
+                            monster.y += dy
+                        
                         if monster.take_damage(petal.damage):
                             monsters_to_remove.append(monster)
-                            # Create dropped item at monster's position
                             dropped_item = random.choice(self.possible_items)
                             self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
                 
@@ -358,19 +398,30 @@ class GameEngine:
         inventory_pos = (mouse_pos[0] - 100, mouse_pos[1] - 100)
         
         # Check clicks on inventory items
-        for i, item in enumerate(player['inventory']):
+        i = 0
+        for item_name, item_data in player['inventory'].items():
             pos_x = 50 + (i % 8) * 60
             pos_y = 170 + (i // 8) * 60
             distance = math.sqrt((inventory_pos[0] - pos_x)**2 + (inventory_pos[1] - pos_y)**2)
+            
             if distance < 20:
                 slot = self.show_slot_selection()
                 if slot is not None:
-                    # Swap items instead of removing
+                    # Swap items
                     old_petal = player['equipped_petals'][slot]
-                    player['equipped_petals'][slot] = item
-                    player['inventory'][i] = old_petal
+                    player['equipped_petals'][slot] = item_data['item']  # Use the item object from item_data
+                    
+                    # Add old petal back to inventory
+                    self.add_item_to_inventory(player, old_petal)
+                    
+                    # Decrease count of equipped item
+                    item_data['count'] -= 1
+                    if item_data['count'] <= 0:
+                        del player['inventory'][item_name]
+                    
                     self.show_inventory = False
                     return
+            i += 1
 
     def render_ui_overlay(self):
         # Create UI bar at the bottom
@@ -421,13 +472,16 @@ class Monster:
         self.x = x
         self.y = y
         self.health = health
-        self.radius = 20  # Size of the monster
-        self.color = (0, 0, 255)  # Blue color for monsters
-        self.speed = 2  # Speed of the monster
-        self.target_x = x  # Add target position
+        self.radius = 20
+        self.color = (0, 0, 255)
+        self.speed = 2
+        self.target_x = x
         self.target_y = y
-        self.update_delay = 0  # Add delay for target updates
-
+        self.update_delay = 0
+        self.knockback_resistance = 0.95  # Add knockback resistance (0-1)
+        self.velocity_x = 0  # Add velocity for smooth knockback
+        self.velocity_y = 0
+        
     def take_damage(self, amount):
         self.health -= amount
         if self.health <= 0:
@@ -452,25 +506,32 @@ class Monster:
         return nearest_x, nearest_y
 
     def update(self, players):
-        # Update target every 30 frames
+        # Apply velocity (for knockback)
+        self.x += self.velocity_x
+        self.y += self.velocity_y
+        
+        # Reduce velocity (friction)
+        self.velocity_x *= self.knockback_resistance
+        self.velocity_y *= self.knockback_resistance
+        
+        # Normal movement
         self.update_delay += 1
         if self.update_delay >= 30:
             self.target_x, self.target_y = self.find_nearest_player(players)
             self.update_delay = 0
         
-        # Move towards target
-        dx = self.target_x - self.x
-        dy = self.target_y - self.y
-        distance = math.sqrt(dx * dx + dy * dy)
-        
-        if distance > 0:
-            # Add some randomness to movement
-            dx = dx / distance + random.uniform(-0.2, 0.2)
-            dy = dy / distance + random.uniform(-0.2, 0.2)
+        # Only move if knockback is small
+        if abs(self.velocity_x) < 0.5 and abs(self.velocity_y) < 0.5:
+            dx = self.target_x - self.x
+            dy = self.target_y - self.y
+            distance = math.sqrt(dx * dx + dy * dy)
             
-            # Move monster towards the target
-            self.x += dx * self.speed
-            self.y += dy * self.speed
+            if distance > 0:
+                dx = dx / distance + random.uniform(-0.2, 0.2)
+                dy = dy / distance + random.uniform(-0.2, 0.2)
+                
+                self.x += dx * self.speed
+                self.y += dy * self.speed
 
     def render(self, screen):
         pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
