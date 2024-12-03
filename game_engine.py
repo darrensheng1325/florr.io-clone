@@ -6,15 +6,25 @@ import sys
 import time
 
 class Item:
-    def __init__(self, name, color, damage=10, radius=10):
+    def __init__(self, name, color, damage=10, radius=10, max_health=100):
         self.name = name
         self.color = color
         self.damage = damage
         self.radius = radius
+        self.max_health = max_health
+        self.health = max_health  # Current health
         
     def __eq__(self, other):
-        # Items are equal if they have the same name
         return isinstance(other, Item) and self.name == other.name
+    
+    def take_damage(self, amount):
+        self.health -= amount
+        if self.health <= 0:
+            return True  # Petal is broken
+        return False
+    
+    def reset_health(self):
+        self.health = self.max_health
 
 class DroppedItem:
     def __init__(self, item, x, y):
@@ -54,12 +64,12 @@ class GameEngine:
         self.player_image = pygame.image.load("player.png")
         self.player_image = pygame.transform.scale(self.player_image, (40, 40))
         
-        # Define possible items
+        # Define possible items with different health values
         self.possible_items = [
-            Item("Basic Petal", (255, 255, 255), 10, 10),
-            Item("Fire Petal", (255, 100, 0), 15, 12),
-            Item("Ice Petal", (0, 255, 255), 12, 11),
-            Item("Poison Petal", (0, 255, 0), 8, 13)
+            Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100),
+            Item("Fire Petal", (255, 100, 0), damage=15, radius=12, max_health=80),
+            Item("Ice Petal", (0, 255, 255), damage=12, radius=11, max_health=120),
+            Item("Poison Petal", (0, 255, 0), damage=8, radius=13, max_health=150)
         ]
         
         # Petal properties
@@ -72,14 +82,21 @@ class GameEngine:
         
         # Define monster types and their spawn weights
         self.monster_types = {
-            Mouse: 50,    # 50% chance for mouse
-            Cat: 30,      # 30% chance for cat
-            Tank: 20      # 20% chance for tank
+            Mouse: 30,    # 30% chance for mouse
+            Cat: 20,      # 20% chance for cat
+            Tank: 10,     # 10% chance for tank
+            Bush: 20,     # 20% chance for bush
+            Tree: 10,     # 10% chance for tree
+            Rock: 10      # 10% chance for rock
         }
         
-        # Monster properties
-        self.monsters = [self.create_monster() for _ in range(initial_monster_count)]
-        self.max_monsters = initial_monster_count
+        # Create initial monsters
+        self.monsters = []
+        # First add static monsters in good positions
+        self.add_static_monsters(initial_monster_count * 2)  # More static monsters
+        # Then add mobile monsters
+        for _ in range(initial_monster_count):
+            self.monsters.append(self.create_mobile_monster())
         
         # Show inventory flag
         self.show_inventory = False
@@ -97,27 +114,60 @@ class GameEngine:
         Mouse.image = self.mouse_image
         Cat.image = self.cat_image
         
-    def create_monster(self):
+        # Add broken petal tracking
+        self.broken_petals = {}  # {slot_index: (item, respawn_time)}
+        self.petal_respawn_time = 2  # Seconds until respawn
+    
+    def add_static_monsters(self, count):
+        static_types = [Bush, Tree, Rock]
+        min_distance = 100  # Minimum distance between static monsters
+        
+        for _ in range(count):
+            placed = False
+            attempts = 0
+            while not placed and attempts < 50:
+                x = random.randint(50, self.world_width - 50)
+                y = random.randint(50, self.world_height - 50)
+                
+                # Check distance from other monsters
+                too_close = False
+                for monster in self.monsters:
+                    dx = monster.x - x
+                    dy = monster.y - y
+                    if math.sqrt(dx*dx + dy*dy) < min_distance:
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    monster_type = random.choice(static_types)
+                    self.monsters.append(monster_type(x, y))
+                    placed = True
+                
+                attempts += 1
+    
+    def create_mobile_monster(self):
         x = random.randint(50, self.world_width - 50)
         y = random.randint(50, self.world_height - 50)
         
-        # Choose monster type based on weights
-        monster_type = random.choices(
-            list(self.monster_types.keys()),
-            weights=list(self.monster_types.values())
-        )[0]
+        # Choose from mobile monsters only
+        mobile_types = {k: v for k, v in self.monster_types.items() 
+                       if k in [Mouse, Cat, Tank]}
+        weights = list(mobile_types.values())
+        monster_type = random.choices(list(mobile_types.keys()), weights=weights)[0]
         
         return monster_type(x, y)
         
     def add_player(self, player_id, x=800, y=600):
+        # When adding items to equipped_petals, create new instances
+        basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
         self.players[player_id] = {
             'x': x,
             'y': y,
             'image': self.player_image,
             'angle': 0,
             'health': 100,
-            'inventory': {},  # Changed to dictionary for stacking: {item_name: count}
-            'equipped_petals': [self.possible_items[0] for _ in range(self.petal_count)]
+            'inventory': {},
+            'equipped_petals': [basic_petal for _ in range(self.petal_count)]
         }
     
     def update_player(self, player_id, x, y):
@@ -165,10 +215,12 @@ class GameEngine:
         return None
     
     def add_item_to_inventory(self, player, item):
+        # Create a new instance of the item to ensure separate health values
+        new_item = Item(item.name, item.color, item.damage, item.radius, item.max_health)
         if item.name in player['inventory']:
             player['inventory'][item.name]['count'] += 1
         else:
-            player['inventory'][item.name] = {'item': item, 'count': 1}
+            player['inventory'][item.name] = {'item': new_item, 'count': 1}
     
     def render_inventory(self):
         inventory_surface = pygame.Surface((600, 400))
@@ -249,6 +301,23 @@ class GameEngine:
             self.render_inventory()
             return
             
+        current_time = time.time()
+        
+        # Check for petal respawns
+        slots_to_respawn = []
+        for slot, (item, respawn_time) in self.broken_petals.items():
+            if current_time >= respawn_time:
+                # Create a fresh copy of the item with full health
+                new_petal = Item(item.name, item.color, item.damage, 
+                               item.radius, item.max_health)
+                new_petal.reset_health()  # Ensure full health
+                self.players[self.my_id]['equipped_petals'][slot] = new_petal
+                slots_to_respawn.append(slot)
+        
+        # Remove respawned petals from broken_petals
+        for slot in slots_to_respawn:
+            del self.broken_petals[slot]
+        
         # Create a surface for the world
         world_surface = pygame.Surface((self.world_width, self.world_height))
         world_surface.fill((0, 128, 0))  # Green background
@@ -295,26 +364,43 @@ class GameEngine:
             # Update and draw petals
             player['angle'] += self.orbit_speed
             for i, petal in enumerate(player['equipped_petals']):
+                if petal is None:  # Skip if petal is broken
+                    continue
+                
                 angle = player['angle'] + (2 * math.pi / self.petal_count) * i
                 petal_x = player['x'] + self.orbit_radius * math.cos(angle)
                 petal_y = player['y'] + self.orbit_radius * math.sin(angle)
-                pygame.draw.circle(world_surface, petal.color, (int(petal_x), int(petal_y)), petal.radius)
+                
+                # Draw petal without health indicator
+                pygame.draw.circle(world_surface, petal.color, 
+                                  (int(petal_x), int(petal_y)), petal.radius)
                 
                 # Check collision with monsters
                 monsters_to_remove = []
                 for monster in self.monsters:
                     if self.check_collision(petal_x, petal_y, monster, petal=petal):
-                        # Calculate knockback direction
-                        dx = monster.x - player['x']
-                        dy = monster.y - player['y']
-                        distance = math.sqrt(dx * dx + dy * dy)
-                        if distance > 0:
-                            # Normalize direction and apply knockback
-                            knockback_strength = 20  # Adjust this value to change knockback force
-                            dx = (dx / distance) * knockback_strength
-                            dy = (dy / distance) * knockback_strength
-                            monster.x += dx
-                            monster.y += dy
+                        # Petal takes damage when hitting monsters
+                        if petal.take_damage(5):  # Petal damage amount
+                            # Store broken petal info and schedule respawn
+                            self.broken_petals[i] = (
+                                Item(petal.name, petal.color, petal.damage, 
+                                     petal.radius, petal.max_health),
+                                current_time + self.petal_respawn_time
+                            )
+                            player['equipped_petals'][i] = None  # Remove broken petal
+                            break
+                        
+                        # Monster takes damage and knockback
+                        if not hasattr(monster, 'is_static') or not monster.is_static:
+                            dx = monster.x - player['x']
+                            dy = monster.y - player['y']
+                            distance = math.sqrt(dx * dx + dy * dy)
+                            if distance > 0:
+                                knockback_strength = 20
+                                dx = (dx / distance) * knockback_strength
+                                dy = (dy / distance) * knockback_strength
+                                monster.x += dx
+                                monster.y += dy
                         
                         if monster.take_damage(petal.damage):
                             monsters_to_remove.append(monster)
@@ -324,7 +410,16 @@ class GameEngine:
                 # Remove dead monsters and add new ones
                 for monster in monsters_to_remove:
                     self.monsters.remove(monster)
-                    self.monsters.append(self.create_monster())
+                    if hasattr(monster, 'is_static') and monster.is_static:
+                        # Create a new static monster of the same type
+                        new_monster = type(monster)(
+                            random.randint(50, self.world_width - 50),
+                            random.randint(50, self.world_height - 50)
+                        )
+                        self.monsters.append(new_monster)
+                    else:
+                        # Create a new mobile monster
+                        self.monsters.append(self.create_mobile_monster())
         
         # Update and render monsters
         for monster in self.monsters:
@@ -468,24 +563,67 @@ class GameEngine:
         if self.my_id in self.players:
             player = self.players[self.my_id]
             petal_size = 40
-            start_x = 100  # Start after the inventory button
+            start_x = 100
             
-            # Draw slots background
+            current_time = time.time()
+            
             for i in range(self.petal_count):
+                # Draw slot background
                 slot_rect = pygame.Rect(start_x + i * (petal_size + 10), 20, petal_size, petal_size)
-                pygame.draw.rect(ui_surface, (30, 30, 30), slot_rect)  # Darker background for slots
+                pygame.draw.rect(ui_surface, (30, 30, 30), slot_rect)
                 
-                # Draw petal
                 petal = player['equipped_petals'][i]
-                pygame.draw.circle(ui_surface, petal.color, 
-                                 (start_x + i * (petal_size + 10) + petal_size // 2, 
-                                  20 + petal_size // 2), 
-                                 petal_size // 2 - 2)
+                if petal is not None:
+                    # Draw base petal
+                    pygame.draw.circle(ui_surface, petal.color, 
+                                     (start_x + i * (petal_size + 10) + petal_size // 2, 
+                                      20 + petal_size // 2), 
+                                     petal_size // 2 - 2)
+                    
+                    # Draw gray overlay based on health
+                    if petal.health < petal.max_health:
+                        health_ratio = 1 - (petal.health / petal.max_health)
+                        overlay_height = int(petal_size * health_ratio)
+                        if overlay_height > 0:
+                            overlay_rect = pygame.Rect(
+                                start_x + i * (petal_size + 10),
+                                20,
+                                petal_size,
+                                overlay_height
+                            )
+                            overlay_surface = pygame.Surface((petal_size, overlay_height))
+                            overlay_surface.fill((128, 128, 128))
+                            overlay_surface.set_alpha(180)
+                            ui_surface.blit(overlay_surface, overlay_rect)
+                
+                elif i in self.broken_petals:
+                    # Draw respawn timer for broken petals
+                    _, respawn_time = self.broken_petals[i]
+                    remaining = max(0, respawn_time - current_time)
+                    timer_text = font.render(f"{remaining:.1f}", True, (200, 200, 200))
+                    timer_rect = timer_text.get_rect(center=(
+                        start_x + i * (petal_size + 10) + petal_size // 2,
+                        20 + petal_size // 2
+                    ))
+                    ui_surface.blit(timer_text, timer_rect)
+                else:
+                    # Draw X for empty slots
+                    broken_color = (100, 100, 100)
+                    center_x = start_x + i * (petal_size + 10) + petal_size // 2
+                    center_y = 20 + petal_size // 2
+                    pygame.draw.line(ui_surface, broken_color, 
+                                   (center_x - 10, center_y - 10),
+                                   (center_x + 10, center_y + 10), 2)
+                    pygame.draw.line(ui_surface, broken_color,
+                                   (center_x + 10, center_y - 10),
+                                   (center_x - 10, center_y + 10), 2)
                 
                 # Draw slot number
                 slot_num = font.render(str(i + 1), True, (200, 200, 200))
-                num_rect = slot_num.get_rect(bottomright=(start_x + i * (petal_size + 10) + petal_size - 2, 
-                                                          20 + petal_size - 2))
+                num_rect = slot_num.get_rect(bottomright=(
+                    start_x + i * (petal_size + 10) + petal_size - 2, 
+                    20 + petal_size - 2
+                ))
                 ui_surface.blit(slot_num, num_rect)
         
         # Blit UI surface at the bottom of the screen
@@ -646,3 +784,69 @@ class Tank(Monster):
         self.knockback_resistance = 0.8
         self.damage = 3
         self.name = "Tank"
+
+class StaticMonster(Monster):
+    def __init__(self, x, y, health=100):
+        super().__init__(x, y, health)
+        self.is_static = True
+        self.damage = 0  # Static monsters don't deal damage
+    
+    def update(self, players):
+        # Static monsters don't move or track players
+        pass
+
+class Bush(StaticMonster):
+    def __init__(self, x, y):
+        super().__init__(x, y, health=500)
+        self.color = (34, 139, 34)  # Forest green
+        self.radius = 25
+        self.name = "Bush"
+        self.knockback_resistance = 1.0  # Can't be knocked back
+    
+    def render(self, screen):
+        # Draw main bush body
+        pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        # Draw darker patches for depth
+        pygame.draw.circle(screen, (20, 100, 20), 
+                         (int(self.x - 5), int(self.y - 5)), self.radius // 2)
+        pygame.draw.circle(screen, (20, 100, 20), 
+                         (int(self.x + 5), int(self.y + 5)), self.radius // 2)
+        self.draw_health_bar(screen, self.x, self.y - 35, self.health, 500)
+
+class Tree(StaticMonster):
+    def __init__(self, x, y):
+        super().__init__(x, y, health=1000)
+        self.color = (101, 67, 33)  # Brown
+        self.radius = 35
+        self.name = "Tree"
+        self.knockback_resistance = 1.0
+    
+    def render(self, screen):
+        # Draw trunk
+        pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius // 2)
+        # Draw foliage
+        pygame.draw.circle(screen, (46, 139, 87), 
+                         (int(self.x), int(self.y - self.radius//2)), self.radius)
+        pygame.draw.circle(screen, (46, 139, 87), 
+                         (int(self.x - self.radius//2), int(self.y - self.radius//4)), self.radius)
+        pygame.draw.circle(screen, (46, 139, 87), 
+                         (int(self.x + self.radius//2), int(self.y - self.radius//4)), self.radius)
+        self.draw_health_bar(screen, self.x, self.y - 45, self.health, 1000)
+
+class Rock(StaticMonster):
+    def __init__(self, x, y):
+        super().__init__(x, y, health=2000)
+        self.color = (169, 169, 169)  # Gray
+        self.radius = 30
+        self.name = "Rock"
+        self.knockback_resistance = 1.0
+    
+    def render(self, screen):
+        # Draw main rock body
+        pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        # Draw highlights and shadows for 3D effect
+        pygame.draw.circle(screen, (200, 200, 200), 
+                         (int(self.x - 5), int(self.y - 5)), self.radius // 2)
+        pygame.draw.circle(screen, (130, 130, 130), 
+                         (int(self.x + 5), int(self.y + 5)), self.radius // 2)
+        self.draw_health_bar(screen, self.x, self.y - 40, self.health, 2000)
