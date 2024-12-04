@@ -50,7 +50,7 @@ class DroppedItem:
                          self.radius)
 
 class GameEngine:
-    def __init__(self, width=1600, height=1200, initial_monster_count=5):
+    def __init__(self, width=4800, height=1200, initial_monster_count=5):
         pygame.init()
         self.screen = pygame.display.set_mode((800, 600))
         pygame.display.set_caption("P2P Game")
@@ -89,6 +89,52 @@ class GameEngine:
             Tree: 10,     # 10% chance for tree
             Rock: 10      # 10% chance for rock
         }
+        
+        # Add zone definitions (side by side, each 1600 pixels wide)
+        self.zones = {
+            'easy': {
+                'color': (144, 238, 144),  # Light green
+                'rect': pygame.Rect(0, 0, width // 3, height),  # Now 1600 pixels wide
+                'monster_multiplier': 1.0,  # Base difficulty
+                'spawn_weights': {
+                    Mouse: 50,    # More mice in easy zone
+                    Cat: 10,
+                    Tank: 5,
+                    Bush: 20,
+                    Tree: 10,
+                    Rock: 5
+                }
+            },
+            'medium': {
+                'color': (255, 218, 185),  # Peach
+                'rect': pygame.Rect(width // 3, 0, width // 3, height),  # Now 1600 pixels wide
+                'monster_multiplier': 1.5,  # 50% stronger
+                'spawn_weights': {
+                    Mouse: 30,
+                    Cat: 30,
+                    Tank: 15,
+                    Bush: 10,
+                    Tree: 10,
+                    Rock: 5
+                }
+            },
+            'hard': {
+                'color': (255, 160, 122),  # Salmon
+                'rect': pygame.Rect(2 * width // 3, 0, width // 3, height),  # Now 1600 pixels wide
+                'monster_multiplier': 2.0,  # Double strength
+                'spawn_weights': {
+                    Mouse: 20,
+                    Cat: 35,
+                    Tank: 25,
+                    Bush: 5,
+                    Tree: 10,
+                    Rock: 5
+                }
+            }
+        }
+        
+        # Increase initial monster count to account for larger map
+        initial_monster_count *= 3  # Triple the monsters for triple the width
         
         # Create initial monsters
         self.monsters = []
@@ -139,8 +185,23 @@ class GameEngine:
                         break
                 
                 if not too_close:
-                    monster_type = random.choice(static_types)
-                    self.monsters.append(monster_type(x, y))
+                    # Get zone and its weights
+                    zone = self.get_zone(x, y)
+                    zone_data = self.zones[zone]
+                    
+                    # Filter weights for static monsters only
+                    static_weights = {k: v for k, v in zone_data['spawn_weights'].items() 
+                                   if k in static_types}
+                    weights = list(static_weights.values())
+                    monster_type = random.choices(list(static_weights.keys()), 
+                                               weights=weights)[0]
+                    
+                    # Create monster with zone multiplier
+                    monster = monster_type(x, y)
+                    multiplier = zone_data['monster_multiplier']
+                    monster.health *= multiplier
+                    
+                    self.monsters.append(monster)
                     placed = True
                 
                 attempts += 1
@@ -149,14 +210,31 @@ class GameEngine:
         x = random.randint(50, self.world_width - 50)
         y = random.randint(50, self.world_height - 50)
         
-        # Choose from mobile monsters only
-        mobile_types = {k: v for k, v in self.monster_types.items() 
-                       if k in [Mouse, Cat, Tank]}
-        weights = list(mobile_types.values())
-        monster_type = random.choices(list(mobile_types.keys()), weights=weights)[0]
+        # Determine which zone the monster is in
+        zone = self.get_zone(x, y)
+        zone_data = self.zones[zone]
         
-        return monster_type(x, y)
+        # Choose monster type based on zone weights
+        weights = list(zone_data['spawn_weights'].values())
+        monster_type = random.choices(
+            list(zone_data['spawn_weights'].keys()),
+            weights=weights
+        )[0]
         
+        # Create monster and adjust its stats based on zone
+        monster = monster_type(x, y)
+        multiplier = zone_data['monster_multiplier']
+        monster.health *= multiplier
+        monster.damage *= multiplier
+        
+        return monster
+
+    def get_zone(self, x, y):
+        for zone_name, zone_data in self.zones.items():
+            if zone_data['rect'].collidepoint(x, y):
+                return zone_name
+        return 'easy'  # Default to easy zone
+    
     def add_player(self, player_id, x=800, y=600):
         # When adding items to equipped_petals, create new instances
         basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
@@ -320,14 +398,21 @@ class GameEngine:
         
         # Create a surface for the world
         world_surface = pygame.Surface((self.world_width, self.world_height))
-        world_surface.fill((0, 128, 0))  # Green background
         
+        # Draw zones
+        for zone_name, zone_data in self.zones.items():
+            pygame.draw.rect(world_surface, zone_data['color'], zone_data['rect'])
+        
+        # Draw zone borders
+        for zone_data in self.zones.values():
+            pygame.draw.rect(world_surface, (100, 100, 100), zone_data['rect'], 2)
+
         # Draw grid
         grid_size = 50
         for x in range(0, self.world_width, grid_size):
-            pygame.draw.line(world_surface, (200, 200, 200), (x, 0), (x, self.world_height))
+            pygame.draw.line(world_surface, (200, 200, 200, 128), (x, 0), (x, self.world_height))
         for y in range(0, self.world_height, grid_size):
-            pygame.draw.line(world_surface, (200, 200, 200), (0, y), (self.world_width, y))
+            pygame.draw.line(world_surface, (200, 200, 200, 128), (0, y), (self.world_width, y))
         
         # Render dropped items
         for dropped_item in self.dropped_items:
