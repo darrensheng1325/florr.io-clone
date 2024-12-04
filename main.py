@@ -1,9 +1,8 @@
-import pygame
+from main_game_engine import GameEngine
+import sys
 import socket
 import threading
 import json
-import sys
-from game_engine import GameEngine
 
 class P2PGame:
     def __init__(self, host, port):
