@@ -4,6 +4,9 @@ import math
 import random
 import sys
 import time
+from cairosvg import svg2png
+from io import BytesIO
+from PIL import Image
 
 class Item:
     def __init__(self, name, color, damage=10, radius=10, max_health=100):
@@ -61,8 +64,7 @@ class GameEngine:
         self.world_height = height
         
         # Load player image
-        self.player_image = pygame.image.load("player.png")
-        self.player_image = pygame.transform.scale(self.player_image, (40, 40))
+        self.player_image = self.load_svg_image("player.svg")
         
         # Define possible items with different health values
         self.possible_items = [
@@ -713,6 +715,24 @@ class GameEngine:
         
         # Blit UI surface at the bottom of the screen
         self.screen.blit(ui_surface, (0, 520))  # 520 = 600 - ui_height
+
+    def load_svg_image(self, svg_path):
+        # Read SVG file
+        with open(svg_path, 'rb') as f:
+            svg_data = f.read()
+        
+        # Convert SVG to PNG in memory
+        png_data = svg2png(svg_data)
+        
+        # Convert to PIL Image
+        image = Image.open(BytesIO(png_data))
+        
+        # Resize to 32x32
+        image = image.resize((32, 32), Image.Resampling.LANCZOS)
+        
+        # Convert to pygame surface
+        return pygame.image.fromstring(
+            image.tobytes(), image.size, image.mode).convert_alpha()
 
 class Monster:
     def __init__(self, x, y, health=100):

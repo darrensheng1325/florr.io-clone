@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 130 130" style="">
+  <g id="flower" transform="matrix(1, 0, 0, 1, 4, 4)" style="">
+    <title>flower</title>
+    <ellipse style="fill: rgb(255, 238, 132); stroke-width: 7px; stroke: rgb(255, 224, 29);" cx="60" cy="60" rx="60" ry="60"/>
+    <g style="transform-origin: 63.546px 61.091px;" transform="matrix(0.98304, 0, 0, 1.019242, -3.545064, 0.903005)">
+      <title>face</title>
+      <g transform="matrix(1, 0, 0, 1, -1.767354, 1.70458)">
+        <g>
+          <title>Right eye</title>
+          <ellipse style="stroke: rgb(0, 0, 0);" cx="50" cy="45" rx="5" ry="10"/>
+        </g>
+        <g>
+          <title>Left eye</title>
+          <ellipse style="stroke: rgb(0, 0, 0);" cx="80" cy="45" rx="5" ry="10"/>
+        </g>
+      </g>
+      <path style="fill: rgb(216, 216, 216); stroke: rgb(0, 0, 0); fill-opacity: 0; stroke-width: 3px;" d="M 46.767 77.564 C 51.325 81.92 64.57 89.409 79.017 78.124">
+        <title>mouth</title>
+      </path>
+      <g transform="matrix(1, 0, 0, 1, 0.418385, -3.14771)">
+        <ellipse style="stroke-width: 0px; stroke: rgb(255, 255, 255); fill: rgb(255, 255, 255);" cx="80" cy="49.157" rx="2.509" ry="5.525"/>
+        <ellipse style="stroke-width: 0px; stroke: rgb(255, 255, 255); fill: rgb(255, 255, 255);" cx="50" cy="49.024" rx="2.509" ry="5.525"/>
+      </g>
+    </g>
+  </g>
+</svg>

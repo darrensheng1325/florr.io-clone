@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <g>
+    <ellipse style="fill: rgb(255, 238, 132); stroke-width: 7px; stroke: rgb(255, 224, 29);" cx="60" cy="60" rx="60" ry="60"/>
+    <g>
+      <ellipse style="stroke: rgb(0, 0, 0);" cx="80" cy="45" rx="5" ry="10"/>
+      <ellipse style="stroke: rgb(0, 0, 0);" cx="40" cy="45" rx="5" ry="10"/>
+      <path style="fill: rgb(216, 216, 216); stroke: rgb(0, 0, 0); fill-opacity: 0; stroke-width: 3px;" d="M 41.064 79.459 C 46.549 84.701 62.489 93.714 79.874 80.133"/>
+    </g>
+  </g>
+</svg>
