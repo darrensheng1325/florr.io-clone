@@ -36,8 +36,12 @@ class GameEngine:
         
         # Petal properties
         self.petal_count = 5
-        self.orbit_radius = 50
+        self.base_orbit_radius = 50  # Default radius
+        self.max_orbit_radius = 100  # Maximum expansion
+        self.min_orbit_radius = 30   # Minimum contraction
+        self.orbit_radius = self.base_orbit_radius  # Current radius
         self.orbit_speed = 0.05
+        self.radius_change_speed = 3  # Speed of expansion/contraction
         
         self.players = {}
         self.my_id = None
@@ -128,6 +132,11 @@ class GameEngine:
         
         # Add database
         self.db = GameDatabase()
+        
+        # Add after other initializations
+        self.max_health = 100
+        self.heal_rate = 5  # Health points per second
+        self.last_heal_time = time.time()
     
     def add_static_monsters(self, count):
         static_types = [Bush, Tree, Rock]
@@ -228,6 +237,23 @@ class GameEngine:
             self.players[player_id]['y'] = y
     
     def handle_local_input(self):
+        current_time = time.time()
+        
+        # Handle healing
+        if self.my_id in self.players:
+            player = self.players[self.my_id]
+            if player['health'] < self.max_health:
+                # Calculate time since last heal
+                time_diff = current_time - self.last_heal_time
+                
+                # Calculate heal amount based on time passed
+                heal_amount = self.heal_rate * time_diff
+                
+                # Apply healing
+                player['health'] = min(player['health'] + heal_amount, self.max_health)
+            
+            self.last_heal_time = current_time
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -239,6 +265,10 @@ class GameEngine:
                     self.show_inventory = not self.show_inventory
                 elif self.show_inventory:
                     self.handle_inventory_click(event.pos)
+                elif event.button == 1:  # Left click
+                    self.orbit_radius = min(self.orbit_radius + self.radius_change_speed, self.max_orbit_radius)
+                elif event.button == 3:  # Right click
+                    self.orbit_radius = max(self.orbit_radius - self.radius_change_speed, self.min_orbit_radius)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_i:
                     self.show_inventory = not self.show_inventory
@@ -254,6 +284,18 @@ class GameEngine:
                     self.players[self.my_id]['y'] -= 5
                 if keys[pygame.K_DOWN]:
                     self.players[self.my_id]['y'] += 5
+                    
+                # Handle petal expansion/contraction with space/shift
+                if keys[pygame.K_SPACE]:
+                    self.orbit_radius = min(self.orbit_radius + self.radius_change_speed, self.max_orbit_radius)
+                elif keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
+                    self.orbit_radius = max(self.orbit_radius - self.radius_change_speed, self.min_orbit_radius)
+                else:
+                    # Gradually return to base radius when no key is pressed
+                    if self.orbit_radius > self.base_orbit_radius:
+                        self.orbit_radius = max(self.orbit_radius - self.radius_change_speed/2, self.base_orbit_radius)
+                    elif self.orbit_radius < self.base_orbit_radius:
+                        self.orbit_radius = min(self.orbit_radius + self.radius_change_speed/2, self.base_orbit_radius)
                 
         if self.my_id in self.players:
             # Save player state periodically
@@ -271,6 +313,9 @@ class GameEngine:
         return None
     
     def add_item_to_inventory(self, player, item):
+        if item is None:
+            return
+        
         # Create a new instance of the item to ensure separate health values
         new_item = Item(item.name, item.color, item.damage, item.radius, item.max_health)
         if item.name in player['inventory']:
@@ -571,7 +616,10 @@ class GameEngine:
     def reset_game(self):
         # Reset player health and position to the easy zone
         player = self.players[self.my_id]
-        player['health'] = 100
+        player['health'] = self.max_health  # Use max_health instead of hardcoded 100
+        
+        # Reset heal timer
+        self.last_heal_time = time.time()
 
         # Respawn in the easy zone
         easy_zone = self.zones['easy']['rect']
@@ -605,10 +653,11 @@ class GameEngine:
                 if slot is not None:
                     # Swap items
                     old_petal = player['equipped_petals'][slot]
-                    player['equipped_petals'][slot] = item_data['item']  # Use the item object from item_data
+                    player['equipped_petals'][slot] = item_data['item']
                     
-                    # Add old petal back to inventory
-                    self.add_item_to_inventory(player, old_petal)
+                    # Add old petal back to inventory only if it exists
+                    if old_petal is not None:
+                        self.add_item_to_inventory(player, old_petal)
                     
                     # Decrease count of equipped item
                     item_data['count'] -= 1
