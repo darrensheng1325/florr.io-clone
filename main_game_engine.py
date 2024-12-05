@@ -18,12 +18,23 @@ class GameEngine:
         pygame.display.set_caption("P2P Game")
         self.clock = pygame.time.Clock()
         
+        # Add game state
+        self.game_state = "loading"  # Can be "loading", "title", or "playing"
+        self.loading_progress = 0  # Track loading progress
+        
+        # Show initial loading screen
+        self.render_loading_screen("Initializing game...")
+        
         # World dimensions
         self.world_width = width
         self.world_height = height
+        self.loading_progress = 10
+        self.render_loading_screen("Loading images...")
         
         # Load player image
         self.player_image = self.load_svg_image("player.svg")
+        self.loading_progress = 20
+        self.render_loading_screen("Creating items...")
         
         # Define possible items with different health values
         self.possible_items = [
@@ -105,10 +116,18 @@ class GameEngine:
         # Create initial monsters
         self.monsters = []
         # First add static monsters in good positions
+        self.loading_progress = 40
+        self.render_loading_screen("Creating static monsters...")
         self.add_static_monsters(initial_monster_count * 2)  # More static monsters
+        
+        self.loading_progress = 60
+        self.render_loading_screen("Creating mobile monsters...")
         # Then add mobile monsters
         for _ in range(initial_monster_count):
             self.monsters.append(self.create_mobile_monster())
+        
+        self.loading_progress = 80
+        self.render_loading_screen("Loading monster images...")
         
         # Show inventory flag
         self.show_inventory = False
@@ -130,6 +149,9 @@ class GameEngine:
         self.broken_petals = {}  # {slot_index: (item, respawn_time)}
         self.petal_respawn_time = 2  # Seconds until respawn
         
+        self.loading_progress = 90
+        self.render_loading_screen("Initializing database...")
+        
         # Add database
         self.db = GameDatabase()
         
@@ -137,6 +159,51 @@ class GameEngine:
         self.max_health = 100
         self.heal_rate = 5  # Health points per second
         self.last_heal_time = time.time()
+        
+        self.loading_progress = 100
+        self.render_loading_screen("Done!")
+        pygame.time.wait(500)  # Show 100% for half a second
+        
+        # Switch to title screen
+        self.game_state = "title"
+    
+    def render_loading_screen(self, message):
+        """Render the loading screen with progress bar"""
+        # Fill background
+        self.screen.fill((28, 168, 99))  # Light green background
+        
+        # Create fonts
+        font_large = pygame.font.Font(None, 74)
+        font_small = pygame.font.Font(None, 36)
+        
+        # Draw title
+        title_text = font_large.render("florr.io", True, (255, 255, 255))
+        title_rect = title_text.get_rect(center=(400, 150))
+        self.screen.blit(title_text, title_rect)
+        
+        # Draw loading message
+        loading_text = font_small.render(message, True, (255, 255, 255))
+        loading_rect = loading_text.get_rect(center=(400, 250))
+        self.screen.blit(loading_text, loading_rect)
+        
+        # Draw progress bar
+        bar_width = 400
+        bar_height = 20
+        bar_rect = pygame.Rect(200, 300, bar_width, bar_height)
+        pygame.draw.rect(self.screen, (255, 255, 255), bar_rect, 2)  # Border
+        
+        # Fill progress
+        fill_width = int(bar_width * (self.loading_progress / 100))
+        if fill_width > 0:
+            fill_rect = pygame.Rect(200, 300, fill_width, bar_height)
+            pygame.draw.rect(self.screen, (255, 255, 255), fill_rect)
+        
+        # Draw percentage
+        percent_text = font_small.render(f"{self.loading_progress}%", True, (255, 255, 255))
+        percent_rect = percent_text.get_rect(center=(400, 350))
+        self.screen.blit(percent_text, percent_rect)
+        
+        pygame.display.flip()
     
     def add_static_monsters(self, count):
         static_types = [Bush, Tree, Rock]
@@ -237,6 +304,24 @@ class GameEngine:
             self.players[player_id]['y'] = y
     
     def handle_local_input(self):
+        if self.game_state == "loading":
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+            return None
+        elif self.game_state == "title":
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    # Only start if button is clicked
+                    if hasattr(self, 'start_button_rect') and self.start_button_rect.collidepoint(event.pos):
+                        self.start_game()
+                        return None
+            return None
+        
         current_time = time.time()
         
         # Handle healing
@@ -399,6 +484,12 @@ class GameEngine:
                         return None
     
     def render(self):
+        if self.game_state == "loading":
+            return  # Loading screen is handled during initialization
+        elif self.game_state == "title":
+            self.render_title_screen()
+            return
+        
         if self.show_inventory:
             self.render_inventory()
             return
@@ -772,3 +863,83 @@ class GameEngine:
         # Convert to pygame surface
         return pygame.image.fromstring(
             image.tobytes(), image.size, image.mode).convert_alpha() 
+
+    def render_title_screen(self):
+        # Fill background
+        self.screen.fill((28, 168, 99))  # Light green background
+        
+        # Create fonts
+        font_title = pygame.font.Font(None, 74)  # Smaller title font
+        font_button = pygame.font.Font(None, 48)  # Button font
+        font_small = pygame.font.Font(None, 24)  # Smaller controls font
+        
+        # Create title text
+        title_text = font_title.render("florr.io", True, (255, 255, 255))
+        title_rect = title_text.get_rect(center=(400, 100))
+        
+        # Create start button
+        button_surface = pygame.Surface((200, 60))
+        button_surface.fill((0, 128, 0))  # Green button
+        pygame.draw.rect(button_surface, (255, 255, 255), button_surface.get_rect(), 2)  # White border
+        
+        button_text = font_button.render("Ready", True, (255, 255, 255))
+        button_text_rect = button_text.get_rect(center=(100, 30))
+        button_surface.blit(button_text, button_text_rect)
+        
+        button_rect = button_surface.get_rect(center=(400, 450))
+        
+        # Controls text
+        controls_text = [
+            "Controls:",
+            "WASD / Arrow Keys - Move",
+            "Space / Left Click - Attack",
+            "Shift / Right Click - Defend",
+        ]
+        
+        # Draw everything
+        self.screen.blit(title_text, title_rect)
+        self.screen.blit(button_surface, button_rect)
+        
+        # Draw controls text
+        for i, text in enumerate(controls_text):
+            control_text = font_small.render(text, True, (255, 255, 255))
+            control_rect = control_text.get_rect(center=(400, 200 + i * 25))  # Reduced spacing
+            self.screen.blit(control_text, control_rect)
+        
+        # Store button rect for click detection
+        self.start_button_rect = button_rect
+        
+        pygame.display.flip()
+
+    def start_game(self):
+        """Handle transition from title screen to game"""
+        self.game_state = "loading"
+        self.loading_progress = 0
+        
+        # Initialize game world
+        self.render_loading_screen("Initializing game world...")
+        self.loading_progress = 20
+        pygame.time.wait(100)  # Small delay to show progress
+        
+        # Initialize monsters
+        self.render_loading_screen("Spawning monsters...")
+        self.loading_progress = 40
+        pygame.time.wait(100)
+        
+        # Load player data
+        self.render_loading_screen("Loading player data...")
+        self.loading_progress = 60
+        pygame.time.wait(100)
+        
+        # Initialize network
+        self.render_loading_screen("Connecting to network...")
+        self.loading_progress = 80
+        pygame.time.wait(100)
+        
+        # Final setup
+        self.render_loading_screen("Finalizing...")
+        self.loading_progress = 100
+        pygame.time.wait(500)  # Show 100% for half a second
+        
+        # Switch to playing state
+        self.game_state = "playing"

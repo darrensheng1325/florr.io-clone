@@ -27,7 +27,9 @@ class P2PGame:
         while running:
             # Handle local player movement
             position = self.game.handle_local_input()
-            if position:
+            
+            # Only broadcast position if we're playing (not in title screen)
+            if position and self.game.game_state == "playing":
                 # Broadcast position to all peers
                 self.broadcast_position(position)
             
@@ -35,6 +37,7 @@ class P2PGame:
 
             # Limit frame rate
             sleep(1 / self.game.max_fps)
+        
         pygame.quit()
         sys.exit()
     
