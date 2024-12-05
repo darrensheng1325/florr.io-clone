@@ -54,7 +54,7 @@ class GameEngine:
         # Add zone definitions (side by side, each 1600 pixels wide)
         self.zones = {
             'easy': {
-                'color': (144, 238, 144),  # Light green
+                'color': (28, 168, 99),  # Light green
                 'rect': pygame.Rect(0, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 1.0,  # Base difficulty
                 'spawn_weights': {
@@ -80,7 +80,7 @@ class GameEngine:
                 }
             },
             'hard': {
-                'color': (105, 2, 2),  # Salmon
+                'color': (248, 58, 41),  # Salmon
                 'rect': pygame.Rect(2 * width // 3, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 2.0,  # Double strength
                 'spawn_weights': {
@@ -372,9 +372,9 @@ class GameEngine:
         # Draw grid
         grid_size = 50
         for x in range(0, self.world_width, grid_size):
-            pygame.draw.line(world_surface, (200, 200, 200, 128), (x, 0), (x, self.world_height))
+            pygame.draw.line(world_surface, (33, 159, 91, 128), (x, 0), (x, self.world_height))
         for y in range(0, self.world_height, grid_size):
-            pygame.draw.line(world_surface, (200, 200, 200, 128), (0, y), (self.world_width, y))
+            pygame.draw.line(world_surface, (33, 159, 91, 128), (0, y), (self.world_width, y))
         
         # Render dropped items
         for dropped_item in self.dropped_items:
