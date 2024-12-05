@@ -3,6 +3,7 @@ import sys
 import socket
 import threading
 import json
+from time import sleep
 
 class P2PGame:
     def __init__(self, host, port):
@@ -13,6 +14,7 @@ class P2PGame:
         self.game = GameEngine()
         self.game.my_id = f"{host}:{port}"
         self.game.add_player(self.game.my_id)
+        self.game.max_fps = 144
         
     def start(self):
         # Start the receiving thread
@@ -30,7 +32,9 @@ class P2PGame:
                 self.broadcast_position(position)
             
             self.game.render()
-        
+
+            # Limit frame rate
+            sleep(1 / self.game.max_fps)
         pygame.quit()
         sys.exit()
     

@@ -7,7 +7,7 @@ import time
 from cairosvg import svg2png
 from io import BytesIO
 from PIL import Image
-from item import Item, DroppedItem
+from item import Item, DroppedItem, RockItem
 from monster import Mouse, Cat, Tank, Bush, Tree, Rock
 
 class GameEngine:
@@ -29,7 +29,8 @@ class GameEngine:
             Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100),
             Item("Fire Petal", (255, 100, 0), damage=15, radius=12, max_health=80),
             Item("Ice Petal", (0, 255, 255), damage=12, radius=11, max_health=120),
-            Item("Poison Petal", (0, 255, 0), damage=8, radius=13, max_health=150)
+            Item("Poison Petal", (0, 255, 0), damage=8, radius=13, max_health=150),
+            RockItem()
         ]
         
         # Petal properties
@@ -66,7 +67,7 @@ class GameEngine:
                 }
             },
             'medium': {
-                'color': (255, 218, 185),  # Peach
+                'color': (240, 255, 110),  # Peach
                 'rect': pygame.Rect(width // 3, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 1.5,  # 50% stronger
                 'spawn_weights': {
@@ -79,7 +80,7 @@ class GameEngine:
                 }
             },
             'hard': {
-                'color': (255, 160, 122),  # Salmon
+                'color': (105, 2, 2),  # Salmon
                 'rect': pygame.Rect(2 * width // 3, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 2.0,  # Double strength
                 'spawn_weights': {
@@ -262,7 +263,7 @@ class GameEngine:
     
     def render_inventory(self):
         inventory_surface = pygame.Surface((600, 400))
-        inventory_surface.fill((50, 50, 50))
+        inventory_surface.fill((99, 255, 133))
         
         player = self.players[self.my_id]
         font = pygame.font.Font(None, 36)
@@ -273,7 +274,8 @@ class GameEngine:
         inventory_surface.blit(text, (20, 20))
         
         for i, petal in enumerate(player['equipped_petals']):
-            pygame.draw.circle(inventory_surface, petal.color, (50 + i * 60, 70), 20)
+            if petal is not None:  # Check if petal is not None
+                pygame.draw.circle(inventory_surface, petal.color, (50 + i * 60, 70), 20)
         
         # Draw inventory items
         text = font.render("Inventory:", True, (255, 255, 255))
@@ -449,8 +451,12 @@ class GameEngine:
                         
                         if monster.take_damage(petal.damage):
                             monsters_to_remove.append(monster)
-                            dropped_item = random.choice(self.possible_items)
-                            self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
+                            # Drop a rock item if the monster is a Rock
+                            if isinstance(monster, Rock):
+                                self.dropped_items.append(DroppedItem(RockItem(), monster.x, monster.y))
+                            else:
+                                dropped_item = random.choice(self.possible_items)
+                                self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
                 
                 # Remove dead monsters and add new ones
                 for monster in monsters_to_remove:
@@ -504,50 +510,59 @@ class GameEngine:
         pygame.draw.rect(surface, (255, 255, 255), outline_rect, 1)
     
     def show_death_screen(self):
-        start_time = time.time()
+        # Drop three random petals from the player's equipped petals
+        player = self.players[self.my_id]
+        dropped_petals = 0
+        for i in range(self.petal_count):
+            if player['equipped_petals'][i] is not None and dropped_petals < 3:
+                # Drop the petal
+                dropped_item = DroppedItem(player['equipped_petals'][i], player['x'], player['y'])
+                self.dropped_items.append(dropped_item)
+                player['equipped_petals'][i] = None
+                dropped_petals += 1
+
+        # Create a transparent overlay
+        overlay = pygame.Surface((800, 600), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 128))  # Semi-transparent black
+
+        # Create an opaque button
+        button_text = "Continue"
         font = pygame.font.Font(None, 74)
-        small_font = pygame.font.Font(None, 36)
-        text = font.render('You Died', True, (255, 0, 0))
-        text_rect = text.get_rect(center=(400, 200))
-        
-        button_text = small_font.render('Continue', True, (255, 255, 255))
-        button_rect = button_text.get_rect(center=(400, 400))
-        
+        button_surface = pygame.Surface((200, 100))
+        button_surface.fill((0, 128, 0))  # Opaque green
+        text = font.render(button_text, True, (255, 255, 255))
+        text_rect = text.get_rect(center=(100, 50))
+        button_surface.blit(text, text_rect)
+        button_rect = button_surface.get_rect(center=(400, 300))
+
+        # Display the overlay and button
+        self.screen.blit(overlay, (0, 0))
+        self.screen.blit(button_surface, button_rect)
+        pygame.display.flip()
+
+        # Wait for the player to click the button
         while True:
-            self.screen.fill((0, 0, 0))
-            self.screen.blit(text, text_rect)
-            
-            # Draw continue button (always visible)
-            pygame.draw.rect(self.screen, (0, 128, 0), button_rect.inflate(20, 10))
-            self.screen.blit(button_text, button_rect)
-            
-            # Calculate and display remaining time
-            elapsed_time = time.time() - start_time
-            remaining_time = max(0, 10 - int(elapsed_time))
-            timer_text = small_font.render(f'Respawn in: {remaining_time}s', True, (255, 255, 255))
-            timer_rect = timer_text.get_rect(center=(400, 300))
-            self.screen.blit(timer_text, timer_rect)
-            
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if button_rect.collidepoint(event.pos) and elapsed_time >= 10:
+                    if button_rect.collidepoint(event.pos):
                         self.reset_game()
                         return
-            
-            pygame.display.flip()
-            self.clock.tick(60)
-    
+
     def reset_game(self):
-        # Reset player health and position
+        # Reset player health and position to the easy zone
         player = self.players[self.my_id]
         player['health'] = 100
-        player['x'] = 800
-        player['y'] = 600
-        # Optionally reset other game elements as needed
 
+        # Respawn in the easy zone
+        easy_zone = self.zones['easy']['rect']
+        player['x'] = random.randint(easy_zone.left + 50, easy_zone.right - 50)
+        player['y'] = random.randint(easy_zone.top + 50, easy_zone.bottom - 50)
+
+        # Optionally reset other game elements as needed
+    
     def check_collision(self, x1, y1, monster, player_collision=False, petal=None):
         distance = math.sqrt((x1 - monster.x) ** 2 + (y1 - monster.y) ** 2)
         if player_collision:
@@ -591,12 +606,12 @@ class GameEngine:
         # Create UI bar at the bottom
         ui_height = 80
         ui_surface = pygame.Surface((800, ui_height))
-        ui_surface.fill((50, 50, 50))  # Dark gray background
+        ui_surface.fill((99, 255, 133))  # Dark gray background
         
         # Draw inventory button
         button_size = 60
         inventory_button = pygame.Rect(10, 10, button_size, button_size)
-        pygame.draw.rect(ui_surface, (70, 70, 70), inventory_button)
+        pygame.draw.rect(ui_surface, (99, 120, 255), inventory_button)
         
         # Draw "I" text on button
         font = pygame.font.Font(None, 36)

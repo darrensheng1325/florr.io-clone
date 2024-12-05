@@ -44,3 +44,7 @@ class DroppedItem:
         pygame.draw.circle(surface, self.item.color, 
                          (int(self.x), int(self.y + self.bob_offset)), 
                          self.radius) 
+
+class RockItem(Item):
+    def __init__(self):
+        super().__init__("Rock", (169, 169, 169), damage=0, radius=5, max_health=1)
