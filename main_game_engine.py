@@ -9,6 +9,7 @@ from io import BytesIO
 from PIL import Image
 from item import Item, DroppedItem, RockItem
 from monster import Mouse, Cat, Tank, Bush, Tree, Rock
+from database import GameDatabase
 
 class GameEngine:
     def __init__(self, width=4800, height=1200, initial_monster_count=5):
@@ -124,6 +125,9 @@ class GameEngine:
         # Add broken petal tracking
         self.broken_petals = {}  # {slot_index: (item, respawn_time)}
         self.petal_respawn_time = 2  # Seconds until respawn
+        
+        # Add database
+        self.db = GameDatabase()
     
     def add_static_monsters(self, count):
         static_types = [Bush, Tree, Rock]
@@ -197,17 +201,26 @@ class GameEngine:
         return 'easy'  # Default to easy zone
     
     def add_player(self, player_id, x=800, y=600):
-        # When adding items to equipped_petals, create new instances
-        basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
-        self.players[player_id] = {
-            'x': x,
-            'y': y,
-            'image': self.player_image,
-            'angle': 0,
-            'health': 100,
-            'inventory': {},
-            'equipped_petals': [basic_petal for _ in range(self.petal_count)]
-        }
+        # Try to load player data from database
+        player_data = self.db.load_player(player_id)
+        
+        if player_data:
+            player_data['image'] = self.player_image  # Set the player image
+            self.players[player_id] = player_data
+        else:
+            # Create new player with default values
+            basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
+            self.players[player_id] = {
+                'x': x,
+                'y': y,
+                'image': self.player_image,
+                'angle': 0,
+                'health': 100,
+                'inventory': {},
+                'equipped_petals': [basic_petal for _ in range(self.petal_count)]
+            }
+            # Save new player to database
+            self.db.save_player(player_id, self.players[player_id])
     
     def update_player(self, player_id, x, y):
         if player_id in self.players:
@@ -242,6 +255,10 @@ class GameEngine:
                 if keys[pygame.K_DOWN]:
                     self.players[self.my_id]['y'] += 5
                 
+        if self.my_id in self.players:
+            # Save player state periodically
+            self.db.save_player(self.my_id, self.players[self.my_id])
+        
         return self.get_player_position(self.my_id)
     
     def get_player_position(self, player_id):
