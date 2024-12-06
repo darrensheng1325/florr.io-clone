@@ -245,18 +245,41 @@ class Rock(StaticMonster):
         self.draw_health_bar(screen, self.x, self.y - 40, self.health, 2000)
 
 class Ant(Monster):
+    image = None  # Will be set by GameEngine
+    
     def __init__(self, x, y):
         super().__init__(x, y)
-        self.radius = 10
+        self.radius = 15  # Adjusted to match image size
         self.health = 20
         self.damage = 5
         self.speed = 1
-        self.is_passive = True  # New flag for passive mobs
+        self.is_passive = True
+        self.name = "Ant"
+        self.color = (139, 69, 19)  # Brown fallback color
+        self.angle = random.uniform(0, 360)  # Random initial angle
         
     def update(self, players):
         # Passive wandering behavior
         self.x += random.uniform(-self.speed, self.speed)
         self.y += random.uniform(-self.speed, self.speed)
+        # Update angle based on movement direction
+        dx = random.uniform(-self.speed, self.speed)
+        dy = random.uniform(-self.speed, self.speed)
+        if abs(dx) > 0.1 or abs(dy) > 0.1:
+            self.angle = math.degrees(math.atan2(dy, dx))
+    
+    def render(self, screen):
+        if self.image:
+            rotated_image = pygame.transform.rotate(self.image, -self.angle)
+            screen.blit(rotated_image, 
+                       (int(self.x - rotated_image.get_width()/2), 
+                        int(self.y - rotated_image.get_height()/2)))
+        else:
+            # Fallback to circle if no image
+            pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        
+        # Draw health bar
+        self.draw_health_bar(screen, self.x, self.y - 25, self.health, 30)
 
 class Bee(Monster):
     image = None  # Will be set by GameEngine

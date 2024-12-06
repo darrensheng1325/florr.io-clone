@@ -140,12 +140,17 @@ class GameEngine:
         # Load monster images with higher DPI
         self.mouse_image = self.load_svg_image("mouse.svg", size=(30, 30))
         self.cat_image = self.load_svg_image("cat.svg", size=(50, 50))
-        self.bee_image = self.load_svg_image("bee.svg", size=(80, 80), dpi=300)  # Higher DPI for bee
+        self.bee_image = self.load_svg_image("bee.svg", size=(80, 80), dpi=300)
+        
+        # Load and scale ant image to exactly 40x40
+        ant_image = pygame.image.load("ant.png").convert_alpha()
+        self.ant_image = pygame.transform.scale(ant_image, (40, 40))  # Force exact 40x40 size
         
         # Pass images to monster classes
         Mouse.image = self.mouse_image
         Cat.image = self.cat_image
         Bee.image = self.bee_image
+        Ant.image = self.ant_image
         
         # Add broken petal tracking
         self.broken_petals = {}  # {slot_index: (item, respawn_time)}
