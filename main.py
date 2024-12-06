@@ -16,6 +16,9 @@ class P2PGame:
         self.game.add_player(self.game.my_id)
         self.game.max_fps = 144
         
+        self.host = host
+        self.port = port
+    
     def start(self):
         # Start the receiving thread
         receive_thread = threading.Thread(target=self.receive_data)
@@ -28,13 +31,22 @@ class P2PGame:
             # Handle local player movement
             position = self.game.handle_local_input()
             
-            # Only broadcast position if we're playing (not in title screen)
+            # Check if we need to connect to a peer from the input box
+            if self.game.connect_ip:
+                try:
+                    peer_host, peer_port = self.game.connect_ip.split(':')
+                    peer_port = int(peer_port)
+                    self.connect_to_peer(peer_host, peer_port)
+                except Exception as e:
+                    print(f"Error connecting to peer: {e}")
+                self.game.connect_ip = None  # Clear the connection request
+            
+            # Only broadcast position if we're playing
             if position and self.game.game_state == "playing":
-                # Broadcast position to all peers
                 self.broadcast_position(position)
             
             self.game.render()
-
+            
             # Limit frame rate
             sleep(1 / self.game.max_fps)
         
@@ -89,7 +101,7 @@ if __name__ == "__main__":
     
     game = P2PGame(host, port)
     
-    # If peer address is provided, connect to it
+    # Note: Command line peer connection is now optional since we can use the input box
     if len(sys.argv) == 5:
         peer_host = sys.argv[3]
         peer_port = int(sys.argv[4])

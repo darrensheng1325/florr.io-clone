@@ -8,7 +8,7 @@ from cairosvg import svg2png
 from io import BytesIO
 from PIL import Image
 from item import Item, DroppedItem, RockItem
-from monster import Mouse, Cat, Tank, Bush, Tree, Rock
+from monster import Mouse, Cat, Tank, Bush, Tree, Rock, Ant, Bee
 from database import GameDatabase
 
 class GameEngine:
@@ -31,8 +31,8 @@ class GameEngine:
         self.loading_progress = 10
         self.render_loading_screen("Loading images...")
         
-        # Load player image
-        self.player_image = self.load_svg_image("player.svg")
+        # Load player image with specific size
+        self.player_image = self.load_svg_image("player.svg", size=(40, 40))  # Smaller than bee (80x80)
         self.loading_progress = 20
         self.render_loading_screen("Creating items...")
         
@@ -59,12 +59,14 @@ class GameEngine:
         
         # Define monster types and their spawn weights
         self.monster_types = {
-            Mouse: 30,    # 30% chance for mouse
-            Cat: 20,      # 20% chance for cat
-            Tank: 10,     # 10% chance for tank
-            Bush: 20,     # 20% chance for bush
-            Tree: 10,     # 10% chance for tree
-            Rock: 10      # 10% chance for rock
+            Ant: 25,     # 25% chance for ant
+            Bee: 25,     # 25% chance for bee
+            Mouse: 15,   # 15% chance for mouse
+            Cat: 15,     # 15% chance for cat
+            Tank: 10,    # 10% chance for tank
+            Bush: 5,     # 5% chance for bush
+            Tree: 3,     # 3% chance for tree
+            Rock: 2      # 2% chance for rock
         }
         
         # Add zone definitions (side by side, each 1600 pixels wide)
@@ -74,11 +76,10 @@ class GameEngine:
                 'rect': pygame.Rect(0, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 1.0,  # Base difficulty
                 'spawn_weights': {
-                    Mouse: 50,    # More mice in easy zone
-                    Cat: 10,
-                    Tank: 5,
-                    Bush: 20,
-                    Tree: 10,
+                    Ant: 45,     # Mostly ants
+                    Bee: 35,     # and bees
+                    Bush: 10,
+                    Tree: 5,
                     Rock: 5
                 }
             },
@@ -87,12 +88,13 @@ class GameEngine:
                 'rect': pygame.Rect(width // 3, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 1.5,  # 50% stronger
                 'spawn_weights': {
-                    Mouse: 30,
-                    Cat: 30,
-                    Tank: 15,
-                    Bush: 10,
-                    Tree: 10,
-                    Rock: 5
+                    Mouse: 35,    # More mice
+                    Cat: 25,      # Some cats
+                    Bee: 15,      # Few bees
+                    Tank: 10,
+                    Bush: 8,
+                    Tree: 4,
+                    Rock: 3
                 }
             },
             'hard': {
@@ -100,12 +102,12 @@ class GameEngine:
                 'rect': pygame.Rect(2 * width // 3, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 2.0,  # Double strength
                 'spawn_weights': {
-                    Mouse: 20,
-                    Cat: 35,
-                    Tank: 25,
-                    Bush: 5,
-                    Tree: 10,
-                    Rock: 5
+                    Cat: 35,      # Mostly cats
+                    Mouse: 25,    # and mice
+                    Tank: 25,     # and tanks
+                    Bush: 8,
+                    Tree: 4,
+                    Rock: 3
                 }
             }
         }
@@ -135,15 +137,15 @@ class GameEngine:
         # Add dropped items list
         self.dropped_items = []
         
-        # Load monster images
-        self.mouse_image = pygame.image.load("mouse.svg")
-        self.mouse_image = pygame.transform.scale(self.mouse_image, (30, 30))
-        self.cat_image = pygame.image.load("cat.svg")
-        self.cat_image = pygame.transform.scale(self.cat_image, (50, 50))
+        # Load monster images with higher DPI
+        self.mouse_image = self.load_svg_image("mouse.svg", size=(30, 30))
+        self.cat_image = self.load_svg_image("cat.svg", size=(50, 50))
+        self.bee_image = self.load_svg_image("bee.svg", size=(80, 80), dpi=300)  # Higher DPI for bee
         
         # Pass images to monster classes
         Mouse.image = self.mouse_image
         Cat.image = self.cat_image
+        Bee.image = self.bee_image
         
         # Add broken petal tracking
         self.broken_petals = {}  # {slot_index: (item, respawn_time)}
@@ -166,6 +168,11 @@ class GameEngine:
         
         # Switch to title screen
         self.game_state = "title"
+        
+        # Add after other initializations
+        self.input_text = ""
+        self.input_active = False
+        self.connect_ip = None  # Will store the IP:port to connect to
     
     def render_loading_screen(self, message):
         """Render the loading screen with progress bar"""
@@ -255,21 +262,33 @@ class GameEngine:
         zone = self.get_zone(x, y)
         zone_data = self.zones[zone]
         
-        # Choose monster type based on zone weights
-        weights = list(zone_data['spawn_weights'].values())
-        monster_type = random.choices(
-            list(zone_data['spawn_weights'].keys()),
-            weights=weights
-        )[0]
+        # Keep trying until we get a valid spawn location for the monster type
+        attempts = 0
+        while attempts < 50:
+            # Choose monster type based on zone weights
+            weights = list(zone_data['spawn_weights'].values())
+            monster_type = random.choices(
+                list(zone_data['spawn_weights'].keys()),
+                weights=weights
+            )[0]
+            
+            # If it's a Mouse or Cat, make sure it spawns in medium or hard zone
+            if (monster_type in [Mouse, Cat] and zone == 'easy'):
+                attempts += 1
+                continue
+            
+            # Create monster and adjust its stats based on zone
+            monster = monster_type(x, y)
+            multiplier = zone_data['monster_multiplier']
+            monster.health *= multiplier
+            if not hasattr(monster, 'is_passive') or not monster.is_passive:
+                monster.damage *= multiplier  # Only multiply damage for aggressive mobs
+            
+            return monster
         
-        # Create monster and adjust its stats based on zone
-        monster = monster_type(x, y)
-        multiplier = zone_data['monster_multiplier']
-        monster.health *= multiplier
-        monster.damage *= multiplier
-        
-        return monster
-
+        # If we couldn't find a valid spawn after 50 attempts, create a passive mob
+        return Ant(x, y)  # Default to spawning an ant
+    
     def get_zone(self, x, y):
         for zone_name, zone_data in self.zones.items():
             if zone_data['rect'].collidepoint(x, y):
@@ -316,10 +335,25 @@ class GameEngine:
                     pygame.quit()
                     sys.exit()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    # Only start if button is clicked
+                    # Check for input box click
+                    if hasattr(self, 'input_box_rect') and self.input_box_rect.collidepoint(event.pos):
+                        self.input_active = True
+                    else:
+                        self.input_active = False
+                    
+                    # Check for start button click
                     if hasattr(self, 'start_button_rect') and self.start_button_rect.collidepoint(event.pos):
+                        if self.input_text.strip():  # If there's text in the input box
+                            self.connect_ip = self.input_text.strip()
                         self.start_game()
                         return None
+                elif event.type == pygame.KEYDOWN and self.input_active:
+                    if event.key == pygame.K_RETURN:
+                        self.input_active = False
+                    elif event.key == pygame.K_BACKSPACE:
+                        self.input_text = self.input_text[:-1]
+                    else:
+                        self.input_text += event.unicode
             return None
         
         current_time = time.time()
@@ -555,11 +589,13 @@ class GameEngine:
             # Draw player
             world_surface.blit(
                 player['image'],
-                (player['x'] - self.player_image.get_width() // 2, player['y'] - self.player_image.get_height() // 2)
+                (player['x'] - self.player_image.get_width() // 2, 
+                 player['y'] - self.player_image.get_height() // 2)
             )
             
             # Draw player health bar
-            self.draw_health_bar(world_surface, player['x'], player['y'] - 30, player['health'], 100)
+            self.draw_health_bar(world_surface, player['x'], player['y'] - 30, 
+                               player['health'], 100)
             
             # Update and draw petals
             player['angle'] += self.orbit_speed
@@ -571,9 +607,9 @@ class GameEngine:
                 petal_x = player['x'] + self.orbit_radius * math.cos(angle)
                 petal_y = player['y'] + self.orbit_radius * math.sin(angle)
                 
-                # Draw petal without health indicator
+                # Draw petal
                 pygame.draw.circle(world_surface, petal.color, 
-                                  (int(petal_x), int(petal_y)), petal.radius)
+                                 (int(petal_x), int(petal_y)), petal.radius)
                 
                 # Check collision with monsters
                 monsters_to_remove = []
@@ -590,17 +626,22 @@ class GameEngine:
                             player['equipped_petals'][i] = None  # Remove broken petal
                             break
                         
-                        # Monster takes damage and knockback
+                        # Calculate bounce vector for monster
                         if not hasattr(monster, 'is_static') or not monster.is_static:
-                            dx = monster.x - player['x']
-                            dy = monster.y - player['y']
+                            dx = monster.x - petal_x
+                            dy = monster.y - petal_y
                             distance = math.sqrt(dx * dx + dy * dy)
                             if distance > 0:
-                                knockback_strength = 20
-                                dx = (dx / distance) * knockback_strength
-                                dy = (dy / distance) * knockback_strength
+                                # Normalize and apply bounce force
+                                bounce_strength = 30
+                                dx = (dx / distance) * bounce_strength
+                                dy = (dy / distance) * bounce_strength
                                 monster.x += dx
                                 monster.y += dy
+                                
+                                # Add some randomness to prevent predictable bouncing
+                                monster.x += random.uniform(-5, 5)
+                                monster.y += random.uniform(-5, 5)
                         
                         if monster.take_damage(petal.damage):
                             monsters_to_remove.append(monster)
@@ -610,6 +651,33 @@ class GameEngine:
                             else:
                                 dropped_item = random.choice(self.possible_items)
                                 self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
+                
+                # Check collision with player center (flower)
+                for monster in self.monsters:
+                    if not hasattr(monster, 'is_static') or not monster.is_static:
+                        dx = monster.x - player['x']
+                        dy = monster.y - player['y']
+                        distance = math.sqrt(dx * dx + dy * dy)
+                        min_distance = self.player_image.get_width() // 2 + monster.radius
+                        
+                        if distance < min_distance:
+                            # Calculate bounce vector from flower center
+                            if distance > 0:
+                                bounce_strength = 40  # Stronger bounce from center
+                                dx = (dx / distance) * bounce_strength
+                                dy = (dy / distance) * bounce_strength
+                                monster.x = player['x'] + dx
+                                monster.y = player['y'] + dy
+                                
+                                # Add slight randomness to prevent perfect bouncing
+                                monster.x += random.uniform(-3, 3)
+                                monster.y += random.uniform(-3, 3)
+                            
+                            # Damage the player
+                            player['health'] -= monster.damage
+                            if player['health'] <= 0:
+                                self.show_death_screen()
+                                return
                 
                 # Remove dead monsters and add new ones
                 for monster in monsters_to_remove:
@@ -626,7 +694,43 @@ class GameEngine:
                         self.monsters.append(self.create_mobile_monster())
         
         # Update and render monsters
-        for monster in self.monsters:
+        for i, monster in enumerate(self.monsters):
+            # Apply collision avoidance between monsters
+            if not hasattr(monster, 'is_static') or not monster.is_static:
+                separation = pygame.math.Vector2(0, 0)
+                nearby_count = 0
+                
+                # Check collision with other monsters
+                for other in self.monsters:
+                    if monster != other:
+                        distance = math.sqrt((monster.x - other.x)**2 + (monster.y - other.y)**2)
+                        min_distance = monster.radius + other.radius + 20  # Add some buffer space
+                        
+                        if distance < min_distance:
+                            # Calculate separation vector
+                            if distance > 0:  # Avoid division by zero
+                                diff = pygame.math.Vector2(monster.x - other.x, monster.y - other.y)
+                                diff = diff.normalize() * (min_distance - distance)
+                                separation += diff
+                                nearby_count += 1
+                
+                # Apply separation if there are nearby monsters
+                if nearby_count > 0:
+                    separation = separation / nearby_count
+                    # Apply the separation more strongly to smaller monsters
+                    separation_strength = 1.0
+                    if isinstance(monster, Mouse):
+                        separation_strength = 1.5
+                    elif isinstance(monster, Cat):
+                        separation_strength = 1.2
+                    
+                    monster.x += separation.x * separation_strength
+                    monster.y += separation.y * separation_strength
+                
+                # Keep monsters within world bounds
+                monster.x = max(monster.radius, min(self.world_width - monster.radius, monster.x))
+                monster.y = max(monster.radius, min(self.world_height - monster.radius, monster.y))
+            
             monster.update(self.players)  # Update monster AI
             monster.render(world_surface)
             
@@ -846,23 +950,29 @@ class GameEngine:
         # Blit UI surface at the bottom of the screen
         self.screen.blit(ui_surface, (0, 520))  # 520 = 600 - ui_height
 
-    def load_svg_image(self, svg_path):
-        # Read SVG file
-        with open(svg_path, 'rb') as f:
-            svg_data = f.read()
-        
-        # Convert SVG to PNG in memory
-        png_data = svg2png(svg_data)
-        
-        # Convert to PIL Image
-        image = Image.open(BytesIO(png_data))
-        
-        # Resize to 32x32
-        image = image.resize((32, 32), Image.Resampling.LANCZOS)
-        
-        # Convert to pygame surface
-        return pygame.image.fromstring(
-            image.tobytes(), image.size, image.mode).convert_alpha() 
+    def load_svg_image(self, svg_path, size=None, dpi=96):
+        """Load SVG with optional size parameter and DPI"""
+        try:
+            # Read SVG file
+            with open(svg_path, 'rb') as f:
+                svg_data = f.read()
+            
+            # Convert SVG to PNG in memory
+            png_data = svg2png(svg_data, dpi=dpi)
+            
+            # Convert to PIL Image
+            image = Image.open(BytesIO(png_data))
+            
+            # Resize if size is specified
+            if size:
+                image = image.resize(size, Image.Resampling.LANCZOS)
+            
+            # Convert to pygame surface
+            return pygame.image.fromstring(
+                image.tobytes(), image.size, image.mode).convert_alpha()
+        except Exception as e:
+            print(f"Error loading image {svg_path}: {e}")
+            return None
 
     def render_title_screen(self):
         # Fill background
@@ -877,10 +987,25 @@ class GameEngine:
         title_text = font_title.render("florr.io", True, (255, 255, 255))
         title_rect = title_text.get_rect(center=(400, 100))
         
+        # Create IP input box
+        input_box = pygame.Rect(300, 350, 200, 32)
+        input_color = (255, 255, 255) if self.input_active else (200, 200, 200)
+        pygame.draw.rect(self.screen, input_color, input_box, 2)
+        
+        # Render input text
+        input_surface = font_small.render(self.input_text, True, (255, 255, 255))
+        input_rect = input_surface.get_rect(center=input_box.center)
+        self.screen.blit(input_surface, input_rect)
+        
+        # Add input box label
+        label = font_small.render("Server IP:Port (optional)", True, (255, 255, 255))
+        label_rect = label.get_rect(bottom=input_box.top - 5, centerx=input_box.centerx)
+        self.screen.blit(label, label_rect)
+        
         # Create start button
         button_surface = pygame.Surface((200, 60))
         button_surface.fill((0, 128, 0))  # Green button
-        pygame.draw.rect(button_surface, (255, 255, 255), button_surface.get_rect(), 2)  # White border
+        pygame.draw.rect(button_surface, (255, 255, 255), button_surface.get_rect(), 2)
         
         button_text = font_button.render("Ready", True, (255, 255, 255))
         button_text_rect = button_text.get_rect(center=(100, 30))
@@ -903,11 +1028,12 @@ class GameEngine:
         # Draw controls text
         for i, text in enumerate(controls_text):
             control_text = font_small.render(text, True, (255, 255, 255))
-            control_rect = control_text.get_rect(center=(400, 200 + i * 25))  # Reduced spacing
+            control_rect = control_text.get_rect(center=(400, 200 + i * 25))
             self.screen.blit(control_text, control_rect)
         
-        # Store button rect for click detection
+        # Store rects for click/input detection
         self.start_button_rect = button_rect
+        self.input_box_rect = input_box
         
         pygame.display.flip()
 
@@ -929,6 +1055,16 @@ class GameEngine:
         # Load player data
         self.render_loading_screen("Loading player data...")
         self.loading_progress = 60
+        pygame.time.wait(100)
+        
+        # Fill empty petal slots with basic petals
+        if self.my_id in self.players:
+            player = self.players[self.my_id]
+            for i in range(self.petal_count):
+                if player['equipped_petals'][i] is None:
+                    basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
+                    player['equipped_petals'][i] = basic_petal
+        
         pygame.time.wait(100)
         
         # Initialize network

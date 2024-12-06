@@ -1,6 +1,7 @@
 import pygame
 import random
 import math
+import time
 
 class Monster:
     def __init__(self, x, y, health=100):
@@ -18,6 +19,7 @@ class Monster:
         self.velocity_y = 0
         self.damage = 1
         self.name = "Basic Monster"
+        self.preferred_zone = None
     
     def find_nearest_player(self, players):
         nearest_distance = float('inf')
@@ -44,6 +46,22 @@ class Monster:
         # Reduce velocity (friction)
         self.velocity_x *= self.knockback_resistance
         self.velocity_y *= self.knockback_resistance
+        
+        # Check if monster should return to its preferred zone
+        if self.preferred_zone == 'medium':
+            # Get the medium zone boundaries (assuming width is 4800)
+            zone_left = 1600  # Start of medium zone
+            zone_right = 3200  # End of medium zone
+            zone_center_x = (zone_left + zone_right) / 2
+            
+            # If monster is in easy zone, move back to medium
+            if self.x < zone_left:
+                dx = zone_center_x - self.x
+                dy = 0  # Keep same Y position
+                distance = abs(dx)
+                if distance > 0:
+                    self.x += (dx / distance) * self.speed * 2  # Move faster when returning
+                return  # Skip normal movement
         
         # Normal movement
         self.update_delay += 1
@@ -111,6 +129,7 @@ class Mouse(Monster):
         self.knockback_resistance = 0.98
         self.damage = 0.5
         self.name = "Mouse"
+        self.preferred_zone = 'medium'
     
     def render(self, screen):
         if self.image:
@@ -136,6 +155,7 @@ class Cat(Monster):
         self.name = "Cat"
         self.dash_cooldown = 0
         self.is_dashing = False
+        self.preferred_zone = 'medium'
     
     def render(self, screen):
         if self.image:
@@ -222,4 +242,50 @@ class Rock(StaticMonster):
                          (int(self.x - 5), int(self.y - 5)), self.radius // 2)
         pygame.draw.circle(screen, (130, 130, 130), 
                          (int(self.x + 5), int(self.y + 5)), self.radius // 2)
-        self.draw_health_bar(screen, self.x, self.y - 40, self.health, 2000) 
+        self.draw_health_bar(screen, self.x, self.y - 40, self.health, 2000)
+
+class Ant(Monster):
+    def __init__(self, x, y):
+        super().__init__(x, y)
+        self.radius = 10
+        self.health = 20
+        self.damage = 5
+        self.speed = 1
+        self.is_passive = True  # New flag for passive mobs
+        
+    def update(self, players):
+        # Passive wandering behavior
+        self.x += random.uniform(-self.speed, self.speed)
+        self.y += random.uniform(-self.speed, self.speed)
+
+class Bee(Monster):
+    image = None  # Will be set by GameEngine
+    
+    def __init__(self, x, y):
+        super().__init__(x, y)
+        self.radius = 25
+        self.health = 30
+        self.damage = 8
+        self.speed = 1.5
+        self.is_passive = True
+        self.name = "Bee"
+        self.color = (255, 241, 0)  # Yellow fallback color
+    
+    def render(self, screen):
+        if self.image is not None:
+            try:
+                angle = self.get_angle_to_target()
+                rotated_image = pygame.transform.rotate(self.image, -angle)
+                screen.blit(rotated_image, 
+                           (int(self.x - rotated_image.get_width()/2), 
+                            int(self.y - rotated_image.get_height()/2)))
+            except:
+                # Fallback to circle if rotation fails
+                pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        else:
+            # Fallback to circle if no image
+            pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        
+        # Draw health bar
+        self.draw_health_bar(screen, self.x, self.y - 45, self.health, 30)
+  
