@@ -175,9 +175,11 @@ class GameEngine:
         self.game_state = "title"
         
         # Add after other initializations
-        self.input_text = ""
+        self.input_text = ""  # IP input
+        self.port_text = ""   # Port input
         self.input_active = False
-        self.connect_ip = None  # Will store the IP:port to connect to
+        self.port_active = False
+        self.connect_ip = None
     
     def render_loading_screen(self, message):
         """Render the loading screen with progress bar"""
@@ -340,25 +342,44 @@ class GameEngine:
                     pygame.quit()
                     sys.exit()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    # Check for input box click
+                    # Check for input box clicks
                     if hasattr(self, 'input_box_rect') and self.input_box_rect.collidepoint(event.pos):
                         self.input_active = True
+                        self.port_active = False
+                    elif hasattr(self, 'port_box_rect') and self.port_box_rect.collidepoint(event.pos):
+                        self.port_active = True
+                        self.input_active = False
                     else:
                         self.input_active = False
+                        self.port_active = False
                     
                     # Check for start button click
                     if hasattr(self, 'start_button_rect') and self.start_button_rect.collidepoint(event.pos):
-                        if self.input_text.strip():  # If there's text in the input box
-                            self.connect_ip = self.input_text.strip()
+                        if self.input_text.strip() and self.port_text.strip():
+                            self.connect_ip = f"{self.input_text.strip()}:{self.port_text.strip()}"
                         self.start_game()
                         return None
-                elif event.type == pygame.KEYDOWN and self.input_active:
-                    if event.key == pygame.K_RETURN:
-                        self.input_active = False
-                    elif event.key == pygame.K_BACKSPACE:
-                        self.input_text = self.input_text[:-1]
-                    else:
-                        self.input_text += event.unicode
+                elif event.type == pygame.KEYDOWN:
+                    if self.input_active:
+                        if event.key == pygame.K_RETURN:
+                            self.input_active = False
+                        elif event.key == pygame.K_BACKSPACE:
+                            self.input_text = self.input_text[:-1]
+                        elif event.key == pygame.K_TAB:
+                            self.input_active = False
+                            self.port_active = True
+                        else:
+                            self.input_text += event.unicode
+                    elif self.port_active:
+                        if event.key == pygame.K_RETURN:
+                            self.port_active = False
+                        elif event.key == pygame.K_BACKSPACE:
+                            self.port_text = self.port_text[:-1]
+                        elif event.key == pygame.K_TAB:
+                            self.port_active = False
+                            self.input_active = True
+                        elif event.unicode.isnumeric():  # Only allow numbers for port
+                            self.port_text += event.unicode
             return None
         
         current_time = time.time()
@@ -993,19 +1014,35 @@ class GameEngine:
         title_rect = title_text.get_rect(center=(400, 100))
         
         # Create IP input box
-        input_box = pygame.Rect(300, 350, 200, 32)
-        input_color = (255, 255, 255) if self.input_active else (200, 200, 200)
-        pygame.draw.rect(self.screen, input_color, input_box, 2)
+        ip_box = pygame.Rect(250, 350, 200, 32)
+        ip_color = (255, 255, 255) if self.input_active else (200, 200, 200)
+        pygame.draw.rect(self.screen, ip_color, ip_box, 2)
         
-        # Render input text
-        input_surface = font_small.render(self.input_text, True, (255, 255, 255))
-        input_rect = input_surface.get_rect(center=input_box.center)
-        self.screen.blit(input_surface, input_rect)
+        # Create Port input box
+        port_box = pygame.Rect(460, 350, 100, 32)
+        port_color = (255, 255, 255) if self.port_active else (200, 200, 200)
+        pygame.draw.rect(self.screen, port_color, port_box, 2)
         
-        # Add input box label
-        label = font_small.render("Server IP:Port (optional)", True, (255, 255, 255))
-        label_rect = label.get_rect(bottom=input_box.top - 5, centerx=input_box.centerx)
-        self.screen.blit(label, label_rect)
+        # Render input texts
+        ip_surface = font_small.render(self.input_text, True, (255, 255, 255))
+        port_surface = font_small.render(self.port_text, True, (255, 255, 255))
+        
+        # Center text in boxes
+        ip_rect = ip_surface.get_rect(center=ip_box.center)
+        port_rect = port_surface.get_rect(center=port_box.center)
+        
+        self.screen.blit(ip_surface, ip_rect)
+        self.screen.blit(port_surface, port_rect)
+        
+        # Add input box labels
+        ip_label = font_small.render("Server IP", True, (255, 255, 255))
+        port_label = font_small.render("Port", True, (255, 255, 255))
+        
+        ip_label_rect = ip_label.get_rect(bottom=ip_box.top - 5, centerx=ip_box.centerx)
+        port_label_rect = port_label.get_rect(bottom=port_box.top - 5, centerx=port_box.centerx)
+        
+        self.screen.blit(ip_label, ip_label_rect)
+        self.screen.blit(port_label, port_label_rect)
         
         # Create start button
         button_surface = pygame.Surface((200, 60))
@@ -1038,7 +1075,8 @@ class GameEngine:
         
         # Store rects for click/input detection
         self.start_button_rect = button_rect
-        self.input_box_rect = input_box
+        self.input_box_rect = ip_box
+        self.port_box_rect = port_box
         
         pygame.display.flip()
 
@@ -1050,7 +1088,7 @@ class GameEngine:
         # Initialize game world
         self.render_loading_screen("Initializing game world...")
         self.loading_progress = 20
-        pygame.time.wait(100)  # Small delay to show progress
+        pygame.time.wait(100)
         
         # Initialize monsters
         self.render_loading_screen("Spawning monsters...")
@@ -1072,10 +1110,28 @@ class GameEngine:
         
         pygame.time.wait(100)
         
-        # Initialize network
-        self.render_loading_screen("Connecting to network...")
-        self.loading_progress = 80
-        pygame.time.wait(100)
+        # Initialize network if IP was provided
+        if self.connect_ip:
+            self.render_loading_screen("Connecting to network...")
+            self.loading_progress = 80
+            
+            # Signal to main.py that we need to test connection
+            self.test_connection = True
+            
+            # Wait for connection test result
+            timeout = time.time() + 5  # 5 second timeout
+            while self.test_connection and time.time() < timeout:
+                pygame.time.wait(100)
+                self.render_loading_screen("Connecting to network... (timeout in {:.1f}s)".format(
+                    timeout - time.time()))
+            
+            if self.test_connection:  # If still True, connection failed
+                self.render_loading_screen(f"Connection failed to {self.connect_ip}!")
+                pygame.time.wait(1000)
+                self.connect_ip = None  # Clear the failed connection
+        else:
+            self.loading_progress = 80
+            pygame.time.wait(100)
         
         # Final setup
         self.render_loading_screen("Finalizing...")

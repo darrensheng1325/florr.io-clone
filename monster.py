@@ -249,7 +249,7 @@ class Ant(Monster):
     
     def __init__(self, x, y):
         super().__init__(x, y)
-        self.radius = 15  # Adjusted to match image size
+        self.radius = 15
         self.health = 20
         self.damage = 5
         self.speed = 1
@@ -257,17 +257,29 @@ class Ant(Monster):
         self.name = "Ant"
         self.color = (139, 69, 19)  # Brown fallback color
         self.angle = random.uniform(0, 360)  # Random initial angle
+        self.max_health = 20
+        self.is_aggressive = False
+        self.aggro_speed = 2
+        self.direction_timer = random.uniform(0, 3)  # Timer for direction changes
+        self.move_direction = pygame.math.Vector2(1, 0).rotate(random.uniform(0, 360))
         
     def update(self, players):
-        # Passive wandering behavior
-        self.x += random.uniform(-self.speed, self.speed)
-        self.y += random.uniform(-self.speed, self.speed)
-        # Update angle based on movement direction
-        dx = random.uniform(-self.speed, self.speed)
-        dy = random.uniform(-self.speed, self.speed)
-        if abs(dx) > 0.1 or abs(dy) > 0.1:
-            self.angle = math.degrees(math.atan2(dy, dx))
-    
+        if self.is_aggressive:
+            # Aggressive behavior - chase nearest player
+            super().update(players)
+        else:
+            # Update direction timer
+            self.direction_timer -= 0.016  # Assuming 60 FPS
+            if self.direction_timer <= 0:
+                # Change direction randomly
+                self.move_direction = pygame.math.Vector2(1, 0).rotate(random.uniform(0, 360))
+                self.direction_timer = random.uniform(2, 4)  # New random timer
+                self.angle = math.degrees(math.atan2(self.move_direction.y, self.move_direction.x))
+            
+            # Move in current direction with slight randomness
+            self.x += self.move_direction.x * self.speed + random.uniform(-0.2, 0.2)
+            self.y += self.move_direction.y * self.speed + random.uniform(-0.2, 0.2)
+
     def render(self, screen):
         if self.image:
             rotated_image = pygame.transform.rotate(self.image, -self.angle)
@@ -279,7 +291,7 @@ class Ant(Monster):
             pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
         
         # Draw health bar
-        self.draw_health_bar(screen, self.x, self.y - 25, self.health, 30)
+        self.draw_health_bar(screen, self.x, self.y - 25, self.health, self.max_health)
 
 class Bee(Monster):
     image = None  # Will be set by GameEngine
@@ -293,22 +305,40 @@ class Bee(Monster):
         self.is_passive = True
         self.name = "Bee"
         self.color = (255, 241, 0)  # Yellow fallback color
+        self.direction_timer = random.uniform(0, 3)
+        self.move_direction = pygame.math.Vector2(1, 0).rotate(random.uniform(0, 360))
+        self.hover_offset = random.uniform(0, 2 * math.pi)  # For hovering effect
+    
+    def update(self, players):
+        # Update direction timer
+        self.direction_timer -= 0.016
+        if self.direction_timer <= 0:
+            # Change direction randomly, but favor upward/downward movement for bees
+            angle = random.uniform(-60, 60)  # More vertical movement
+            self.move_direction = pygame.math.Vector2(1, 0).rotate(angle)
+            self.direction_timer = random.uniform(1, 3)  # Shorter timer for more frequent changes
+        
+        # Add hovering motion
+        hover = math.sin(time.time() * 3 + self.hover_offset) * 0.5
+        
+        # Move in current direction with hovering effect
+        self.x += self.move_direction.x * self.speed + random.uniform(-0.1, 0.1)
+        self.y += self.move_direction.y * self.speed + hover + random.uniform(-0.1, 0.1)
+        
+        # Update angle for rendering
+        self.angle = math.degrees(math.atan2(self.move_direction.y, self.move_direction.x))
     
     def render(self, screen):
         if self.image is not None:
             try:
-                angle = self.get_angle_to_target()
-                rotated_image = pygame.transform.rotate(self.image, -angle)
+                rotated_image = pygame.transform.rotate(self.image, -self.angle - 90)
                 screen.blit(rotated_image, 
                            (int(self.x - rotated_image.get_width()/2), 
                             int(self.y - rotated_image.get_height()/2)))
             except:
-                # Fallback to circle if rotation fails
                 pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
         else:
-            # Fallback to circle if no image
             pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
         
-        # Draw health bar
         self.draw_health_bar(screen, self.x, self.y - 45, self.health, 30)
   
