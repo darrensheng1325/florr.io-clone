@@ -7,8 +7,8 @@ import time
 from cairosvg import svg2png
 from io import BytesIO
 from PIL import Image
-from item import Item, DroppedItem, RockItem
-from monster import Mouse, Cat, Tank, Bush, Tree, Rock, Ant, Bee
+from item import Item, DroppedItem, RockItem, LeafItem
+from monster import Mouse, Cat, Tank, Bush, Tree, Rock, Ant, Bee, Boss
 from database import GameDatabase
 
 class GameEngine:
@@ -75,12 +75,12 @@ class GameEngine:
         
         # Add rock item at the end
         self.possible_items.append(RockItem())
-        
+        self.possible_items.append(LeafItem())
         # Petal properties
         self.petal_count = 5
         self.base_orbit_radius = 50  # Default radius
         self.max_orbit_radius = 100  # Maximum expansion
-        self.min_orbit_radius = 30   # Minimum contraction
+        self.min_orbit_radius = 70   # Minimum contraction
         self.orbit_radius = self.base_orbit_radius  # Current radius
         self.orbit_speed = 0.05
         self.radius_change_speed = 3  # Speed of expansion/contraction
@@ -211,6 +211,15 @@ class GameEngine:
         self.input_active = False
         self.port_active = False
         self.connect_ip = None
+        
+        # Add after other initializations
+        self.boss_image = None
+        
+        # In the image loading section, add:
+        Boss.image = self.player_image  # Use player image for boss (will be scaled red)
+        
+        # Add after other initializations
+        self.has_boss = False  # Track if a boss exists
     
     def render_loading_screen(self, message):
         """Render the loading screen with progress bar"""
@@ -293,6 +302,14 @@ class GameEngine:
                 attempts += 1
     
     def create_mobile_monster(self):
+        # 0.1% chance to spawn boss instead of normal monster, but only if no boss exists
+        if random.random() < 0.001 and not self.has_boss:
+            self.has_boss = True
+            return Boss(
+                random.randint(50, self.world_width - 50),
+                random.randint(50, self.world_height - 50)
+            )
+            
         x = random.randint(50, self.world_width - 50)
         y = random.randint(50, self.world_height - 50)
         
@@ -442,6 +459,9 @@ class GameEngine:
                 
                 # Calculate heal amount based on time passed
                 heal_amount = self.heal_rate * time_diff
+
+                if any(isinstance(item, LeafItem) for item in player['equipped_petals']):
+                    heal_amount *= 3
                 
                 # Apply healing
                 player['health'] = min(player['health'] + heal_amount, self.max_health)
@@ -484,6 +504,13 @@ class GameEngine:
                     self.orbit_radius = min(self.orbit_radius + self.radius_change_speed, self.max_orbit_radius)
                 elif keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
                     self.orbit_radius = max(self.orbit_radius - self.radius_change_speed, self.min_orbit_radius)
+                elif keys[pygame.K_x]:  # Only spawn boss if none exists
+                    if not self.has_boss:
+                        self.boss_x = player['x'] + 1000
+                        self.boss_y = player['y']
+                        monster = Boss(self.boss_x, self.boss_y)
+                        self.monsters.append(monster)
+                        self.has_boss = True
                 else:
                     # Gradually return to base radius when no key is pressed
                     if self.orbit_radius > self.base_orbit_radius:
@@ -742,6 +769,8 @@ class GameEngine:
                             # Drop a rock item if the monster is a Rock
                             if isinstance(monster, Rock):
                                 self.dropped_items.append(DroppedItem(RockItem(), monster.x, monster.y))
+                            elif isinstance(monster, Tree) or isinstance(monster, Bush):
+                                self.dropped_items.append(DroppedItem(LeafItem(), monster.x, monster.y))
                             else:
                                 dropped_item = random.choice(self.possible_items)
                                 self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
@@ -757,11 +786,20 @@ class GameEngine:
                         if distance < min_distance:
                             # Calculate bounce vector from flower center
                             if distance > 0:
+                                # Apply knockback to monster
                                 bounce_strength = 40  # Stronger bounce from center
                                 dx = (dx / distance) * bounce_strength
                                 dy = (dy / distance) * bounce_strength
-                                monster.x = player['x'] + dx
-                                monster.y = player['y'] + dy
+                                
+                                # Apply knockback based on monster type
+                                if isinstance(monster, (Mouse, Cat)):
+                                    # Add velocity to monster for knockback
+                                    monster.velocity_x = dx
+                                    monster.velocity_y = dy
+                                else:
+                                    # Direct position adjustment for other monsters
+                                    monster.x = player['x'] + dx
+                                    monster.y = player['y'] + dy
                                 
                                 # Add slight randomness to prevent perfect bouncing
                                 monster.x += random.uniform(-3, 3)
@@ -775,6 +813,8 @@ class GameEngine:
                 
                 # Remove dead monsters and add new ones
                 for monster in monsters_to_remove:
+                    if isinstance(monster, Boss):
+                        self.has_boss = False  # Reset boss flag when boss dies
                     self.monsters.remove(monster)
                     if hasattr(monster, 'is_static') and monster.is_static:
                         # Create a new static monster of the same type
@@ -784,7 +824,7 @@ class GameEngine:
                         )
                         self.monsters.append(new_monster)
                     else:
-                        # Create a new mobile monster
+                        # Create a new mobile monster (not a boss since has_boss is checked in create_mobile_monster)
                         self.monsters.append(self.create_mobile_monster())
         
         # Update and render monsters

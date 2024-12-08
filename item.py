@@ -10,16 +10,17 @@ class Item:
                             'petal': (255, 255, 128),
                             'moon': (128, 128, 128),
                             'gambler': (255, 0, 0),
-                            'beetle': (0, 0, 255)
-                            }
+                            'beetle': (0, 0, 255),
+                            'leaf': (0, 255, 0)}
         self.item_damages = {'basic': 10,
                             'blueberries': 10,
                             'square': 1,
                             'rock': 5,
                             'petal': 1,
                             'moon': 2,
-                            'gambler': 5000,
-                            'beetle': 20}
+                            'gambler': 50,
+                            'beetle': 20,
+                            'leaf': 10}
         self.item_healths = {'basic': 100,
                               'blueberries': 100,
                               'square': 50,
@@ -27,7 +28,8 @@ class Item:
                               'petal': 100,
                               'moon': 1000,
                               'gambler': 1,
-                              'beetle': 50}
+                              'beetle': 50,
+                              'leaf': 100}
         self.name = name
         self.color = self.item_colors[name.lower()]
         self.damage = self.item_damages[name.lower()]
@@ -70,3 +72,8 @@ class DroppedItem:
 class RockItem(Item):
     def __init__(self):
         super().__init__("Rock", (169, 169, 169), damage=0, radius=10, max_health=1, image_path="items/rock.png")
+
+class LeafItem(Item):
+    def __init__(self):
+        super().__init__("Leaf", (0, 255, 0), damage=10, radius=10, max_health=100, image_path="items/leaf.png", image=pygame.image.load("items/leaf.png").convert_alpha())
+

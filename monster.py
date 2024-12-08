@@ -126,7 +126,7 @@ class Mouse(Monster):
         self.color = (150, 150, 150)
         self.speed = 3
         self.radius = 15
-        self.knockback_resistance = 0.98
+        self.knockback_resistance = 0.95
         self.damage = 0.5
         self.name = "Mouse"
         self.preferred_zone = 'medium'
@@ -172,7 +172,7 @@ class Tank(Monster):
     def __init__(self, x, y):
         super().__init__(x, y, health=300)
         self.color = (139, 69, 19)
-        self.speed = 1
+        self.speed = 0
         self.radius = 30
         self.knockback_resistance = 0.8
         self.damage = 3
@@ -341,4 +341,33 @@ class Bee(Monster):
             pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
         
         self.draw_health_bar(screen, self.x, self.y - 45, self.health, 30)
+
+class Boss(Monster):
+    image = None  # Will be set by GameEngine
+    
+    def __init__(self, x, y):
+        super().__init__(x, y, health=8000)
+        self.color = (255, 0, 0)  # Red
+        self.speed = 1.5  # 50% of player speed (assuming player speed is 3)
+        self.radius = 200  # 10x player size (player is ~20 radius)
+        self.knockback_resistance = 0.99  # Very resistant to knockback
+        self.damage = 10
+        self.name = "Boss"
+        self.max_health = 8000
+        
+    def render(self, screen):
+        if self.image:
+            angle = self.get_angle_to_target()
+            # Scale the image to 10x size
+            scaled_image = pygame.transform.scale(self.image, (400, 400))  # 10x normal size
+            rotated_image = pygame.transform.rotate(scaled_image, -angle - 90)
+            screen.blit(rotated_image, 
+                       (int(self.x - rotated_image.get_width()/2), 
+                        int(self.y - rotated_image.get_height()/2)))
+        else:
+            # Fallback to circle if no image
+            pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        
+        # Draw health bar above boss
+        self.draw_health_bar(screen, self.x, self.y - self.radius - 20, self.health, self.max_health)
   
