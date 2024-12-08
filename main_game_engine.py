@@ -36,14 +36,27 @@ class GameEngine:
         self.loading_progress = 20
         self.render_loading_screen("Creating items...")
         
-        # Define possible items with different health values
-        self.possible_items = [
-            Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100),
-            Item("Fire Petal", (255, 100, 0), damage=15, radius=12, max_health=80),
-            Item("Ice Petal", (0, 255, 255), damage=12, radius=11, max_health=120),
-            Item("Poison Petal", (0, 255, 0), damage=8, radius=13, max_health=150),
-            RockItem()
-        ]
+        # Load item images and create possible items
+        self.item_images = {}
+        self.possible_items = []
+        self.load_item_images()
+        
+        # Create items based on loaded images
+        for item_name, image in self.item_images.items():
+            # Create item with image
+            item = Item(
+                name=item_name.capitalize(),  # Convert filename to proper name
+                color=(255, 255, 255),  # Default color (not used when image exists)
+                damage=random.randint(8, 25),  # Random damage between 8-25
+                radius=20,  # Standard radius for all items
+                max_health=random.randint(70, 150),  # Random health between 70-150
+                image_path=f"items/{item_name}.png"
+            )
+            item.image = image  # Set the loaded image
+            self.possible_items.append(item)
+        
+        # Add rock item at the end
+        self.possible_items.append(RockItem())
         
         # Petal properties
         self.petal_count = 5
@@ -310,8 +323,26 @@ class GameEngine:
             player_data['image'] = self.player_image  # Set the player image
             self.players[player_id] = player_data
         else:
-            # Create new player with default values
-            basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
+            # Find the basic petal from loaded items
+            basic_petal = None
+            for item in self.possible_items:
+                if item.name.lower() == "basic":
+                    basic_petal = Item(
+                        item.name,
+                        item.color,
+                        damage=item.damage,
+                        radius=item.radius,
+                        max_health=item.max_health,
+                        image_path=item.image_path
+                    )
+                    basic_petal.image = item.image
+                    break
+            
+            # If no basic petal found, create default one
+            if basic_petal is None:
+                basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
+            
+            # Create new player with basic petals
             self.players[player_id] = {
                 'x': x,
                 'y': y,
@@ -462,7 +493,16 @@ class GameEngine:
             return
         
         # Create a new instance of the item to ensure separate health values
-        new_item = Item(item.name, item.color, item.damage, item.radius, item.max_health)
+        new_item = Item(
+            item.name, 
+            item.color, 
+            damage=item.damage, 
+            radius=item.radius, 
+            max_health=item.max_health,
+            image_path=item.image_path
+        )
+        new_item.image = item.image  # Copy the image reference
+        
         if item.name in player['inventory']:
             player['inventory'][item.name]['count'] += 1
         else:
@@ -481,8 +521,15 @@ class GameEngine:
         inventory_surface.blit(text, (20, 20))
         
         for i, petal in enumerate(player['equipped_petals']):
-            if petal is not None:  # Check if petal is not None
-                pygame.draw.circle(inventory_surface, petal.color, (50 + i * 60, 70), 20)
+            if petal is not None:
+                if petal.image:
+                    # Draw petal image
+                    inventory_surface.blit(petal.image, 
+                        (35 + i * 60, 55))  # Adjust position as needed
+                else:
+                    # Fallback to circle
+                    pygame.draw.circle(inventory_surface, petal.color, 
+                        (50 + i * 60, 70), 20)
         
         # Draw inventory items
         text = font.render("Inventory:", True, (255, 255, 255))
@@ -495,7 +542,12 @@ class GameEngine:
             pos_y = 170 + (i // 8) * 60
             
             # Draw item
-            pygame.draw.circle(inventory_surface, item_data['item'].color, (pos_x, pos_y), 20)
+            if item_data['item'].image:
+                inventory_surface.blit(item_data['item'].image, 
+                    (pos_x - 20, pos_y - 20))  # Center the image
+            else:
+                pygame.draw.circle(inventory_surface, item_data['item'].color, 
+                    (pos_x, pos_y), 20)
             
             # Draw count
             count_text = small_font.render(str(item_data['count']), True, (255, 255, 255))
@@ -1100,13 +1152,43 @@ class GameEngine:
         self.loading_progress = 60
         pygame.time.wait(100)
         
-        # Fill empty petal slots with basic petals
+        # Fill empty petal slots with basic petals from loaded items
         if self.my_id in self.players:
             player = self.players[self.my_id]
+            basic_petal = None
+            
+            # Find the basic petal from loaded items
+            for item in self.possible_items:
+                if item.name.lower() == "basic":
+                    basic_petal = Item(
+                        item.name,
+                        item.color,
+                        damage=item.damage,
+                        radius=item.radius,
+                        max_health=item.max_health,
+                        image_path=item.image_path
+                    )
+                    basic_petal.image = item.image  # Make sure to copy the image
+                    break
+            
+            # If no basic petal found in items, create a default one
+            if basic_petal is None:
+                basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
+            
+            # Fill empty slots with copies of the basic petal
             for i in range(self.petal_count):
                 if player['equipped_petals'][i] is None:
-                    basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
-                    player['equipped_petals'][i] = basic_petal
+                    # Create a new copy for each slot
+                    slot_petal = Item(
+                        basic_petal.name,
+                        basic_petal.color,
+                        damage=basic_petal.damage,
+                        radius=basic_petal.radius,
+                        max_health=basic_petal.max_health,
+                        image_path=basic_petal.image_path
+                    )
+                    slot_petal.image = basic_petal.image  # Copy the image
+                    player['equipped_petals'][i] = slot_petal
         
         pygame.time.wait(100)
         
@@ -1140,3 +1222,21 @@ class GameEngine:
         
         # Switch to playing state
         self.game_state = "playing"
+
+    def load_item_images(self):
+        """Load all item images from the items directory"""
+        try:
+            import os
+            items_dir = "items"
+            for filename in os.listdir(items_dir):
+                if filename.endswith(".png"):
+                    item_name = os.path.splitext(filename)[0]
+                    image_path = os.path.join(items_dir, filename)
+                    try:
+                        image = pygame.image.load(image_path).convert_alpha()
+                        self.item_images[item_name] = image
+                        print(f"Loaded item image: {filename}")
+                    except Exception as e:
+                        print(f"Error loading item image {filename}: {e}")
+        except Exception as e:
+            print(f"Error loading item images: {e}")

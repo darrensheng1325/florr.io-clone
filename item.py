@@ -2,13 +2,15 @@ import pygame
 import math
 
 class Item:
-    def __init__(self, name, color, damage=10, radius=10, max_health=100):
+    def __init__(self, name, color, damage=10, radius=10, max_health=100, image_path=None):
         self.name = name
         self.color = color
         self.damage = damage
         self.radius = radius
         self.max_health = max_health
         self.health = max_health  # Current health
+        self.image_path = image_path
+        self.image = None  # Will be loaded by GameEngine
         
     def __eq__(self, other):
         return isinstance(other, Item) and self.name == other.name
@@ -36,14 +38,20 @@ class DroppedItem:
         self.bob_offset = math.sin(pygame.time.get_ticks() * self.bob_speed) * 5
 
     def render(self, surface):
-        # Draw the item with a slight glow effect
-        glow_radius = self.radius + 5
-        pygame.draw.circle(surface, (255, 255, 255, 128), 
-                         (int(self.x), int(self.y + self.bob_offset)), 
-                         glow_radius)
-        pygame.draw.circle(surface, self.item.color, 
-                         (int(self.x), int(self.y + self.bob_offset)), 
-                         self.radius) 
+        if self.item.image:
+            # Draw the item image with bobbing effect
+            surface.blit(self.item.image, 
+                (int(self.x - self.item.image.get_width()/2), 
+                 int(self.y + self.bob_offset - self.item.image.get_height()/2)))
+        else:
+            # Fallback to circle rendering
+            glow_radius = self.radius + 5
+            pygame.draw.circle(surface, (255, 255, 255, 128), 
+                             (int(self.x), int(self.y + self.bob_offset)), 
+                             glow_radius)
+            pygame.draw.circle(surface, self.item.color, 
+                             (int(self.x), int(self.y + self.bob_offset)), 
+                             self.radius)
 
 class RockItem(Item):
     def __init__(self):
