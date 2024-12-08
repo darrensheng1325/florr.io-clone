@@ -12,12 +12,28 @@ class Item:
                             'gambler': (255, 0, 0),
                             'beetle': (0, 0, 255)
                             }
+        self.item_damages = {'basic': 10,
+                            'blueberries': 10,
+                            'square': 1,
+                            'rock': 5,
+                            'petal': 1,
+                            'moon': 2,
+                            'gambler': 5000,
+                            'beetle': 20}
+        self.item_healths = {'basic': 100,
+                              'blueberries': 100,
+                              'square': 50,
+                              'rock': 200,
+                              'petal': 100,
+                              'moon': 1000,
+                              'gambler': 1,
+                              'beetle': 50}
         self.name = name
         self.color = self.item_colors[name.lower()]
-        self.damage = damage
+        self.damage = self.item_damages[name.lower()]
         self.radius = 10
-        self.max_health = max_health
-        self.health = max_health  # Current health
+        self.max_health = self.item_healths[name.lower()]
+        self.health = self.max_health  # Current health
         self.image_path = "items/" + self.name.lower() + ".png"
         self.image = image  # Will be loaded by GameEngine
         
