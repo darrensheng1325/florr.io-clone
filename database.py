@@ -1,6 +1,7 @@
 import sqlite3
 from contextlib import contextmanager
 from item import Item
+import pygame
 
 class GameDatabase:
     def __init__(self, db_path="game.db"):
@@ -40,6 +41,7 @@ class GameDatabase:
                     damage INTEGER,
                     radius INTEGER,
                     max_health INTEGER,
+                    image_path TEXT,
                     count INTEGER DEFAULT 1,
                     FOREIGN KEY (player_id) REFERENCES players (player_id)
                 )
@@ -56,6 +58,7 @@ class GameDatabase:
                     damage INTEGER,
                     radius INTEGER,
                     max_health INTEGER,
+                    image_path TEXT,
                     FOREIGN KEY (player_id) REFERENCES players (player_id)
                 )
             ''')
@@ -81,10 +84,10 @@ class GameDatabase:
                 item = item_data['item']
                 cursor.execute('''
                     INSERT INTO inventory 
-                    (player_id, item_name, item_color, damage, radius, max_health, count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (player_id, item_name, item_color, damage, radius, max_health, count, image_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (player_id, item.name, str(item.color), item.damage, 
-                     item.radius, item.max_health, item_data['count']))
+                     item.radius, item.max_health, item_data['count'], item.image_path))
 
             # Clear existing equipped petals
             cursor.execute('DELETE FROM equipped_petals WHERE player_id = ?', (player_id,))
@@ -94,10 +97,10 @@ class GameDatabase:
                 if petal is not None:
                     cursor.execute('''
                         INSERT INTO equipped_petals 
-                        (player_id, slot_index, item_name, item_color, damage, radius, max_health)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (player_id, slot_index, item_name, item_color, damage, radius, max_health, image_path)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (player_id, i, petal.name, str(petal.color), petal.damage, 
-                         petal.radius, petal.max_health))
+                         petal.radius, petal.max_health, petal.image_path))
 
             conn.commit()
 
@@ -125,27 +128,43 @@ class GameDatabase:
 
             # Load inventory
             cursor.execute('''
-                SELECT item_name, item_color, damage, radius, max_health, count 
+                SELECT item_name, item_color, damage, radius, max_health, count, image_path 
                 FROM inventory WHERE player_id = ?
             ''', (player_id,))
             
             for row in cursor.fetchall():
-                item_name, color_str, damage, radius, max_health, count = row
+                item_name, color_str, damage, radius, max_health, count, image_path = row
                 color = eval(color_str)  # Convert string representation back to tuple
-                item = Item(item_name, color, damage, radius, max_health)
+                item = Item(item_name, color, damage, radius, max_health, image_path)
+                
+                # Load the image if path exists
+                if image_path:
+                    try:
+                        item.image = pygame.image.load(image_path).convert_alpha()
+                    except Exception as e:
+                        print(f"Failed to load image for {item_name}: {e}")
+                
                 player_data['inventory'][item_name] = {'item': item, 'count': count}
 
             # Load equipped petals
             cursor.execute('''
-                SELECT slot_index, item_name, item_color, damage, radius, max_health 
+                SELECT slot_index, item_name, item_color, damage, radius, max_health, image_path 
                 FROM equipped_petals WHERE player_id = ?
                 ORDER BY slot_index
             ''', (player_id,))
             
             for row in cursor.fetchall():
-                slot_index, item_name, color_str, damage, radius, max_health = row
+                slot_index, item_name, color_str, damage, radius, max_health, image_path = row
                 color = eval(color_str)
-                petal = Item(item_name, color, damage, radius, max_health)
+                petal = Item(item_name, color, damage, radius, max_health, image_path)
+                
+                # Load the image if path exists
+                if image_path:
+                    try:
+                        petal.image = pygame.image.load(image_path).convert_alpha()
+                    except Exception as e:
+                        print(f"Failed to load image for {item_name}: {e}")
+                
                 player_data['equipped_petals'][slot_index] = petal
 
             return player_data 

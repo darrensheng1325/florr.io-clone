@@ -36,6 +36,17 @@ class GameEngine:
         self.loading_progress = 20
         self.render_loading_screen("Creating items...")
         
+        # Define color mappings for items based on their filenames
+        self.item_colors = {
+            'common': (255, 255, 255),    # White
+            'unusual': (255, 100, 0),     # Orange
+            'rare': (0, 255, 255),        # Cyan
+            'epic': (255, 0, 255),        # Purple
+            'legendary': (255, 255, 0),   # Yellow
+            'rock': (169, 169, 169),      # Gray
+            # Add more colors as needed
+        }
+        
         # Load item images and create possible items
         self.item_images = {}
         self.possible_items = []
@@ -43,17 +54,24 @@ class GameEngine:
         
         # Create items based on loaded images
         for item_name, image in self.item_images.items():
-            # Create item with image
+            # Get rarity from first word in filename (e.g., "common_petal" -> "common")
+            rarity = item_name.split('_')[0] if '_' in item_name else 'common'
+            
+            # Get color from rarity or default to white
+            color = self.item_colors.get(rarity, (255, 255, 255))
+            
+            # Create item with image and color
             item = Item(
-                name=item_name.capitalize(),  # Convert filename to proper name
-                color=(255, 255, 255),  # Default color (not used when image exists)
-                damage=random.randint(8, 25),  # Random damage between 8-25
-                radius=20,  # Standard radius for all items
-                max_health=random.randint(70, 150),  # Random health between 70-150
+                name=item_name.replace('_', ' ').title(),  # Convert filename to proper name
+                color=color,
+                damage=random.randint(8, 25),
+                radius=20,
+                max_health=random.randint(70, 150),
                 image_path=f"items/{item_name}.png"
             )
-            item.image = image  # Set the loaded image
+            item.image = image
             self.possible_items.append(item)
+            print(f"Created item: {item.name} with image")
         
         # Add rock item at the end
         self.possible_items.append(RockItem())
@@ -499,7 +517,7 @@ class GameEngine:
             damage=item.damage, 
             radius=item.radius, 
             max_health=item.max_health,
-            image_path=item.image_path
+            image_path=item.image_path,
         )
         new_item.image = item.image  # Copy the image reference
         
@@ -527,9 +545,7 @@ class GameEngine:
                     inventory_surface.blit(petal.image, 
                         (35 + i * 60, 55))  # Adjust position as needed
                 else:
-                    # Fallback to circle
-                    pygame.draw.circle(inventory_surface, petal.color, 
-                        (50 + i * 60, 70), 20)
+                    print(f"Petal {petal.name} has no image")
         
         # Draw inventory items
         text = font.render("Inventory:", True, (255, 255, 255))
@@ -614,7 +630,7 @@ class GameEngine:
             if current_time >= respawn_time:
                 # Create a fresh copy of the item with full health
                 new_petal = Item(item.name, item.color, item.damage, 
-                               item.radius, item.max_health)
+                               item.radius, item.max_health, item.image_path, pygame.image.load(item.image_path).convert_alpha())
                 new_petal.reset_health()  # Ensure full health
                 self.players[self.my_id]['equipped_petals'][slot] = new_petal
                 slots_to_respawn.append(slot)
@@ -685,7 +701,7 @@ class GameEngine:
                 petal_x = player['x'] + self.orbit_radius * math.cos(angle)
                 petal_y = player['y'] + self.orbit_radius * math.sin(angle)
                 
-                # Draw petal
+                # Always draw petals as circles in game
                 pygame.draw.circle(world_surface, petal.color, 
                                  (int(petal_x), int(petal_y)), petal.radius)
                 
@@ -974,10 +990,10 @@ class GameEngine:
                 petal = player['equipped_petals'][i]
                 if petal is not None:
                     # Draw base petal
-                    pygame.draw.circle(ui_surface, petal.color, 
-                                     (start_x + i * (petal_size + 10) + petal_size // 2, 
-                                      20 + petal_size // 2), 
-                                     petal_size // 2 - 2)
+                    if petal.image:
+                        ui_surface.blit(petal.image, (start_x + i * (petal_size + 10), 20))
+                    else:
+                        print(f"No image for {petal.name + petal.image_path}")
                     
                     # Draw gray overlay based on health
                     if petal.health < petal.max_health:
@@ -1168,12 +1184,11 @@ class GameEngine:
                         max_health=item.max_health,
                         image_path=item.image_path
                     )
-                    basic_petal.image = item.image  # Make sure to copy the image
                     break
             
             # If no basic petal found in items, create a default one
             if basic_petal is None:
-                basic_petal = Item("Basic Petal", (255, 255, 255), damage=10, radius=10, max_health=100)
+                basic_petal = Item("basic", (255, 255, 255), damage=10, radius=10, max_health=100, image_path=None)
             
             # Fill empty slots with copies of the basic petal
             for i in range(self.petal_count):
@@ -1185,7 +1200,6 @@ class GameEngine:
                         damage=basic_petal.damage,
                         radius=basic_petal.radius,
                         max_health=basic_petal.max_health,
-                        image_path=basic_petal.image_path
                     )
                     slot_petal.image = basic_petal.image  # Copy the image
                     player['equipped_petals'][i] = slot_petal
@@ -1228,6 +1242,10 @@ class GameEngine:
         try:
             import os
             items_dir = "items"
+            if not os.path.exists(items_dir):
+                print(f"Warning: Items directory '{items_dir}' not found!")
+                return
+            
             for filename in os.listdir(items_dir):
                 if filename.endswith(".png"):
                     item_name = os.path.splitext(filename)[0]
