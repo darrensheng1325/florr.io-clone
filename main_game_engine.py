@@ -202,24 +202,26 @@ class GameEngine:
         self.render_loading_screen("Done!")
         pygame.time.wait(500)  # Show 100% for half a second
         
-        # Switch to title screen
-        self.game_state = "title"
-        
-        # Add after other initializations
+        # Move these initializations BEFORE switching game state
         self.input_text = ""  # IP input
         self.port_text = ""   # Port input
         self.input_active = False
         self.port_active = False
         self.connect_ip = None
         
-        # Add after other initializations
         self.boss_image = None
+        Boss.image = self.player_image  # Use player image for boss
         
-        # In the image loading section, add:
-        Boss.image = self.player_image  # Use player image for boss (will be scaled red)
-        
-        # Add after other initializations
         self.has_boss = False  # Track if a boss exists
+        self.is_host = False  # Will be set to True for the first connected client
+        self.monster_positions = {}  # Store monster positions received from host
+        
+        # Finally switch to title screen
+        self.game_state = "title"
+        self.render_title_screen()  # Force initial render of title screen
+        
+        # Add callback for item pickups
+        self.item_pickup_callback = None
     
     def render_loading_screen(self, message):
         """Render the loading screen with progress bar"""
@@ -419,11 +421,18 @@ class GameEngine:
                         self.input_active = False
                         self.port_active = False
                     
-                    # Check for start button click
-                    if hasattr(self, 'start_button_rect') and self.start_button_rect.collidepoint(event.pos):
+                    # Check for host button click
+                    if hasattr(self, 'host_button_rect') and self.host_button_rect.collidepoint(event.pos):
+                        self.is_host = True
+                        self.start_game()
+                        return None
+                    
+                    # Check for join button click
+                    if hasattr(self, 'join_button_rect') and self.join_button_rect.collidepoint(event.pos):
                         if self.input_text.strip() and self.port_text.strip():
                             self.connect_ip = f"{self.input_text.strip()}:{self.port_text.strip()}"
-                        self.start_game()
+                            self.is_host = False
+                            self.start_game()
                         return None
                 elif event.type == pygame.KEYDOWN:
                     if self.input_active:
@@ -544,9 +553,10 @@ class GameEngine:
             damage=item.damage, 
             radius=item.radius, 
             max_health=item.max_health,
-            image_path=item.image_path,
+            image_path=item.image_path if hasattr(item, 'image_path') else None
         )
-        new_item.image = item.image  # Copy the image reference
+        if hasattr(item, 'image'):
+            new_item.image = item.image  # Copy the image reference
         
         if item.name in player['inventory']:
             player['inventory'][item.name]['count'] += 1
@@ -689,23 +699,7 @@ class GameEngine:
             dropped_item.update()
             dropped_item.render(world_surface)
         
-        # Check for item pickup
-        if self.my_id in self.players:
-            player = self.players[self.my_id]
-            items_to_remove = []
-            
-            for dropped_item in self.dropped_items:
-                distance = math.sqrt((player['x'] - dropped_item.x)**2 + 
-                                   (player['y'] - dropped_item.y)**2)
-                if distance < 30:  # Pickup radius
-                    self.add_item_to_inventory(player, dropped_item.item)
-                    items_to_remove.append(dropped_item)
-                    print(f"Picked up: {dropped_item.item.name}")
-            
-            # Remove collected items
-            for item in items_to_remove:
-                self.dropped_items.remove(item)
-        
+        # Render all players and their petals first
         for player_id, player in self.players.items():
             # Draw player
             world_surface.blit(
@@ -732,150 +726,166 @@ class GameEngine:
                 pygame.draw.circle(world_surface, petal.color, 
                                  (int(petal_x), int(petal_y)), petal.radius)
                 
-                # Check collision with monsters
-                monsters_to_remove = []
-                for monster in self.monsters:
-                    if self.check_collision(petal_x, petal_y, monster, petal=petal):
-                        # Petal takes damage when hitting monsters
-                        if petal.take_damage(5):  # Petal damage amount
-                            # Store broken petal info and schedule respawn
-                            self.broken_petals[i] = (
-                                Item(petal.name, petal.color, petal.damage, 
-                                     petal.radius, petal.max_health),
-                                current_time + self.petal_respawn_time
-                            )
-                            player['equipped_petals'][i] = None  # Remove broken petal
-                            break
-                        
-                        # Calculate bounce vector for monster
-                        if not hasattr(monster, 'is_static') or not monster.is_static:
-                            dx = monster.x - petal_x
-                            dy = monster.y - petal_y
-                            distance = math.sqrt(dx * dx + dy * dy)
-                            if distance > 0:
-                                # Normalize and apply bounce force
-                                bounce_strength = 30
-                                dx = (dx / distance) * bounce_strength
-                                dy = (dy / distance) * bounce_strength
-                                monster.x += dx
-                                monster.y += dy
-                                
-                                # Add some randomness to prevent predictable bouncing
-                                monster.x += random.uniform(-5, 5)
-                                monster.y += random.uniform(-5, 5)
-                        
-                        if monster.take_damage(petal.damage):
-                            monsters_to_remove.append(monster)
-                            # Drop a rock item if the monster is a Rock
-                            if isinstance(monster, Rock):
-                                self.dropped_items.append(DroppedItem(RockItem(), monster.x, monster.y))
-                            elif isinstance(monster, Tree) or isinstance(monster, Bush):
-                                self.dropped_items.append(DroppedItem(LeafItem(), monster.x, monster.y))
-                            else:
-                                dropped_item = random.choice(self.possible_items)
-                                self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
-                
-                # Check collision with player center (flower)
-                for monster in self.monsters:
-                    if not hasattr(monster, 'is_static') or not monster.is_static:
-                        dx = monster.x - player['x']
-                        dy = monster.y - player['y']
-                        distance = math.sqrt(dx * dx + dy * dy)
-                        min_distance = self.player_image.get_width() // 2 + monster.radius
-                        
-                        if distance < min_distance:
-                            # Calculate bounce vector from flower center
-                            if distance > 0:
-                                # Apply knockback to monster
-                                bounce_strength = 40  # Stronger bounce from center
-                                dx = (dx / distance) * bounce_strength
-                                dy = (dy / distance) * bounce_strength
-                                
-                                # Apply knockback based on monster type
-                                if isinstance(monster, (Mouse, Cat)):
-                                    # Add velocity to monster for knockback
-                                    monster.velocity_x = dx
-                                    monster.velocity_y = dy
-                                else:
-                                    # Direct position adjustment for other monsters
-                                    monster.x = player['x'] + dx
-                                    monster.y = player['y'] + dy
-                                
-                                # Add slight randomness to prevent perfect bouncing
-                                monster.x += random.uniform(-3, 3)
-                                monster.y += random.uniform(-3, 3)
+                # Check collision with monsters only if this is our player
+                if player_id == self.my_id:
+                    monsters_to_remove = []
+                    for monster in self.monsters:
+                        if self.check_collision(petal_x, petal_y, monster, petal=petal):
+                            # Petal takes damage when hitting monsters
+                            if petal.take_damage(5):  # Petal damage amount
+                                # Store broken petal info and schedule respawn
+                                self.broken_petals[i] = (
+                                    Item(petal.name, petal.color, petal.damage, 
+                                         petal.radius, petal.max_health),
+                                    current_time + self.petal_respawn_time
+                                )
+                                player['equipped_petals'][i] = None  # Remove broken petal
+                                break
                             
-                            # Damage the player
-                            player['health'] -= monster.damage
-                            if player['health'] <= 0:
-                                self.show_death_screen()
-                                return
-                
-                # Remove dead monsters and add new ones
-                for monster in monsters_to_remove:
-                    if isinstance(monster, Boss):
-                        self.has_boss = False  # Reset boss flag when boss dies
-                    self.monsters.remove(monster)
-                    if hasattr(monster, 'is_static') and monster.is_static:
-                        # Create a new static monster of the same type
-                        new_monster = type(monster)(
-                            random.randint(50, self.world_width - 50),
-                            random.randint(50, self.world_height - 50)
-                        )
-                        self.monsters.append(new_monster)
-                    else:
-                        # Create a new mobile monster (not a boss since has_boss is checked in create_mobile_monster)
-                        self.monsters.append(self.create_mobile_monster())
-        
-        # Update and render monsters
-        for i, monster in enumerate(self.monsters):
-            # Apply collision avoidance between monsters
-            if not hasattr(monster, 'is_static') or not monster.is_static:
-                separation = pygame.math.Vector2(0, 0)
-                nearby_count = 0
-                
-                # Check collision with other monsters
-                for other in self.monsters:
-                    if monster != other:
-                        distance = math.sqrt((monster.x - other.x)**2 + (monster.y - other.y)**2)
-                        min_distance = monster.radius + other.radius + 20  # Add some buffer space
-                        
-                        if distance < min_distance:
-                            # Calculate separation vector
-                            if distance > 0:  # Avoid division by zero
-                                diff = pygame.math.Vector2(monster.x - other.x, monster.y - other.y)
-                                diff = diff.normalize() * (min_distance - distance)
-                                separation += diff
-                                nearby_count += 1
-                
-                # Apply separation if there are nearby monsters
-                if nearby_count > 0:
-                    separation = separation / nearby_count
-                    # Apply the separation more strongly to smaller monsters
-                    separation_strength = 1.0
-                    if isinstance(monster, Mouse):
-                        separation_strength = 1.5
-                    elif isinstance(monster, Cat):
-                        separation_strength = 1.2
+                            # Calculate bounce vector for monster
+                            if not hasattr(monster, 'is_static') or not monster.is_static:
+                                dx = monster.x - petal_x
+                                dy = monster.y - petal_y
+                                distance = math.sqrt(dx * dx + dy * dy)
+                                if distance > 0:
+                                    # Normalize and apply bounce force
+                                    bounce_strength = 30
+                                    dx = (dx / distance) * bounce_strength
+                                    dy = (dy / distance) * bounce_strength
+                                    monster.x += dx
+                                    monster.y += dy
+                                    
+                                    # Add some randomness to prevent predictable bouncing
+                                    monster.x += random.uniform(-5, 5)
+                                    monster.y += random.uniform(-5, 5)
+                            
+                            if monster.take_damage(petal.damage):
+                                monsters_to_remove.append(monster)
+                                # Drop items only if we're the host
+                                if self.is_host:
+                                    if isinstance(monster, Rock):
+                                        self.dropped_items.append(DroppedItem(RockItem(), monster.x, monster.y))
+                                    elif isinstance(monster, Tree) or isinstance(monster, Bush):
+                                        self.dropped_items.append(DroppedItem(LeafItem(), monster.x, monster.y))
+                                    else:
+                                        dropped_item = random.choice(self.possible_items)
+                                        self.dropped_items.append(DroppedItem(dropped_item, monster.x, monster.y))
+    
+        # Track monsters to remove
+        monsters_to_remove = []
+
+        # Only host should update monsters and handle drops
+        if self.is_host:
+            # Update and render monsters
+            for i, monster in enumerate(self.monsters):
+                # Apply collision avoidance between monsters
+                if not hasattr(monster, 'is_static') or not monster.is_static:
+                    separation = pygame.math.Vector2(0, 0)
+                    nearby_count = 0
                     
-                    monster.x += separation.x * separation_strength
-                    monster.y += separation.y * separation_strength
+                    # Check collision with other monsters
+                    for other in self.monsters:
+                        if monster != other:
+                            distance = math.sqrt((monster.x - other.x)**2 + (monster.y - other.y)**2)
+                            min_distance = monster.radius + other.radius + 20  # Add some buffer space
+                            
+                            if distance < min_distance:
+                                # Calculate separation vector
+                                if distance > 0:  # Avoid division by zero
+                                    diff = pygame.math.Vector2(monster.x - other.x, monster.y - other.y)
+                                    diff = diff.normalize() * (min_distance - distance)
+                                    separation += diff
+                                    nearby_count += 1
+                    
+                    # Apply separation if there are nearby monsters
+                    if nearby_count > 0:
+                        separation = separation / nearby_count
+                        # Apply the separation more strongly to smaller monsters
+                        separation_strength = 1.0
+                        if isinstance(monster, Mouse):
+                            separation_strength = 1.5
+                        elif isinstance(monster, Cat):
+                            separation_strength = 1.2
+                        
+                        monster.x += separation.x * separation_strength
+                        monster.y += separation.y * separation_strength
+                    
+                    # Keep monsters within world bounds
+                    monster.x = max(monster.radius, min(self.world_width - monster.radius, monster.x))
+                    monster.y = max(monster.radius, min(self.world_height - monster.radius, monster.y))
                 
-                # Keep monsters within world bounds
-                monster.x = max(monster.radius, min(self.world_width - monster.radius, monster.x))
-                monster.y = max(monster.radius, min(self.world_height - monster.radius, monster.y))
+                monster.update(self.players)  # Update monster AI
+                monster.render(world_surface)
+                
+                # Check collision with player
+                if self.my_id in self.players:
+                    player = self.players[self.my_id]
+                    if self.check_collision(player['x'], player['y'], monster, player_collision=True):
+                        player['health'] -= monster.damage
+                        if player['health'] <= 0:
+                            self.show_death_screen()
+                            return
+
+                # Check if monster is dead
+                if monster.health <= 0:
+                    monsters_to_remove.append(monster)
+                    if isinstance(monster, Boss):
+                        self.has_boss = False
+
+        else:
+            # Clients only render monsters and handle player damage
+            for monster in self.monsters:
+                monster.render(world_surface)
+                
+                # Check collision with player for damage only
+                if self.my_id in self.players:
+                    player = self.players[self.my_id]
+                    if self.check_collision(player['x'], player['y'], monster, player_collision=True):
+                        player['health'] -= monster.damage
+                        if player['health'] <= 0:
+                            self.show_death_screen()
+                            return
+
+                # Check if monster is dead (clients still need to remove dead monsters)
+                if monster.health <= 0:
+                    monsters_to_remove.append(monster)
+                    if isinstance(monster, Boss):
+                        self.has_boss = False
+
+        # Remove dead monsters and spawn new ones (host only)
+        for monster in monsters_to_remove:
+            self.monsters.remove(monster)
+            if self.is_host:
+                if hasattr(monster, 'is_static') and monster.is_static:
+                    # Create a new static monster of the same type
+                    new_monster = type(monster)(
+                        random.randint(50, self.world_width - 50),
+                        random.randint(50, self.world_height - 50)
+                    )
+                    self.monsters.append(new_monster)
+                else:
+                    # Create a new mobile monster
+                    self.monsters.append(self.create_mobile_monster())
+
+        # All clients handle their own item pickups and inventory
+        if self.my_id in self.players:
+            player = self.players[self.my_id]
+            items_to_remove = []
             
-            monster.update(self.players)  # Update monster AI
-            monster.render(world_surface)
+            for dropped_item in self.dropped_items:
+                distance = math.sqrt((player['x'] - dropped_item.x)**2 + 
+                                   (player['y'] - dropped_item.y)**2)
+                if distance < 30:  # Pickup radius
+                    self.add_item_to_inventory(player, dropped_item.item)
+                    items_to_remove.append(dropped_item)
+                    print(f"Picked up: {dropped_item.item.name}")
             
-            # Check collision with player
-            if self.my_id in self.players:
-                player = self.players[self.my_id]
-                if self.check_collision(player['x'], player['y'], monster, player_collision=True):
-                    player['health'] -= monster.damage
-                    if player['health'] <= 0:
-                        self.show_death_screen()
-                        return
+            # Remove collected items
+            for item in items_to_remove:
+                self.dropped_items.remove(item)
+                # Notify host about item pickup if callback is set
+                if not self.is_host and self.item_pickup_callback:
+                    self.item_pickup_callback(item)
         
         # Determine camera position
         player = self.players[self.my_id]
@@ -1152,16 +1162,27 @@ class GameEngine:
         self.screen.blit(ip_label, ip_label_rect)
         self.screen.blit(port_label, port_label_rect)
         
-        # Create start button
-        button_surface = pygame.Surface((200, 60))
-        button_surface.fill((0, 128, 0))  # Green button
-        pygame.draw.rect(button_surface, (255, 255, 255), button_surface.get_rect(), 2)
+        # Create host button
+        host_button = pygame.Surface((200, 60))
+        host_button.fill((0, 128, 0))  # Green button
+        pygame.draw.rect(host_button, (255, 255, 255), host_button.get_rect(), 2)
         
-        button_text = font_button.render("Ready", True, (255, 255, 255))
-        button_text_rect = button_text.get_rect(center=(100, 30))
-        button_surface.blit(button_text, button_text_rect)
+        host_text = font_button.render("Host", True, (255, 255, 255))
+        host_text_rect = host_text.get_rect(center=(100, 30))
+        host_button.blit(host_text, host_text_rect)
         
-        button_rect = button_surface.get_rect(center=(400, 450))
+        host_button_rect = host_button.get_rect(center=(300, 450))
+        
+        # Create join button
+        join_button = pygame.Surface((200, 60))
+        join_button.fill((0, 128, 0))  # Green button
+        pygame.draw.rect(join_button, (255, 255, 255), join_button.get_rect(), 2)
+        
+        join_text = font_button.render("Join", True, (255, 255, 255))
+        join_text_rect = join_text.get_rect(center=(100, 30))
+        join_button.blit(join_text, join_text_rect)
+        
+        join_button_rect = join_button.get_rect(center=(500, 450))
         
         # Controls text
         controls_text = [
@@ -1173,7 +1194,8 @@ class GameEngine:
         
         # Draw everything
         self.screen.blit(title_text, title_rect)
-        self.screen.blit(button_surface, button_rect)
+        self.screen.blit(host_button, host_button_rect)
+        self.screen.blit(join_button, join_button_rect)
         
         # Draw controls text
         for i, text in enumerate(controls_text):
@@ -1182,7 +1204,8 @@ class GameEngine:
             self.screen.blit(control_text, control_rect)
         
         # Store rects for click/input detection
-        self.start_button_rect = button_rect
+        self.host_button_rect = host_button_rect
+        self.join_button_rect = join_button_rect
         self.input_box_rect = ip_box
         self.port_box_rect = port_box
         
@@ -1298,3 +1321,56 @@ class GameEngine:
                         print(f"Error loading item image {filename}: {e}")
         except Exception as e:
             print(f"Error loading item images: {e}")
+
+    def update_monster_positions(self, monster_data):
+        """Update monster positions received from host"""
+        if not monster_data or self.is_host:
+            return
+        
+        # Update or create monsters based on received data
+        new_monsters = []
+        for i, pos in monster_data.items():
+            # Get or create monster based on type
+            if i < len(self.monsters):
+                monster = self.monsters[i]
+            else:
+                # Create new monster of correct type
+                monster_type = globals()[pos['type']]  # Convert string to class
+                monster = monster_type(pos['x'], pos['y'])
+                new_monsters.append(monster)
+            
+            # Update monster properties
+            monster.x = pos['x']
+            monster.y = pos['y']
+            monster.health = pos['health']
+            monster.target_x = pos.get('target_x', monster.x)
+            monster.target_y = pos.get('target_y', monster.y)
+        
+        # Add any new monsters
+        self.monsters.extend(new_monsters)
+        
+        # Remove extra monsters if there are more local than received
+        while len(self.monsters) > len(monster_data):
+            self.monsters.pop()
+
+    def get_monster_positions(self):
+        """Get current monster positions to send to other clients"""
+        if not self.is_host:
+            return None
+        
+        monster_data = {}
+        for i, monster in enumerate(self.monsters):
+            monster_data[i] = {
+                'x': monster.x,
+                'y': monster.y,
+                'health': monster.health,
+                'target_x': monster.target_x,
+                'target_y': monster.target_y,
+                'type': monster.__class__.__name__,
+                'died': monster.health <= 0
+            }
+        return monster_data
+
+    def set_item_pickup_callback(self, callback):
+        """Set the callback function for item pickups"""
+        self.item_pickup_callback = callback
