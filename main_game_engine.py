@@ -11,12 +11,54 @@ from item import Item, DroppedItem, RockItem, LeafItem
 from monster import Mouse, Cat, Tank, Bush, Tree, Rock, Ant, Bee, Boss
 from database import GameDatabase
 
+class TitlePetal:
+    def __init__(self, x, y, speed, color, size):
+        self.x = x
+        self.y = y
+        self.speed = speed
+        self.color = color
+        self.size = size
+        self.angle = 0
+        self.spin_speed = random.uniform(0.02, 0.05)
+
+    def update(self, width):
+        self.x += self.speed
+        self.angle += self.spin_speed
+        if self.x > width + 50:  # Reset when off screen
+            self.x = -50
+
+    def render(self, surface):
+        # Draw a rotating petal
+        points = []
+        for i in range(5):
+            angle = self.angle + (2 * math.pi * i) / 5
+            px = self.x + math.cos(angle) * self.size
+            py = self.y + math.sin(angle) * self.size
+            points.append((px, py))
+        pygame.draw.polygon(surface, self.color, points)
+
 class GameEngine:
     def __init__(self, width=4800, height=1200, initial_monster_count=5):
         pygame.init()
         self.screen = pygame.display.set_mode((800, 600))
         pygame.display.set_caption("P2P Game")
         self.clock = pygame.time.Clock()
+        
+        # Add title screen petals
+        self.title_petals = []
+        for _ in range(15):  # Create 15 floating petals
+            x = random.randint(-50, 850)
+            y = random.randint(50, 550)
+            speed = random.uniform(1, 3)
+            color = random.choice([
+                (255, 255, 255),  # White
+                (255, 100, 0),    # Orange
+                (0, 255, 255),    # Cyan
+                (255, 0, 255),    # Purple
+                (255, 255, 0)     # Yellow
+            ])
+            size = random.randint(8, 15)
+            self.title_petals.append(TitlePetal(x, y, speed, color, size))
         
         # Add game state
         self.game_state = "loading"  # Can be "loading", "title", or "playing"
@@ -1122,11 +1164,16 @@ class GameEngine:
         # Fill background
         self.screen.fill((28, 168, 99))  # Light green background
         
+        # Update and render floating petals
+        for petal in self.title_petals:
+            petal.update(800)  # Update with screen width
+            petal.render(self.screen)
+        
         # Create fonts
         font_title = pygame.font.Font(None, 74)  # Smaller title font
         font_button = pygame.font.Font(None, 48)  # Button font
         font_small = pygame.font.Font(None, 24)  # Smaller controls font
-        
+
         # Create title text
         title_text = font_title.render("florr.io", True, (255, 255, 255))
         title_rect = title_text.get_rect(center=(400, 100))
