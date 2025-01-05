@@ -342,6 +342,95 @@ class Bee(Monster):
         
         self.draw_health_bar(screen, self.x, self.y - 45, self.health, 30)
 
+class Bird(Monster):
+    image = None  # Will be set by GameEngine
+    
+    def __init__(self, x, y):
+        super().__init__(x, y)
+        self.radius = 30
+        self.health = 80
+        self.damage = 15
+        self.speed = 2.5
+        self.name = "Bird"
+        self.color = (74, 74, 74)  # Gray fallback color
+        self.direction_timer = random.uniform(0, 3)
+        self.move_direction = pygame.math.Vector2(1, 0).rotate(random.uniform(0, 360))
+        self.hover_offset = random.uniform(0, 2 * math.pi)
+        self.swooping = False
+        self.swoop_target_x = 0
+        self.swoop_target_y = 0
+        self.swoop_speed = 4
+        self.swoop_cooldown = 0
+    
+    def update(self, players):
+        # Update swoop cooldown
+        if self.swoop_cooldown > 0:
+            self.swoop_cooldown -= 0.016  # Assuming 60 FPS
+        
+        if self.swooping:
+            # Move towards swoop target at high speed
+            dx = self.swoop_target_x - self.x
+            dy = self.swoop_target_y - self.y
+            distance = math.sqrt(dx * dx + dy * dy)
+            
+            if distance > 0:
+                self.x += (dx / distance) * self.swoop_speed
+                self.y += (dy / distance) * self.swoop_speed
+            
+            # End swoop if we're close to target
+            if distance < 10:
+                self.swooping = False
+                self.swoop_cooldown = 3  # 3 second cooldown
+        else:
+            # Normal movement with random direction changes
+            self.direction_timer -= 0.016
+            if self.direction_timer <= 0:
+                # Change direction randomly
+                self.move_direction = pygame.math.Vector2(1, 0).rotate(random.uniform(0, 360))
+                self.direction_timer = random.uniform(1, 2)  # Shorter timer for more agile movement
+                
+                # Maybe start a swoop if cooldown is ready
+                if self.swoop_cooldown <= 0 and random.random() < 0.3:  # 30% chance to swoop
+                    nearest_x, nearest_y = self.find_nearest_player(players)
+                    self.swooping = True
+                    self.swoop_target_x = nearest_x
+                    self.swoop_target_y = nearest_y
+            
+            # Add slight hovering motion
+            hover = math.sin(time.time() * 2 + self.hover_offset) * 0.3
+            
+            # Move in current direction with hovering effect
+            self.x += self.move_direction.x * self.speed + random.uniform(-0.1, 0.1)
+            self.y += self.move_direction.y * self.speed + hover + random.uniform(-0.1, 0.1)
+        
+        # Update angle for rendering - bird always faces movement direction
+        if self.swooping:
+            self.angle = math.degrees(math.atan2(
+                self.swoop_target_y - self.y,
+                self.swoop_target_x - self.x
+            ))
+        else:
+            self.angle = math.degrees(math.atan2(
+                self.move_direction.y,
+                self.move_direction.x
+            ))
+    
+    def render(self, screen):
+        if self.image is not None:
+            try:
+                # Rotate image to face movement direction
+                rotated_image = pygame.transform.rotate(self.image, -self.angle - 90)
+                screen.blit(rotated_image, 
+                           (int(self.x - rotated_image.get_width()/2), 
+                            int(self.y - rotated_image.get_height()/2)))
+            except:
+                pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        else:
+            pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
+        
+        # Draw health bar
+        self.draw_health_bar(screen, self.x, self.y - 45, self.health, 80)
+
 class Boss(Monster):
     image = None  # Will be set by GameEngine
     

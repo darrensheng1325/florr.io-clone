@@ -6,6 +6,7 @@ import socket  # Import the full socket module
 import threading
 import json
 from time import sleep, time
+from monster import Mouse, Cat, Tank, Bush, Tree, Rock, Ant, Bee, Boss, Bird
 
 class P2PGame:
     def __init__(self, host, port):
@@ -28,7 +29,8 @@ class P2PGame:
         # Add valid monster types set
         self.valid_monster_types = {
             'Mouse', 'Cat', 'Tank', 'Bush', 'Rock', 
-            'Ant', 'Bee', 'Boss', 'Tree', 'StaticMonster'
+            'Ant', 'Bee', 'Boss', 'Tree', 'StaticMonster',
+            'Bird'
         }
         
         # Start accept thread for incoming connections
@@ -87,7 +89,8 @@ class P2PGame:
             for monster_id, data in monster_data.items():
                 monster_type = data['type']
                 if monster_type not in self.valid_monster_types:
-                    raise ValueError(f"Invalid monster type: {monster_type}")
+                    print(f"Warning: Unknown monster type {monster_type}, skipping...")
+                    continue
                 
                 compact_data[str(monster_id)] = {
                     'x': round(data['x'], 1),
@@ -96,16 +99,16 @@ class P2PGame:
                     't': monster_type
                 }
             
-            message = {
-                't': 'mp',
-                'm': compact_data
-            }
-            
-            self.broadcast_message(message)
+            if compact_data:  # Only send if we have valid monsters
+                message = {
+                    't': 'mp',  # monster positions
+                    'm': compact_data
+                }
+                self.broadcast_message(message)
             
         except Exception as e:
             print(f"Error broadcasting monster positions: {e}")
-            raise  # Re-raise the exception for debugging
+            # Don't raise the exception, just log it
     
     def send_data(self, data, peer_socket):
         """Send data using TCP with message length prefix"""

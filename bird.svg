@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="80" height="80" xmlns="http://www.w3.org/2000/svg">
+    <!-- Body (more streamlined oval shape) -->
+    <ellipse cx="40" cy="40" rx="28" ry="15" fill="#4a4a4a"/>
+    
+    <!-- Wings (more angular and streamlined) -->
+    <path d="M40,40 L15,25 Q30,40 15,55 Z" fill="#5a5a5a"/>
+    <path d="M40,40 L65,25 Q50,40 65,55 Z" fill="#5a5a5a"/>
+    
+    <!-- Head (smaller and more pointed) -->
+    <ellipse cx="40" cy="28" rx="8" ry="10" fill="#4a4a4a"/>
+    
+    <!-- Eyes (white with black pupils) -->
+    <circle cx="37" cy="25" r="2.5" fill="white"/>
+    <circle cx="43" cy="25" r="2.5" fill="white"/>
+    <circle cx="37" cy="25" r="1.2" fill="black"/>
+    <circle cx="43" cy="25" r="1.2" fill="black"/>
+    
+    <!-- Tail feathers (more pointed) -->
+    <path d="M40,55 L32,65 L40,60 L48,65 Z" fill="#5a5a5a"/>
+</svg> 

@@ -8,7 +8,7 @@ from cairosvg import svg2png
 from io import BytesIO
 from PIL import Image
 from item import Item, DroppedItem, RockItem, LeafItem
-from monster import Mouse, Cat, Tank, Bush, Tree, Rock, Ant, Bee, Boss
+from monster import Mouse, Cat, Tank, Bush, Tree, Rock, Ant, Bee, Boss, Bird
 from database import GameDatabase
 
 class TitlePetal:
@@ -148,10 +148,11 @@ class GameEngine:
             Bee: 25,     # 25% chance for bee
             Mouse: 15,   # 15% chance for mouse
             Cat: 15,     # 15% chance for cat
-            Tank: 10,    # 10% chance for tank
-            Bush: 5,     # 5% chance for bush
-            Tree: 3,     # 3% chance for tree
-            Rock: 2      # 2% chance for rock
+            Bird: 10,    # 10% chance for bird
+            Tank: 5,     # 5% chance for tank
+            Bush: 2,     # 2% chance for bush
+            Tree: 2,     # 2% chance for tree
+            Rock: 1      # 1% chance for rock
         }
         
         # Add zone definitions (side by side, each 1600 pixels wide)
@@ -163,9 +164,10 @@ class GameEngine:
                 'spawn_weights': {
                     Ant: 45,     # Mostly ants
                     Bee: 35,     # and bees
-                    Bush: 10,
-                    Tree: 5,
-                    Rock: 5
+                    Bird: 10,    # some birds
+                    Bush: 5,
+                    Tree: 3,
+                    Rock: 2
                 }
             },
             'medium': {
@@ -173,13 +175,14 @@ class GameEngine:
                 'rect': pygame.Rect(width // 3, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 1.5,  # 50% stronger
                 'spawn_weights': {
-                    Mouse: 35,    # More mice
+                    Mouse: 30,    # More mice
                     Cat: 25,      # Some cats
-                    Bee: 15,      # Few bees
-                    Tank: 10,
-                    Bush: 8,
-                    Tree: 4,
-                    Rock: 3
+                    Bird: 20,     # More birds
+                    Bee: 10,      # Few bees
+                    Tank: 5,
+                    Bush: 5,
+                    Tree: 3,
+                    Rock: 2
                 }
             },
             'hard': {
@@ -187,12 +190,13 @@ class GameEngine:
                 'rect': pygame.Rect(2 * width // 3, 0, width // 3, height),  # Now 1600 pixels wide
                 'monster_multiplier': 2.0,  # Double strength
                 'spawn_weights': {
-                    Cat: 35,      # Mostly cats
+                    Cat: 30,      # Mostly cats
                     Mouse: 25,    # and mice
-                    Tank: 25,     # and tanks
-                    Bush: 8,
-                    Tree: 4,
-                    Rock: 3
+                    Bird: 25,     # and birds
+                    Tank: 10,     # and tanks
+                    Bush: 5,
+                    Tree: 3,
+                    Rock: 2
                 }
             }
         }
@@ -226,6 +230,7 @@ class GameEngine:
         self.mouse_image = self.load_svg_image("mouse.svg", size=(30, 30))
         self.cat_image = self.load_svg_image("cat.svg", size=(50, 50))
         self.bee_image = self.load_svg_image("bee.svg", size=(80, 80), dpi=300)
+        self.bird_image = self.load_svg_image("bird.svg", size=(60, 60), dpi=300)
         
         # Load and scale ant image to exactly 40x40
         ant_image = pygame.image.load("ant.png").convert_alpha()
@@ -236,6 +241,7 @@ class GameEngine:
         Cat.image = self.cat_image
         Bee.image = self.bee_image
         Ant.image = self.ant_image
+        Bird.image = self.bird_image
         
         # Add broken petal tracking
         self.broken_petals = {}  # {slot_index: (item, respawn_time)}
