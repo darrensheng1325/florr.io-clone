@@ -44,6 +44,18 @@ class GameEngine:
         pygame.display.set_caption("P2P Game")
         self.clock = pygame.time.Clock()
         
+        # Load zone background images
+        self.zone_backgrounds = {}
+        for zone in ['easy', 'medium', 'hard']:
+            try:
+                # Load background tiles at their native 200x200 size
+                self.zone_backgrounds[zone] = self.load_svg_image(f"{zone}.svg", 
+                    size=(200, 200), dpi=300)
+                print(f"Loaded {zone}.svg background")
+            except Exception as e:
+                print(f"Error loading {zone}.svg: {e}")
+                self.zone_backgrounds[zone] = None
+        
         # Add title screen petals
         self.title_petals = []
         for _ in range(15):  # Create 15 floating petals
@@ -707,35 +719,41 @@ class GameEngine:
         slots_to_respawn = []
         for slot, (item, respawn_time) in self.broken_petals.items():
             if current_time >= respawn_time:
-                # Create a fresh copy of the item with full health
                 new_petal = Item(item.name, item.color, item.damage, 
                                item.radius, item.max_health, item.image_path, pygame.image.load(item.image_path).convert_alpha())
-                new_petal.reset_health()  # Ensure full health
+                new_petal.reset_health()
                 self.players[self.my_id]['equipped_petals'][slot] = new_petal
                 slots_to_respawn.append(slot)
         
-        # Remove respawned petals from broken_petals
         for slot in slots_to_respawn:
             del self.broken_petals[slot]
         
         # Create a surface for the world
         world_surface = pygame.Surface((self.world_width, self.world_height))
         
-        # Draw zones
+        # Draw zone backgrounds with tiling
         for zone_name, zone_data in self.zones.items():
-            pygame.draw.rect(world_surface, zone_data['color'], zone_data['rect'])
+            if self.zone_backgrounds[zone_name]:
+                # Calculate number of tiles needed
+                zone_rect = zone_data['rect']
+                tile_size = 200
+                tiles_x = (zone_rect.width + tile_size - 1) // tile_size
+                tiles_y = (zone_rect.height + tile_size - 1) // tile_size
+                
+                # Draw background tiles
+                for y in range(tiles_y):
+                    for x in range(tiles_x):
+                        pos_x = zone_rect.x + x * tile_size
+                        pos_y = zone_rect.y + y * tile_size
+                        world_surface.blit(self.zone_backgrounds[zone_name], (pos_x, pos_y))
+            else:
+                # Fallback to solid color if image not loaded
+                pygame.draw.rect(world_surface, zone_data['color'], zone_data['rect'])
         
         # Draw zone borders
         for zone_data in self.zones.values():
             pygame.draw.rect(world_surface, (100, 100, 100), zone_data['rect'], 2)
 
-        # Draw grid
-        grid_size = 50
-        for x in range(0, self.world_width, grid_size):
-            pygame.draw.line(world_surface, (33, 159, 91, 128), (x, 0), (x, self.world_height))
-        for y in range(0, self.world_height, grid_size):
-            pygame.draw.line(world_surface, (33, 159, 91, 128), (0, y), (self.world_width, y))
-        
         # Render dropped items
         for dropped_item in self.dropped_items:
             dropped_item.update()
