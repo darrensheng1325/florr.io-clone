@@ -1,0 +1,5 @@
+# ninja log v6
+1	166	1746830878525034263	CMakeFiles/florr_clone_cpp.dir/assets/flower.cpp.o	40a950790cba1cd9
+1	168	1746830878525164680	CMakeFiles/florr_clone_cpp.dir/assets/renderer.cpp.o	caefcd2aec2c4e6b
+1	576	1746830878524833722	CMakeFiles/florr_clone_cpp.dir/main.cpp.o	801f75a122c16ee2
+578	613	1746830879101791827	florr_clone_cpp	77ee7e2b2bd90123

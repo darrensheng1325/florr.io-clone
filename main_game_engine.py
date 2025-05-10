@@ -38,7 +38,7 @@ class TitlePetal:
         pygame.draw.polygon(surface, self.color, points)
 
 class GameEngine:
-    def __init__(self, width=4800, height=1200, initial_monster_count=5):
+    def __init__(self, width=6400, height=1200, initial_monster_count=5):
         pygame.init()
         self.screen = pygame.display.set_mode((800, 600))
         pygame.display.set_caption("P2P Game")
@@ -46,7 +46,7 @@ class GameEngine:
         
         # Load zone background images
         self.zone_backgrounds = {}
-        for zone in ['easy', 'medium', 'hard']:
+        for zone in ['easy', 'medium', 'hard', '?']:
             try:
                 # Load background tiles at their native 200x200 size
                 self.zone_backgrounds[zone] = self.load_svg_image(f"{zone}.svg", 
@@ -155,11 +155,11 @@ class GameEngine:
             Rock: 1      # 1% chance for rock
         }
         
-        # Add zone definitions (side by side, each 1600 pixels wide)
+        # Add zone definitions (each 1600 pixels wide)
         self.zones = {
             'easy': {
                 'color': (28, 168, 99),  # Light green
-                'rect': pygame.Rect(0, 0, width // 3, height),  # Now 1600 pixels wide
+                'rect': pygame.Rect(0, 0, width // 4, height),  # Now 1600 pixels wide
                 'monster_multiplier': 1.0,  # Base difficulty
                 'spawn_weights': {
                     Ant: 45,     # Mostly ants
@@ -172,7 +172,7 @@ class GameEngine:
             },
             'medium': {
                 'color': (240, 255, 110),  # Peach
-                'rect': pygame.Rect(width // 3, 0, width // 3, height),  # Now 1600 pixels wide
+                'rect': pygame.Rect(width // 4, 0, width // 4, height),  # Now 1600 pixels wide
                 'monster_multiplier': 1.5,  # 50% stronger
                 'spawn_weights': {
                     Mouse: 30,    # More mice
@@ -187,7 +187,7 @@ class GameEngine:
             },
             'hard': {
                 'color': (248, 58, 41),  # Salmon
-                'rect': pygame.Rect(2 * width // 3, 0, width // 3, height),  # Now 1600 pixels wide
+                'rect': pygame.Rect(2 * width // 4, 0, width // 4, height),  # Now 1600 pixels wide
                 'monster_multiplier': 2.0,  # Double strength
                 'spawn_weights': {
                     Cat: 30,      # Mostly cats
@@ -198,11 +198,25 @@ class GameEngine:
                     Tree: 3,
                     Rock: 2
                 }
+            },
+            '?': {
+                'color': (198, 198, 198),  # Silver/gray color matching ?.svg
+                'rect': pygame.Rect(3 * width // 4, 0, width // 4, height),  # Last 1600 pixels
+                'monster_multiplier': 2.5,  # 2.5x strength
+                'spawn_weights': {
+                    Tank: 30,     # Mostly tanks
+                    Cat: 25,      # and cats
+                    Bird: 25,     # and birds
+                    Mouse: 10,    # some mice
+                    Bush: 5,
+                    Tree: 3,
+                    Rock: 2
+                }
             }
         }
         
         # Increase initial monster count to account for larger map
-        initial_monster_count *= 3  # Triple the monsters for triple the width
+        initial_monster_count *= 4  # Quadruple the monsters for quadruple the width
         
         # Create initial monsters
         self.monsters = []

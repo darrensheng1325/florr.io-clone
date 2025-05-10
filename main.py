@@ -323,13 +323,14 @@ class P2PGame:
         self.broadcast_position(pickup_data)  # Use existing broadcast method
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python main.py <host> <port> [peer_host peer_port]")
-        sys.exit(1)
     
-    host = sys.argv[1]
-    port = int(sys.argv[2])
-    
+    try:
+        host = sys.argv[1]
+        port = int(sys.argv[2])
+    except:
+        host = "localhost"
+        port = 6666
+        
     game = P2PGame(host, port)
     
     # Note: Command line peer connection is now optional since we can use the input box

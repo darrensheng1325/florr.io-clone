@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "functional": "cpp",
+    "ctime": "cpp",
+    "locale": "cpp",
+    "__locale": "cpp"
+  }
+}
