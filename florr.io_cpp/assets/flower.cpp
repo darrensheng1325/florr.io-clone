@@ -1,9 +1,9 @@
-#include <SDL.h>
 #include "flower.h"
 #include "renderer.h"
+#include <SDL2/SDL.h>
 
-// Function to draw the flower character
-void drawFlower(SDL_Renderer* renderer, int x, int y, Eye eye) {
+// Draw the player flower with eye movement
+void drawFlower(SDL_Renderer* renderer, int x, int y, const Eye& eye) {
     // Draw outer circle (yellow-brown)
     SDL_SetRenderDrawColor(renderer, 207, 187, 80, 255); // #CFBB50
     drawFilledCircle(renderer, x, y, 26);

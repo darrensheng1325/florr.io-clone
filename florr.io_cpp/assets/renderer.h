@@ -1,14 +1,12 @@
 #ifndef RENDERER_H
 #define RENDERER_H
-#include <SDL.h>
 
+#include <SDL2/SDL.h>
+
+// Draw a filled circle
 void drawFilledCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius);
-void drawFilledEllipse(SDL_Renderer* renderer, int centerX, int centerY, int radiusX, int radiusY);
-void drawOutlineCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius);
 
-struct Eye {
-    int x;
-    int y;
-};
+// Draw a filled ellipse
+void drawFilledEllipse(SDL_Renderer* renderer, int centerX, int centerY, int radiusX, int radiusY);
 
 #endif // RENDERER_H

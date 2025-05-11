@@ -57,10 +57,10 @@ RM = /opt/homebrew/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /Users/darren/florr.io_cpp
+CMAKE_SOURCE_DIR = /Users/darren/florr.io_clone/florr.io_cpp
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /Users/darren/florr.io_cpp/build
+CMAKE_BINARY_DIR = /Users/darren/florr.io_clone/florr.io_cpp/build
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -87,9 +87,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_cpp/build/CMakeFiles /Users/darren/florr.io_cpp/build//CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles /Users/darren/florr.io_clone/florr.io_cpp/build//CMakeFiles/progress.marks
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_cpp/build/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -117,24 +117,38 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named florr_clone_cpp
+# Target rules for targets named client
 
 # Build rule for target.
-florr_clone_cpp: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 florr_clone_cpp
-.PHONY : florr_clone_cpp
+client: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 client
+.PHONY : client
 
 # fast build rule for target.
-florr_clone_cpp/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/build
-.PHONY : florr_clone_cpp/fast
+client/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/build
+.PHONY : client/fast
+
+#=============================================================================
+# Target rules for targets named server
+
+# Build rule for target.
+server: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 server
+.PHONY : server
+
+# fast build rule for target.
+server/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/build
+.PHONY : server/fast
 
 assets/flower.o: assets/flower.cpp.o
 .PHONY : assets/flower.o
 
 # target to build an object file
 assets/flower.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/assets/flower.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/flower.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/flower.cpp.o
 .PHONY : assets/flower.cpp.o
 
 assets/flower.i: assets/flower.cpp.i
@@ -142,7 +156,8 @@ assets/flower.i: assets/flower.cpp.i
 
 # target to preprocess a source file
 assets/flower.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/assets/flower.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/flower.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/flower.cpp.i
 .PHONY : assets/flower.cpp.i
 
 assets/flower.s: assets/flower.cpp.s
@@ -150,15 +165,44 @@ assets/flower.s: assets/flower.cpp.s
 
 # target to generate assembly for a file
 assets/flower.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/assets/flower.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/flower.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/flower.cpp.s
 .PHONY : assets/flower.cpp.s
+
+assets/ladybug.o: assets/ladybug.cpp.o
+.PHONY : assets/ladybug.o
+
+# target to build an object file
+assets/ladybug.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/ladybug.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/ladybug.cpp.o
+.PHONY : assets/ladybug.cpp.o
+
+assets/ladybug.i: assets/ladybug.cpp.i
+.PHONY : assets/ladybug.i
+
+# target to preprocess a source file
+assets/ladybug.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/ladybug.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/ladybug.cpp.i
+.PHONY : assets/ladybug.cpp.i
+
+assets/ladybug.s: assets/ladybug.cpp.s
+.PHONY : assets/ladybug.s
+
+# target to generate assembly for a file
+assets/ladybug.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/ladybug.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/ladybug.cpp.s
+.PHONY : assets/ladybug.cpp.s
 
 assets/renderer.o: assets/renderer.cpp.o
 .PHONY : assets/renderer.o
 
 # target to build an object file
 assets/renderer.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/assets/renderer.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/renderer.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/renderer.cpp.o
 .PHONY : assets/renderer.cpp.o
 
 assets/renderer.i: assets/renderer.cpp.i
@@ -166,7 +210,8 @@ assets/renderer.i: assets/renderer.cpp.i
 
 # target to preprocess a source file
 assets/renderer.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/assets/renderer.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/renderer.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/renderer.cpp.i
 .PHONY : assets/renderer.cpp.i
 
 assets/renderer.s: assets/renderer.cpp.s
@@ -174,7 +219,8 @@ assets/renderer.s: assets/renderer.cpp.s
 
 # target to generate assembly for a file
 assets/renderer.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/assets/renderer.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/assets/renderer.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/assets/renderer.cpp.s
 .PHONY : assets/renderer.cpp.s
 
 main.o: main.cpp.o
@@ -182,7 +228,7 @@ main.o: main.cpp.o
 
 # target to build an object file
 main.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/main.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/main.cpp.o
 .PHONY : main.cpp.o
 
 main.i: main.cpp.i
@@ -190,7 +236,7 @@ main.i: main.cpp.i
 
 # target to preprocess a source file
 main.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/main.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/main.cpp.i
 .PHONY : main.cpp.i
 
 main.s: main.cpp.s
@@ -198,8 +244,32 @@ main.s: main.cpp.s
 
 # target to generate assembly for a file
 main.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/main.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/main.cpp.s
 .PHONY : main.cpp.s
+
+server.o: server.cpp.o
+.PHONY : server.o
+
+# target to build an object file
+server.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/server.cpp.o
+.PHONY : server.cpp.o
+
+server.i: server.cpp.i
+.PHONY : server.i
+
+# target to preprocess a source file
+server.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/server.cpp.i
+.PHONY : server.cpp.i
+
+server.s: server.cpp.s
+.PHONY : server.s
+
+# target to generate assembly for a file
+server.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/server.cpp.s
+.PHONY : server.cpp.s
 
 # Help Target
 help:
@@ -209,16 +279,23 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... florr_clone_cpp"
+	@echo "... client"
+	@echo "... server"
 	@echo "... assets/flower.o"
 	@echo "... assets/flower.i"
 	@echo "... assets/flower.s"
+	@echo "... assets/ladybug.o"
+	@echo "... assets/ladybug.i"
+	@echo "... assets/ladybug.s"
 	@echo "... assets/renderer.o"
 	@echo "... assets/renderer.i"
 	@echo "... assets/renderer.s"
 	@echo "... main.o"
 	@echo "... main.i"
 	@echo "... main.s"
+	@echo "... server.o"
+	@echo "... server.i"
+	@echo "... server.s"
 .PHONY : help
 
 

@@ -54,20 +54,22 @@ RM = /opt/homebrew/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /Users/darren/florr.io_cpp
+CMAKE_SOURCE_DIR = /Users/darren/florr.io_clone/florr.io_cpp
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /Users/darren/florr.io_cpp/build
+CMAKE_BINARY_DIR = /Users/darren/florr.io_clone/florr.io_cpp/build
 
 #=============================================================================
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
-all: CMakeFiles/florr_clone_cpp.dir/all
+all: CMakeFiles/client.dir/all
+all: CMakeFiles/server.dir/all
 .PHONY : all
 
 # The main recursive "codegen" target.
-codegen: CMakeFiles/florr_clone_cpp.dir/codegen
+codegen: CMakeFiles/client.dir/codegen
+codegen: CMakeFiles/server.dir/codegen
 .PHONY : codegen
 
 # The main recursive "preinstall" target.
@@ -75,39 +77,71 @@ preinstall:
 .PHONY : preinstall
 
 # The main recursive "clean" target.
-clean: CMakeFiles/florr_clone_cpp.dir/clean
+clean: CMakeFiles/client.dir/clean
+clean: CMakeFiles/server.dir/clean
 .PHONY : clean
 
 #=============================================================================
-# Target rules for target CMakeFiles/florr_clone_cpp.dir
+# Target rules for target CMakeFiles/client.dir
 
 # All Build rule for target.
-CMakeFiles/florr_clone_cpp.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/darren/florr.io_cpp/build/CMakeFiles --progress-num=1,2,3,4 "Built target florr_clone_cpp"
-.PHONY : CMakeFiles/florr_clone_cpp.dir/all
+CMakeFiles/client.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles --progress-num=1,2,3,4,5 "Built target client"
+.PHONY : CMakeFiles/client.dir/all
 
 # Build rule for subdir invocation for target.
-CMakeFiles/florr_clone_cpp.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_cpp/build/CMakeFiles 4
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/florr_clone_cpp.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_cpp/build/CMakeFiles 0
-.PHONY : CMakeFiles/florr_clone_cpp.dir/rule
+CMakeFiles/client.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/client.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles 0
+.PHONY : CMakeFiles/client.dir/rule
 
 # Convenience name for target.
-florr_clone_cpp: CMakeFiles/florr_clone_cpp.dir/rule
-.PHONY : florr_clone_cpp
+client: CMakeFiles/client.dir/rule
+.PHONY : client
 
 # codegen rule for target.
-CMakeFiles/florr_clone_cpp.dir/codegen:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/codegen
-.PHONY : CMakeFiles/florr_clone_cpp.dir/codegen
+CMakeFiles/client.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/codegen
+.PHONY : CMakeFiles/client.dir/codegen
 
 # clean rule for target.
-CMakeFiles/florr_clone_cpp.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/florr_clone_cpp.dir/build.make CMakeFiles/florr_clone_cpp.dir/clean
-.PHONY : CMakeFiles/florr_clone_cpp.dir/clean
+CMakeFiles/client.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/client.dir/build.make CMakeFiles/client.dir/clean
+.PHONY : CMakeFiles/client.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/server.dir
+
+# All Build rule for target.
+CMakeFiles/server.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles --progress-num=6,7,8,9,10 "Built target server"
+.PHONY : CMakeFiles/server.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/server.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/server.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/darren/florr.io_clone/florr.io_cpp/build/CMakeFiles 0
+.PHONY : CMakeFiles/server.dir/rule
+
+# Convenience name for target.
+server: CMakeFiles/server.dir/rule
+.PHONY : server
+
+# codegen rule for target.
+CMakeFiles/server.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/codegen
+.PHONY : CMakeFiles/server.dir/codegen
+
+# clean rule for target.
+CMakeFiles/server.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/server.dir/build.make CMakeFiles/server.dir/clean
+.PHONY : CMakeFiles/server.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.
