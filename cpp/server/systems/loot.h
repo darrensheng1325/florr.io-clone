@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "server/replication.h"
+#include "server/squads.h"
 #include "shared/core/types.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
@@ -160,6 +161,11 @@ public:
     /// runtime must point it at the server's one allocator or drops are
     /// invisible to every client while still being pickable up.
     NetIdAllocator* netIds = nullptr;
+
+    /// Who ranks together when a corpse is shared out. Null means nobody is
+    /// squadded, which is the ordinary case and the whole of what a unit test
+    /// needs; see server/loot_eligibility.h for what a squad changes.
+    const SquadEntityIndex* squads = nullptr;
 
     /// The tile world the per-tick pass pushes drops out of. Null in a unit
     /// test, where there is no map; the runtime MUST point it at the server's

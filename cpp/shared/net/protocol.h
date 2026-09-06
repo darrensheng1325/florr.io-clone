@@ -21,7 +21,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 13;
+inline constexpr std::uint16_t kProtocolVersion = 14;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -148,6 +148,13 @@ enum class ServerMessage : std::uint8_t {
                         ///< { str username, u8 online }*. `joined` 0 is the
                         ///< browser's `guildUpdate null` and carries no rest.
     GuildInviteReceived, ///< str guildName, str fromUsername
+    SquadUpdate,        ///< u8 inSquad, str squadId, u8 isPublic, u8 memberCount,
+                        ///< { str account, str name, u32 netId, u8 flags }*.
+                        ///< `inSquad` 0 is the browser's `squadUpdate null` and
+                        ///< carries nothing after its flag. `flags` bit 0 marks
+                        ///< the leader and bit 1 a bot; `netId` is 0 for a
+                        ///< member with no body in the world just now, which is
+                        ///< every member sitting on the title screen.
     DebugStats,         ///< f64 residentBytes, f64 heapBytes, f32 tickAvgMs,
                         ///< f32 tickMaxMs -- once a second, and only while
                         ///< somebody is authenticated. The browser's payload

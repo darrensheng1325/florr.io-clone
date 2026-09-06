@@ -103,6 +103,37 @@ struct GuildState {
     std::vector<std::string> online;
 };
 
+/// The player's squad, as the last SquadUpdate described it.
+///
+/// `inSquad` false is the browser's `squadUpdate null`. The wire ids are what
+/// the minimap and the party HUD find the members' bodies by; a member with no
+/// body just now -- sitting on the title screen, or looking at a death card --
+/// carries a zero, and both surfaces simply skip them.
+struct SquadState {
+    struct Member {
+        std::string account;    ///< the account name, or a bot's nameplate
+        std::string name;       ///< what the flower is labelled
+        std::uint32_t netId = 0;
+        bool leader = false;
+        bool bot = false;
+    };
+
+    bool inSquad = false;
+    std::string id;
+    bool isPublic = false;
+    std::vector<Member> members;
+
+    /// True when `netId` belongs to a squadmate. Linear over at most four
+    /// entries, which is cheaper than the set that would replace it.
+    bool contains(std::uint32_t netId) const {
+        if (!inSquad || netId == 0) return false;
+        for (const Member& member : members) {
+            if (member.netId == netId) return true;
+        }
+        return false;
+    }
+};
+
 /// A guild invitation waiting on an answer.
 struct GuildInvite {
     bool waiting = false;
@@ -190,6 +221,34 @@ public:
 
     bool connect(const std::string& host, std::uint16_t port);
     void disconnect();
+
+    /// True while a dropped socket is waiting to be redialled.
+    ///
+    /// A server restart is what this exists for: the process goes away, every
+    /// socket closes, and a client that did nothing about it would sit on a
+    /// dead connection until somebody refreshed the page. The redial is the
+    /// browser socket's own -- one second, times 1.5 per failure, capped at
+    /// ten, reset the moment a handshake lands.
+    bool reconnecting() const {
+        // Both halves of the wait: the pause between attempts, and an attempt
+        // in flight. After the first handshake there is no other reason to be
+        // dialling, so a Connecting status IS a reconnection -- and without
+        // this the banner's line would blink out for the length of every try.
+        return retryAtMillis_ > 0 || (status_ == Status::Connecting && handshakes_ > 0);
+    }
+
+    /// Set once for every handshake AFTER the first: the socket came back.
+    ///
+    /// Cleared by whoever reads it, like `authAnswered`. Putting the SESSION
+    /// back together is not something the socket can do for itself -- the
+    /// account has to be resumed and the screen has to be steered somewhere
+    /// that makes sense, and only the app knows where it was.
+    bool reconnected = false;
+
+    /// Set when the server refused the handshake: this build is not the one it
+    /// is serving. Cleared by whoever reads it. See client/web/reload.h for
+    /// what the browser does about it.
+    bool staleBuild = false;
 
     /// Services the socket. Call once per frame with a small timeout so the
     /// render loop keeps its cadence even when nothing arrives.
@@ -347,6 +406,8 @@ public:
     /// strength of it.
     bool notificationsHaveMore() const { return notificationsMore_; }
 
+    const SquadState& squad() const { return squad_; }
+
     const GuildState& guild() const { return guild_; }
     /// Mutable because the panel answers an invite locally the moment it sends
     /// the reply, exactly as the reference clears `pendingInvite` on click.
@@ -396,6 +457,11 @@ private:
     void handleShopResult(ByteReader&);
     void handleLeaderboard(ByteReader&);
     void handleNotifications(ByteReader&);
+    /// Schedules the next redial, lengthening the wait each time it is
+    /// called without a handshake in between.
+    void armReconnect();
+
+    void handleSquadUpdate(ByteReader&);
     void handleGuildUpdate(ByteReader&);
     void handleGuildInviteReceived(ByteReader&);
     void handlePong(ByteReader&);
@@ -408,6 +474,18 @@ private:
 
     net::Dialer dialer_;
     Status status_ = Status::Offline;
+
+    /// Where connect() was last pointed, so a drop can be redialled without
+    /// the caller having to remember for it.
+    std::string host_;
+    std::uint16_t port_ = 0;
+    /// The render clock at which the next redial is due, or 0 for none, and
+    /// the delay that produced it.
+    double retryAtMillis_ = 0;
+    double retryDelayMillis_ = 0;
+    /// How many handshakes this client has completed. The first is the
+    /// ordinary connect; every one after it is a reconnection.
+    int handshakes_ = 0;
     std::string lastError_;
 
     WorldView view_;
@@ -434,6 +512,7 @@ private:
     /// to it, and only the request knows which this is.
     bool notificationsPaging_ = false;
 
+    SquadState squad_;
     GuildState guild_;
     GuildInvite guildInvite_;
     CraftOutcome craftOutcome_;

@@ -180,6 +180,23 @@ public:
     /// Events from the most recent snapshot. Drained by the effects layer.
     std::vector<ViewEvent>& events() { return events_; }
 
+    /// Client-only overrides for the local flower's flag families.
+    ///
+    /// `/forcelocalplayerflags` is a rendering probe: it makes THIS client draw
+    /// its own flower with a chosen face, equipment or skin so the sprite can
+    /// be checked without a server that would grant any of it. Reapplied after
+    /// every snapshot, because the server keeps sending the real values and
+    /// would otherwise take the override back a fifth of a second later.
+    struct LocalFlagOverride {
+        bool overridesFace = false;
+        bool overridesEquip = false;
+        bool overridesRender = false;
+        std::uint8_t faceFlags = FaceNone;
+        std::uint8_t equipFlags = EquipNone;
+        std::uint32_t renderFlags = PlayerRenderNone;
+    };
+    LocalFlagOverride localFlags;
+
     /// The ease rate every flower, petal, drop and projectile closes its gap
     /// at, and the rate mob facing turns at. Driven by the settings panel's
     /// Interpolation slider; see easeRateFromAmount().

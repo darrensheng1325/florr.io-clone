@@ -18,6 +18,7 @@
 #include "server/db.h"
 #include "server/replication.h"
 #include "server/session.h"
+#include "server/squads.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
 #include "shared/game/map_elements.h"
@@ -170,6 +171,58 @@ private:
     void guildKick(Session&, net::Connection&, const std::string& target);
     void guildInviteToSquad(Session&, net::Connection&, const std::string& target);
 
+    // -- squads ------------------------------------------------------------
+    //
+    // The roster itself is server/squads.h; what lives here is everything that
+    // needs the world or a socket -- naming a member, telling one, and keeping
+    // the loot ranking's table of who fights together up to date.
+
+    /// How this session is named inside a squad. A connection, not an entity:
+    /// a body is destroyed and rebuilt on every death, and a party that lost
+    /// its members each time somebody died would not be a party.
+    static SquadMemberId squadIdOf(const Session& session) {
+        return SquadMemberId::ofSession(session.connection);
+    }
+    /// The account name a member answers to. A bot has no account, so it
+    /// answers to its nameplate -- which is what `/squad-invite` matches on.
+    std::string squadAccountName(SquadMemberId);
+    /// What this member's flower is labelled, which is what the squad's own
+    /// announcements name it by.
+    std::string squadDisplayName(SquadMemberId);
+    Entity squadEntity(SquadMemberId);
+    net::Connection* squadConnection(SquadMemberId);
+
+    /// The roster as this client should see it. A null squad is the browser's
+    /// `squadUpdate null` and carries nothing after its flag.
+    void sendSquadUpdate(net::Connection&, const Squad*);
+    /// Sends the roster to every human in it. Called after every membership,
+    /// leadership or visibility change -- and after a member spawns or
+    /// despawns, because the wire ids in it belong to bodies.
+    void broadcastSquadUpdate(const Squad&);
+    /// The squad's own "[Squad]" system line, to every human member.
+    void sendSquadSystem(const Squad&, const std::string& text);
+    /// Resolves an invite target: a signed-in player first, then a bot by
+    /// nameplate, exactly as the reference resolves it.
+    bool resolveSquadTarget(const std::string& name, SquadMemberId& out);
+    /// Takes this session out of its squad and tells everyone concerned.
+    void departSquad(Session&, net::Connection*, const std::string& leaverName);
+    /// Drops a bot out of whatever squad it was in, on its way out of the
+    /// world. A squad holding a destroyed body would rank a corpse for loot.
+    void removeBotFromSquad(Entity body);
+    /// Rebuilds the loot ranking's table of who fights together. Once a tick
+    /// rather than on membership change: a member's BODY changes on every
+    /// death, so a table cached against the roster goes stale without the
+    /// roster ever moving.
+    void rebuildSquadIndex();
+    /// The caller's squad, creating a private one if they have none. Four
+    /// copies of this create-then-announce dance lived across the reference's
+    /// own squad commands.
+    Squad* squadOrCreate(Session&, net::Connection&);
+    /// Every squadmate's body, for the replicator: a squad member is streamed
+    /// however far away they are, which is what makes the party HUD and the
+    /// pink minimap dots work across the map.
+    void collectSquadBodies(const Session&, std::vector<Entity>& out);
+
     // -- chat commands -----------------------------------------------------
     //
     // Implemented in server/chat_commands.cpp. A chat line beginning with '/'
@@ -181,6 +234,13 @@ private:
     /// must not be broadcast. False means an ordinary chat line.
     bool handleChatCommand(Session&, net::Connection&, const std::string& message);
 
+    /// One `/squad ...` line, already split into its subcommand and first
+    /// argument. Both spellings the reference accepts -- `/squad invite x` and
+    /// `/squad-invite x` -- are rewritten into this one shape before they get
+    /// here, so the two cannot drift apart.
+    void runSquadCommand(Session&, net::Connection&, const std::string& sub,
+                         const std::string& argument);
+
     /// One `/admin` (or `/cmd`) body, already stripped of its prefix. The
     /// caller has checked that this session may run it.
     void runAdminCommand(Session&, net::Connection&, const std::string& command);
@@ -189,6 +249,59 @@ private:
     /// message rather than one message with embedded newlines: the browser
     /// build joins its lines with `<br/>`, and this client has no markup.
     void sendSystem(net::Connection&, const std::string& text);
+
+    // -- scheduled restart -------------------------------------------------
+    //
+    // The console's `restart`, and the last step of `update`. A restart IS a
+    // process exit: pm2, systemd or docker is what actually brings the server
+    // back up, exactly as it is for the browser build. Players are warned on
+    // the way down, which is the whole reason it is scheduled rather than
+    // immediate.
+
+    struct ScheduledRestart {
+        bool pending = false;
+        /// Past the point of cancelling: the last word has been said and the
+        /// process is on its way out.
+        bool firing = false;
+        double atMillis = 0;
+        std::string reason;
+        /// How many of the warning marks have already been announced. Starts
+        /// past the ones a short delay skips entirely.
+        std::size_t warningsSaid = 0;
+        /// When the process actually stops, a second after the final notice,
+        /// so it reaches the sockets before they close.
+        double stopAtMillis = 0;
+    };
+    ScheduledRestart restart_;
+
+    /// Schedules a restart in `delayMillis`, replacing any pending one.
+    /// False when one is already firing, which cannot be called off.
+    bool scheduleRestart(double delayMillis, const std::string& reason);
+    bool cancelScheduledRestart();
+    /// Remaining time and reason; false when nothing is scheduled.
+    bool scheduledRestartInfo(double& remainingMillis, std::string& reason) const;
+    /// Says the warnings that have come due and fires the restart at its
+    /// moment. Called once a tick, ABOVE the idle gate: a server with nobody
+    /// on it is exactly the one a restart is usually waiting for.
+    void serviceScheduledRestart(double nowMillis);
+
+    /// Forwards a running install's progress to whoever asked for it, and
+    /// schedules the restart a finished one has earned. Called once a tick,
+    /// beside the restart service and for the same reason.
+    void serviceAutoUpdate();
+    /// Who asked for the running install. A connection, not a session: the
+    /// answer follows the socket, and a socket that has gone is simply not
+    /// written to.
+    net::ConnectionId updateRequester_ = 0;
+    /// How long after a successful install its restart is scheduled for.
+    double updateRestartDelayMillis_ = 60000;
+
+    /// Rotates the maze the server is playing. Returns the line the console
+    /// prints, which is the reference's own answer for each case.
+    std::string adminChangeMaze(const std::string& argument);
+    /// How far the active maze has been pushed from the real UTC day by
+    /// `change-maze`. Reported back so an operator can see they are off it.
+    std::int64_t mazeDayOffset_ = 0;
 
     /// Whether this session may run admin commands: a database admin, or the
     /// holder of a temporary grant. `session.admin` alone is the database flag
@@ -383,6 +496,10 @@ private:
     };
     std::unordered_map<std::string, PendingGuildInvite> guildInvites_;
 
+    SquadRoster squads_;
+    /// The flattened form the loot and XP rules read, rebuilt each tick.
+    SquadEntityIndex squadIndex_;
+
     /// Admin consoles lent to players who are not database admins.
     ///
     /// Keyed by connection and held in memory only: a grant is for one life,
@@ -472,6 +589,15 @@ private:
     double nextSnapshotMillis_ = 0;
 
     double nextRankRefreshMillis_ = 0;
+
+    /// The clock every deadline this class owns is measured against: the
+    /// `nowMillis` the last tick was given.
+    ///
+    /// NOT monotonicMillis() directly. tick() is handed its time by the caller
+    /// -- run() passes the monotonic clock, a test passes a synthetic one --
+    /// and a squad invite stamped from one clock while the expiry sweep reads
+    /// the other is an invite that never lapses, or one that lapses at once.
+    double clockMillis_ = 0;
 
     std::uint32_t tick_ = 0;
     double nextPersistMillis_ = 0;

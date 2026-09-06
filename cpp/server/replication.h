@@ -144,6 +144,14 @@ public:
         std::uint32_t tick = 0;
         double nowMillis = 0;
         const EventQueue* events = nullptr;
+        /// Bodies streamed to this client however far away they are.
+        ///
+        /// The viewer's squadmates, and nothing else: the reference's own
+        /// visibility test lets a squad member through the viewport box, which
+        /// is what makes the party HUD and the pink minimap dots work at a
+        /// distance. Null when the viewer squads alone, which is the ordinary
+        /// case and costs the gather nothing.
+        const std::vector<Entity>* alwaysVisible = nullptr;
     };
 
     /// Appends a complete Snapshot payload (message id included) to `out`.

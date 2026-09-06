@@ -90,9 +90,11 @@ target_include_directories(flix_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(flix_server STATIC
   server/game_server.cpp
   server/account_limits.cpp
+  server/auto_update.cpp
   server/chat_commands.cpp
   server/replication.cpp
   server/session.cpp
+  server/squads.cpp
   server/db.cpp
   server/crypto.cpp
   server/systems/movement.cpp
@@ -133,6 +135,7 @@ add_library(flix_client STATIC
   client/ui/tutorial.cpp
   client/render/sprites.cpp
   client/render/world_renderer.cpp
+  client/web/reload.cpp
 )
 target_link_libraries(flix_client PUBLIC flix_shared cpp_canvas)
 

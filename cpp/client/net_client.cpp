@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 
+#include "client/web/reload.h"
+
 namespace flix {
 
 namespace {
@@ -12,6 +14,12 @@ double nowMillis() {
     static const clock::time_point start = clock::now();
     return std::chrono::duration<double, std::milli>(clock::now() - start).count();
 }
+
+/// The redial backoff, which is the browser socket's own (src/ws_client.ts):
+/// a second to start, half again per failure, capped at ten seconds.
+constexpr double kReconnectDelayMillis = 1000.0;
+constexpr double kMaxReconnectDelayMillis = 10000.0;
+constexpr double kReconnectBackoff = 1.5;
 
 /// Unix milliseconds. A chat line is stamped with the time of day it arrived,
 /// which the monotonic clock above cannot answer.
@@ -82,6 +90,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::SkinPublished:       return "skinPublished";
         case net::ServerMessage::SkinDeleted:         return "skinDeleted";
         case net::ServerMessage::Notifications:       return "notifications";
+        case net::ServerMessage::SquadUpdate:         return "squadUpdate";
         case net::ServerMessage::GuildUpdate:         return "guildUpdate";
         case net::ServerMessage::GuildInviteReceived: return "guildInvite";
         case net::ServerMessage::DebugStats:          return "debugStats";
@@ -96,10 +105,15 @@ NetClient::~NetClient() = default;
 
 bool NetClient::connect(const std::string& host, std::uint16_t port) {
     disconnect();
+    // Remembered before the dial, so a redial has somewhere to go even when
+    // this attempt is the one that failed.
+    host_ = host;
+    port_ = port;
     std::string error;
     if (!dialer_.connect(host, port, error)) {
         status_ = Status::Failed;
         lastError_ = error;
+        armReconnect();
         return false;
     }
     status_ = Status::Connecting;
@@ -112,15 +126,44 @@ void NetClient::disconnect() {
     status_ = Status::Offline;
     view_.clear();
     dead_ = false;
+    // An explicit disconnect is a decision, not an accident: nothing redials
+    // after one. connect() re-arms by dialling.
+    retryAtMillis_ = 0;
+    retryDelayMillis_ = 0;
+}
+
+void NetClient::armReconnect() {
+    if (host_.empty()) return;
+    // The browser socket's backoff: one second, then half again per failure,
+    // capped at ten. Long enough that a restarting server is not hammered,
+    // short enough that a player watching the banner sees it heal.
+    retryDelayMillis_ = retryDelayMillis_ <= 0
+                            ? kReconnectDelayMillis
+                            : std::min(retryDelayMillis_ * kReconnectBackoff,
+                                       kMaxReconnectDelayMillis);
+    retryAtMillis_ = nowMillis() + retryDelayMillis_;
 }
 
 void NetClient::poll(int timeoutMillis) {
+    if (status_ == Status::Failed && retryAtMillis_ > 0 && nowMillis() >= retryAtMillis_) {
+        // The delay is deliberately NOT reset here: it grows until a handshake
+        // lands, which is what keeps a server that is down for a minute from
+        // being dialled sixty times.
+        const double delay = retryDelayMillis_;
+        const std::string host = host_;
+        const std::uint16_t port = port_;
+        retryAtMillis_ = 0;
+        connect(host, port);
+        retryDelayMillis_ = delay;
+        if (status_ == Status::Failed) armReconnect();
+    }
     if (status_ == Status::Offline || status_ == Status::Failed) return;
     dialer_.poll(*this, timeoutMillis);
     dialer_.flush();
     if (dialer_.state() == net::Dialer::State::Failed && status_ != Status::Failed) {
         status_ = Status::Failed;
         if (lastError_.empty()) lastError_ = dialer_.error();
+        armReconnect();
     }
 }
 
@@ -204,6 +247,7 @@ void NetClient::logout() {
     notificationsPending_ = false;
     notificationsMore_ = true;
     notificationsPaging_ = false;
+    squad_ = SquadState{};
     guild_ = GuildState{};
     guildInvite_ = GuildInvite{};
     craftOutcome_ = CraftOutcome{};
@@ -485,6 +529,7 @@ void NetClient::onMessage(net::Connection&, ByteReader& reader) {
         case net::ServerMessage::SkinPublished: handleSkinPublished(reader); break;
         case net::ServerMessage::SkinDeleted:   handleSkinDeleted(reader); break;
         case net::ServerMessage::Notifications: handleNotifications(reader); break;
+        case net::ServerMessage::SquadUpdate:   handleSquadUpdate(reader); break;
         case net::ServerMessage::GuildUpdate:   handleGuildUpdate(reader); break;
         case net::ServerMessage::GuildInviteReceived: handleGuildInviteReceived(reader); break;
         case net::ServerMessage::DebugStats:    handleDebugStats(reader); break;
@@ -500,6 +545,9 @@ void NetClient::onDisconnect(net::Connection&, const std::string& reason) {
     status_ = Status::Failed;
     lastError_ = reason;
     view_.clear();
+    // A server restart looks exactly like this from here, and it is the case
+    // the redial exists for.
+    armReconnect();
 }
 
 void NetClient::handleWelcome(ByteReader& reader) {
@@ -515,9 +563,22 @@ void NetClient::handleWelcome(ByteReader& reader) {
                std::to_string(net::kProtocolVersion))
             : reason;
         dialer_.disconnect();
+        // Deliberately NOT redialled. A server that refuses this build refuses
+        // it every time, and a client looping on that is a client hammering a
+        // server it can never talk to. The build is what has to change, which
+        // is what `staleBuild` is for.
+        retryAtMillis_ = 0;
+        staleBuild = true;
         return;
     }
     status_ = Status::Ready;
+
+    // Every handshake but the first is a reconnection, and a reconnection is
+    // the signal that the backoff worked and the session needs rebuilding.
+    retryDelayMillis_ = 0;
+    retryAtMillis_ = 0;
+    if (handshakes_++ > 0) reconnected = true;
+    web::clearStaleBuildGuard();
 }
 
 void NetClient::handleAuthResult(ByteReader& reader) {
@@ -669,6 +730,29 @@ void NetClient::handleNotifications(ByteReader& reader) {
     }
     notificationsMore_ = more;
     notificationsPending_ = false;
+}
+
+void NetClient::handleSquadUpdate(ByteReader& reader) {
+    SquadState next;
+    next.inSquad = reader.boolean();
+    if (next.inSquad) {
+        next.id = reader.str();
+        next.isPublic = reader.boolean();
+        const std::uint8_t count = reader.u8();
+        next.members.reserve(count);
+        for (std::uint8_t i = 0; i < count; ++i) {
+            SquadState::Member member;
+            member.account = reader.str();
+            member.name = reader.str();
+            member.netId = reader.u32();
+            const std::uint8_t flags = reader.u8();
+            member.leader = (flags & 1u) != 0;
+            member.bot = (flags & 2u) != 0;
+            next.members.push_back(std::move(member));
+        }
+    }
+    if (!reader.ok()) return;
+    squad_ = std::move(next);
 }
 
 void NetClient::handleGuildUpdate(ByteReader& reader) {

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "server/replication.h"
+#include "server/squads.h"
 #include "shared/core/types.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
@@ -102,6 +103,11 @@ public:
     ~CombatSystem();
     CombatSystem(const CombatSystem&) = delete;
     CombatSystem& operator=(const CombatSystem&) = delete;
+
+    /// Who ranks together when a mob's XP is shared out. Null means nobody is
+    /// squadded, which is the ordinary case; the loot system reads the same
+    /// table so the two payouts cannot disagree about who earned the kill.
+    const SquadEntityIndex* squads = nullptr;
 
     /// One complete combat tick. Kept for focused simulations; GameServer uses
     /// the three phase methods below so flower/petal contact can happen before

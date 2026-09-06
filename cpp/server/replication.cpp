@@ -94,6 +94,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         const double dy = at.y - centre.y;
         return (dx < 0 ? -dx : dx) >= reachX || (dy < 0 ? -dy : dy) >= reachY;
     };
+    // At most three entries, scanned linearly: a set for a squad would cost
+    // more to build each tick than it could ever save looking through.
+    const auto exempt = [&](Entity e) {
+        return frame.alwaysVisible != nullptr &&
+               std::find(frame.alwaysVisible->begin(), frame.alwaysVisible->end(), e) !=
+                   frame.alwaysVisible->end();
+    };
 
     // --- gather what is in view ------------------------------------------
     candidates_.clear();
@@ -111,7 +118,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
         // The viewer's own body is always replicated, however the camera sits:
         // losing it would leave the client with nothing to anchor prediction to.
-        if (e != viewer && outsideView(transform.position)) return;
+        // A squadmate is exempt for its own reason -- see Frame::alwaysVisible.
+        if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
         candidates_.push_back({e, id.value, flix::distanceSq(transform.position, centre)});
     });
 

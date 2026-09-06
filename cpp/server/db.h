@@ -385,6 +385,35 @@ public:
     /// Exposed because it is exactly what a backup wants.
     Json toJson() const;
 
+    // -- backups -----------------------------------------------------------
+    //
+    // Timestamped snapshots kept ONE LEVEL ABOVE the runtime directory, in
+    // db_backups/, so a redeploy that replaces dist/ cannot delete them. The
+    // `update` command takes one before it touches a single file and aborts if
+    // it cannot, which is the only reason a self-installing server is safe to
+    // have at all.
+
+    struct BackupInfo {
+        std::string file;
+        std::size_t bytes = 0;
+        std::int64_t modifiedMillis = 0;
+    };
+
+    /// How many snapshots are kept. The reference's MAX_DB_BACKUPS: enough to
+    /// reach back past a bad deploy, few enough that they cannot fill a disk.
+    static constexpr std::size_t kMaxDatabaseBackups = 30;
+
+    /// Writes one snapshot, labelled for whoever asked for it. False with
+    /// `errorOut` set on any failure -- a backup that half-wrote is not a
+    /// backup, so the file is verified by length before it counts.
+    bool backup(const std::string& label, BackupInfo& out, std::string& errorOut);
+
+    /// Existing snapshots, newest first.
+    std::vector<BackupInfo> listBackups() const;
+
+    /// Where those snapshots live, derived from the database's own path.
+    std::string backupDirectory() const;
+
     /// One unmodelled top-level table, read exactly as the file stores it.
     ///
     /// Separate from rawTable() because that one COERCES its value to an

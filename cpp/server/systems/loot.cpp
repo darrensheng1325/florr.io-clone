@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <fstream>
 
+#include "server/loot_eligibility.h"
 #include "shared/core/json.h"
 
 namespace flix {
@@ -446,16 +447,12 @@ void LootSystem::awardDeaths(World& world, Rng& rng, double nowMillis) {
             // Stable: contributors are stored in first-hit order and the
             // reference's sort is specified stable, so on an exact damage tie
             // the slot at the cut belongs to whoever landed their damage first.
+            // The order matters beyond the cut too -- the credit fallback below
+            // reads the top of this list.
             std::stable_sort(ranked_.begin(), ranked_.end(), [](const auto& a, const auto& b) {
                 return a.damage > b.damage;
             });
-            int slots = 4;
-            if (mobRarity == Rarity::Ultra) slots = 15;
-            else if (mobRarity == Rarity::Super) slots = 20;
-            else if (mobRarity == Rarity::Unique || mobRarity == Rarity::Apex) slots = 25;
-            for (int i = 0; i < slots && i < static_cast<int>(ranked_.size()); ++i) {
-                eligible_.push_back(ranked_[static_cast<std::size_t>(i)].player);
-            }
+            selectLootRecipients(ranked_, lootSlotsForRarity(mobRarity), squads, eligible_);
         }
 
         const std::vector<DropTables::Entry>& table = tables_.forMob(mobIndex);

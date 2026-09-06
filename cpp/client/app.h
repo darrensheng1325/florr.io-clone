@@ -170,6 +170,26 @@ private:
     /// one under the other, name above each. Ultras are not bosses: they wear
     /// the ordinary bar under the body like every other mob.
     void drawBossBars(Canvas&, bool altHeld);
+    /// Puts the session back together after the socket came back.
+    ///
+    /// A reconnection is always to a NEW server process -- that is what a
+    /// restart is -- so the body, the world and the server's idea of this
+    /// connection are all gone. The account is not: the session token outlives
+    /// the socket, so it is presented again and the player lands back on the
+    /// title screen ready to play rather than on a dead world.
+    void onReconnected();
+
+    /// The two commands the SERVER has no say in: a panel toggle, and a local
+    /// render override. True when the line was one of them and must not be
+    /// sent -- everything else, squad and guild lines included, is the
+    /// server's to answer.
+    bool handleClientCommand(const std::string& message);
+
+    /// The party bars: one small block per squadmate, stacked under the main
+    /// HUD. Nothing at all when the player squads alone, which is the normal
+    /// case and is why the block starts where the main HUD ends rather than
+    /// reserving room for itself.
+    void drawSquadHud(Canvas&);
     /// The 200x200 section map in the top-right corner, its gold border and
     /// its biome caption.
     void drawMinimap(Canvas&);

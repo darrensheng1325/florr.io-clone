@@ -16,6 +16,7 @@
 #include "client/ui/draw.h"
 #include "client/ui/markup.h"
 #include "client/ui/text.h"
+#include "client/web/reload.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
 
@@ -854,6 +855,22 @@ void App::pollNetwork() {
     // couple frame rate to packet arrival.
     net_.poll(0);
 
+    // The server is serving a build this one is not. Nothing here can talk to
+    // it, and the bytes that could are on the server: on the web that is a
+    // page load away, so take it. A native client has no such move and falls
+    // through to the refusal message the handshake already left in lastError().
+    if (net_.staleBuild) {
+        net_.staleBuild = false;
+        web::reloadForStaleBuild();
+    }
+
+    // The socket came back -- see onReconnected for why that is not simply
+    // carrying on where the drop happened.
+    if (net_.reconnected) {
+        net_.reconnected = false;
+        onReconnected();
+    }
+
     // A drop mid-game does NOT take the game off the screen: the world, the
     // HUD and the panels keep drawing and a banner says what happened. Only a
     // failure before the player ever had a body replaces the screen.
@@ -1145,7 +1162,7 @@ void App::editChatLine() {
     }
 
     if (window_.keyPressed(Key::Enter)) {
-        if (!chatDraft_.empty()) net_.sendChat(chatDraft_);
+        if (!chatDraft_.empty() && !handleClientCommand(chatDraft_)) net_.sendChat(chatDraft_);
         chatDraft_.clear();
         chatOpen_ = false;
     } else if (window_.keyPressed(Key::Escape)) {
@@ -1591,6 +1608,14 @@ void App::drawConnectionState(Canvas& canvas, double time) {
         text(canvas,
              net_.lastError().empty() ? "Disconnected" : ("Disconnected: " + net_.lastError()),
              canvas.width() * 0.5, canvas.height() * 0.5, style);
+        // Said only while it is true. A handshake the server REFUSED is not
+        // redialled -- see NetClient::handleWelcome -- and promising a
+        // reconnection that is never coming is worse than the bare refusal.
+        if (net_.reconnecting()) {
+            style.size = 18.0;
+            text(canvas, "Reconnecting...", canvas.width() * 0.5, canvas.height() * 0.5 + 34.0,
+                 style);
+        }
         return;
     }
 
@@ -2048,6 +2073,8 @@ void App::drawHud(Canvas& canvas, double time) {
     drawFlowerFace(canvas, 0xFFE763u, 25.0, 2.0, 0.0, 14.5);
     canvas.restore();
 
+    drawSquadHud(canvas);
+
     drawMinimap(canvas);
 
     drawBossBars(canvas, altHeld);
@@ -2055,6 +2082,251 @@ void App::drawHud(Canvas& canvas, double time) {
     // The loadout is NOT drawn here. The menu system's strip is the same set of
     // slots and is a live drop target; a second, inert copy of it a few pixels
     // away was two things that looked like one.
+}
+
+namespace {
+
+/// The three flag families `/forcelocalplayerflags` can set, by the names the
+/// reference's own enums give them -- src/player.ts is what an operator has
+/// been typing at, so the same words have to work here.
+struct NamedFlag {
+    const char* name;
+    std::uint32_t value;
+};
+constexpr NamedFlag kFaceFlagNames[] = {
+    {"Poisoned", FacePoisoned},       {"Dandelioned", FaceDandelioned},
+    {"DeadEyes", FaceDeadEyes},       {"SquareEyes", FaceSquareEyes},
+    {"Attacking", FaceAttacking},     {"Defending", FaceDefending},
+    {"HasCorruption", FaceHasCorruption},
+};
+constexpr NamedFlag kEquipFlagNames[] = {
+    {"Cutter", EquipCutter},     {"ThirdEye", EquipThirdEye}, {"Observer", EquipObserver},
+    {"Antennae", EquipAntennae}, {"Test1", EquipTest1},
+};
+constexpr NamedFlag kRenderFlagNames[] = {
+    {"Pumpkin", PlayerRenderPumpkin},
+    {"Robot", PlayerRenderRobot},
+    {"Glitch", PlayerRenderGlitch},
+};
+
+template <std::size_t N>
+std::string flagNameList(const NamedFlag (&flags)[N]) {
+    std::string out;
+    for (const NamedFlag& flag : flags) {
+        if (!out.empty()) out += ", ";
+        out += flag.name;
+    }
+    return out;
+}
+
+/// Folds a run of flag names into one mask. A bare NUMBER anywhere in the run
+/// takes over outright, which is how the reference reads it: it is an escape
+/// hatch for a bit the table does not name yet.
+template <std::size_t N>
+bool foldFlags(const NamedFlag (&table)[N], const std::vector<std::string>& names,
+               std::uint32_t& out, std::string& unknownOut) {
+    out = 0;
+    for (const std::string& name : names) {
+        const NamedFlag* found = nullptr;
+        for (const NamedFlag& flag : table) {
+            std::string candidate = flag.name;
+            if (candidate.size() != name.size()) continue;
+            bool same = true;
+            for (std::size_t i = 0; i < name.size() && same; ++i) {
+                same = std::tolower(static_cast<unsigned char>(candidate[i])) ==
+                       std::tolower(static_cast<unsigned char>(name[i]));
+            }
+            if (same) found = &flag;
+        }
+        if (found != nullptr) {
+            out |= found->value;
+            continue;
+        }
+        bool numeric = !name.empty();
+        for (const char c : name) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) numeric = false;
+        }
+        if (!numeric) {
+            unknownOut = name;
+            return false;
+        }
+        out = static_cast<std::uint32_t>(std::strtoul(name.c_str(), nullptr, 10));
+        return true;
+    }
+    return true;
+}
+
+} // namespace
+
+void App::onReconnected() {
+    // Whatever this client was holding about the last session is about a
+    // process that no longer exists. The death card especially: it is a card
+    // about a body that is not coming back.
+    deathCardVisible_ = false;
+    loginMessage_.clear();
+    screen_ = Screen::Login;
+
+    // The account outlives the socket, so it is presented again rather than
+    // asked for. A token the new server refuses lands on the login form, which
+    // is the screen already showing.
+    const std::string token =
+        net_.sessionToken().empty() ? storedToken_ : net_.sessionToken();
+    if (!token.empty()) {
+        net_.resumeSession(token);
+        net_.addSystemMessage("Reconnected to the server.");
+    } else {
+        net_.addSystemMessage("Reconnected to the server. Please log in again.");
+    }
+    storedToken_.clear();
+}
+
+bool App::handleClientCommand(const std::string& message) {
+    if (message == "/guild-menu" || message == "/guild menu") {
+        // The reference refuses this outside a running game because its panel
+        // lives on the game object. This client's panel is a lobby menu too,
+        // so it opens wherever the icon strip is up -- and says the
+        // reference's line only where there is genuinely nothing to open.
+        if (screen_ == Screen::Lobby || screen_ == Screen::Playing || screen_ == Screen::Dead) {
+            menus_.toggle(MenuId::Guild);
+        } else {
+            net_.addSystemMessage("Guild menu is only available in-game.");
+        }
+        return true;
+    }
+
+    if (message.rfind("/forcelocalplayerflags", 0) != 0) return false;
+
+    std::vector<std::string> words;
+    std::string word;
+    for (const char c : message.substr(std::string("/forcelocalplayerflags").size())) {
+        if (c == ' ' || c == '\t') {
+            if (!word.empty()) words.push_back(std::exchange(word, std::string()));
+        } else {
+            word.push_back(c);
+        }
+    }
+    if (!word.empty()) words.push_back(word);
+
+    WorldView::LocalFlagOverride& override = net_.view().localFlags;
+    if (words.empty()) {
+        const auto mine = net_.view().entities().find(net_.view().self().netId);
+        const std::uint32_t face = mine == net_.view().entities().end() ? 0 : mine->second.faceFlags;
+        const std::uint32_t equip =
+            mine == net_.view().entities().end() ? 0 : mine->second.equipFlags;
+        const std::uint32_t render =
+            mine == net_.view().entities().end() ? 0 : mine->second.renderFlags;
+        net_.addSystemMessage(
+            "Usage: /forcelocalplayerflags &lt;face|equip|render&gt; &lt;flag1&gt; "
+            "[flag2] ...<br/>Face flags: " + flagNameList(kFaceFlagNames) +
+            "<br/>Equip flags: " + flagNameList(kEquipFlagNames) +
+            "<br/>Render flags (skins): " + flagNameList(kRenderFlagNames) +
+            "<br/>Current: faceFlags=" + std::to_string(face) + ", equipFlags=" +
+            std::to_string(equip) + ", renderFlags=" + std::to_string(render));
+        return true;
+    }
+
+    std::string family = words.front();
+    for (char& c : family) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const std::vector<std::string> names(words.begin() + 1, words.end());
+
+    std::uint32_t value = 0;
+    std::string unknown;
+    if (family == "face") {
+        if (!foldFlags(kFaceFlagNames, names, value, unknown)) {
+            net_.addSystemMessage("Unknown face flag: " + unknown);
+            return true;
+        }
+        override.overridesFace = true;
+        override.faceFlags = static_cast<std::uint8_t>(value);
+        net_.addSystemMessage("Set local faceFlags to " + std::to_string(value));
+    } else if (family == "equip") {
+        if (!foldFlags(kEquipFlagNames, names, value, unknown)) {
+            net_.addSystemMessage("Unknown equip flag: " + unknown);
+            return true;
+        }
+        override.overridesEquip = true;
+        override.equipFlags = static_cast<std::uint8_t>(value);
+        net_.addSystemMessage("Set local equipFlags to " + std::to_string(value));
+    } else if (family == "render") {
+        if (!foldFlags(kRenderFlagNames, names, value, unknown)) {
+            net_.addSystemMessage("Unknown render flag: " + unknown);
+            return true;
+        }
+        override.overridesRender = true;
+        override.renderFlags = value;
+        net_.addSystemMessage("Set local renderFlags to " + std::to_string(value));
+    } else {
+        net_.addSystemMessage("Usage: /forcelocalplayerflags &lt;face|equip|render&gt; "
+                              "&lt;flag1&gt; [flag2] ...");
+    }
+    return true;
+}
+
+void App::drawSquadHud(Canvas& canvas) {
+    const SquadState& squad = net_.squad();
+    if (!squad.inSquad) return;
+
+    // Uniformly 80% of the main HUD and laid out the same way, which is what
+    // the reference scales its own squad block to.
+    constexpr double kScale = 0.8;
+    constexpr double kMemberGap = 12.0;
+    const double barWidth = kHudBarWidth * kScale;
+    const double barHeight = kHudBarHeight * kScale;
+    const double barX = kFlowerCentreX + 12.0 * kScale;
+    const double textX = kFlowerCentreX + 35.0 * kScale;
+    const double fontSize = 14.0 * kScale;
+    const double flowerRadius = 25.0 * kScale;
+    const double outlineRadius = 27.0 * kScale;
+
+    TextStyle label;
+    label.size = fontSize;
+    label.strokeWidth = 3.0 * kScale;
+    label.baseline = Baseline::Alphabetic;
+
+    // Where the main HUD actually ends: the lower of its two bars, or the
+    // bottom of the flower, whichever hangs further down.
+    double top = std::max(kHudXpY + kHudBarHeight, kFlowerCentreY + 27.0) + 10.0;
+
+    for (const SquadState::Member& member : squad.members) {
+        if (member.netId == 0) continue;
+        const auto found = net_.view().entities().find(member.netId);
+        // A member whose body is not in this client's world has nothing to
+        // draw a bar from. They are streamed however far away they are, so in
+        // practice this is the moment between a death and a respawn.
+        if (found == net_.view().entities().end()) continue;
+        const RemoteEntity& body = found->second;
+        if (body.isSelf()) continue;
+
+        const double nameBaseline = top + fontSize;
+        // The nameplate and the level, on one line: the reference puts the
+        // level on an XP bar under the health bar, and this wire carries a
+        // squadmate's level but not their XP, so the bar it would fill is not
+        // drawn rather than drawn empty.
+        text(canvas,
+             (member.name.empty() ? std::string("Squadmate") : member.name) + " - LVL " +
+                 std::to_string(body.level),
+             barX, nameBaseline, label);
+
+        const double healthY = nameBaseline + 4.0;
+        const bool invulnerable = (body.state & net::StateInvulnerable) != 0;
+        hudBar(canvas, barX, healthY, barWidth, barHeight,
+               clamp(body.healthFraction, 0.0, 1.0) * barWidth,
+               invulnerable ? 0xFAFFC9u : kHealth);
+
+        canvas.save();
+        canvas.translate(static_cast<float>(kFlowerCentreX),
+                         static_cast<float>(healthY + barHeight * 0.5));
+        canvas.save();
+        setStroke(canvas, kInk);
+        canvas.setLineWidth(static_cast<float>(4.0 * kScale));
+        canvas.strokeCircle(0, 0, static_cast<float>(outlineRadius));
+        canvas.restore();
+        drawFlowerFace(canvas, 0xFFE763u, flowerRadius, 2.0 * kScale, 0.0, 14.5 * kScale);
+        canvas.restore();
+
+        top = std::max(healthY + barHeight, healthY + barHeight * 0.5 + outlineRadius) +
+              kMemberGap;
+    }
 }
 
 void App::drawBossBars(Canvas& canvas, bool altHeld) {
@@ -2282,12 +2554,17 @@ void App::drawMinimap(Canvas& canvas) {
         canvas.strokeCircle(static_cast<float>(dx), static_cast<float>(dy),
                             static_cast<float>(radius));
     };
-    if (altHeld) {
-        for (const auto& entry : net_.view().entities()) {
-            const RemoteEntity& entity = entry.second;
-            if (entity.kind != net::EntityKind::Player || entity.isSelf()) continue;
-            dot(entity.position, 4.0, kInk, false);
-        }
+    // Squadmates are on the map whether or not ALT is held -- that is the whole
+    // point of a party -- and in pink with an outline, so they stand out from
+    // the crowd ALT brings up rather than joining it.
+    const SquadState& squad = net_.squad();
+    for (const auto& entry : net_.view().entities()) {
+        const RemoteEntity& entity = entry.second;
+        if (entity.kind != net::EntityKind::Player || entity.isSelf()) continue;
+        const bool squadmate = squad.contains(entry.first);
+        if (!squadmate && !altHeld) continue;
+        if (squadmate) dot(entity.position, 4.0, 0xFF69B4u, true);
+        else dot(entity.position, 4.0, kInk, false);
     }
     // Self last, so the blue dot is never hidden under someone standing on it.
     dot(me, 3.0, 0x0000FFu, true);

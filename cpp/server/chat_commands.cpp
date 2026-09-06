@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "server/auto_update.h"
 #include "server/bot_identity.h"
 #include "server/guilds.h"
 #include "server/systems/spawning.h"
@@ -144,6 +145,37 @@ std::string argumentOf(const std::string& line) {
     return trimmed(line.substr(space + 1));
 }
 
+/// `30`, `30s`, `5m`, `2h` -- the duration grammar `restart` and `update`
+/// share. A bare number is SECONDS, which is what an operator typing
+/// `restart 30` means; whitespace between the number and its unit is allowed
+/// because the reference's own pattern allows it.
+bool parseDurationMillis(const std::string& text, double& out) {
+    std::size_t digits = 0;
+    while (digits < text.size() && std::isdigit(static_cast<unsigned char>(text[digits]))) {
+        ++digits;
+    }
+    if (digits == 0) return false;
+    std::string unit = text.substr(digits);
+    while (!unit.empty() && (unit.front() == ' ' || unit.front() == '\t')) unit.erase(0, 1);
+    for (char& c : unit) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    double scale = 0;
+    if (unit.empty() || unit == "s" || unit == "sec" || unit == "secs") scale = 1000.0;
+    else if (unit == "m" || unit == "min" || unit == "mins") scale = 60000.0;
+    else if (unit == "h" || unit == "hr" || unit == "hrs") scale = 3600000.0;
+    else return false;
+
+    out = std::strtod(text.substr(0, digits).c_str(), nullptr) * scale;
+    return true;
+}
+
+/// The reference prints byte counts as `(bytes / 1024).toFixed(1)` KB.
+std::string kilobytes(std::size_t bytes) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.1f", static_cast<double>(bytes) / 1024.0);
+    return buffer;
+}
+
 /// The verb: the first word, lower-cased.
 std::string verbOf(const std::string& line) {
     const std::vector<std::string> words = splitWords(line);
@@ -196,6 +228,12 @@ constexpr const char* kMutedNotice =
 constexpr const char* kUnknownCommand =
     "Unknown command. Available commands: /biome, /level-from-string, /loadout-from-string, "
     "/create-api-key, /delete-api-key";
+/// The squad usage line, which is both the answer to a bare `/squad` and to a
+/// subcommand nothing matches.
+constexpr const char* kSquadCommands =
+    "Squad commands: /squad-create [public|private], /squad-invite &lt;username&gt;, "
+    "/squad-find-public, /squad-join &lt;squadId&gt;, /squad-public, /squad-private, "
+    "/squad-accept, /squad-decline, /squad-leave, /squad-info";
 
 /// Chat content is markup, so a '<' in an admin command's output would open a
 /// tag and take the rest of the line with it -- which is exactly what happens
@@ -339,9 +377,42 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             out(kMutedNotice);
             return true;
         }
-        // There are no squads in this build, so every sender is in the state
-        // the reference answers with this line.
-        out("You are not in a squad.");
+        const Squad* squad = squads_.forMember(squadIdOf(session));
+        if (squad == nullptr) {
+            out("You are not in a squad.");
+            return true;
+        }
+        // The reference's own signature: "[Squad] @username" over the line, and
+        // the flower's nameplate in yellow inside it, so a squad line says both
+        // who typed it and which flower on the screen that is.
+        const std::string body = "[<span style=\"color: yellow;\">" +
+                                 squadDisplayName(squadIdOf(session)) + "</span>] " + argument;
+        for (const SquadMemberId& member : squad->members) {
+            if (net::Connection* peer = squadConnection(member)) {
+                sendChatTo(*peer, net::ChatChannel::Squad, "[Squad] @" + session.username, body);
+            }
+        }
+        return true;
+    }
+
+    // -- squads ------------------------------------------------------------
+    //
+    // The reference accepts both spellings of every one of these -- `/squad
+    // invite bob` and `/squad-invite bob` -- by rewriting the hyphen form into
+    // the space form before it parses. Same here, so there is ONE parser and
+    // the two spellings cannot answer differently.
+    if (verb == "/squad" || verb.rfind("/squad-", 0) == 0) {
+        const std::vector<std::string> words = splitWords(message);
+        std::string sub;
+        std::size_t firstArgument = 1;
+        if (verb == "/squad") {
+            sub = words.size() > 1 ? lowerCase(words[1]) : std::string();
+            firstArgument = 2;
+        } else {
+            sub = verb.substr(std::string("/squad-").size());
+        }
+        runSquadCommand(session, connection,
+                        sub, words.size() > firstArgument ? words[firstArgument] : std::string());
         return true;
     }
 
@@ -580,6 +651,18 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/create-api-key [label] - Issue an API key tied to your account for /api/v1/* "
                 "<br/>";
         help += "/delete-api-key &lt;key-or-prefix&gt; - Revoke one of your API keys <br/>";
+        help += "<br/><b>Squad commands (groups of " + std::to_string(kMaxSquadSize) +
+                ", share loot as one instance):</b><br/>";
+        help += "/squad-create [public|private] - Create a new squad (defaults to private)<br/>";
+        help += "/squad-invite &lt;username&gt; - Invite a player to your squad<br/>";
+        help += "/squad-find-public - List joinable public squads<br/>";
+        help += "/squad-join &lt;squadId&gt; - Join a public squad<br/>";
+        help += "/squad-public / /squad-private - Toggle your squad's visibility (leader "
+                "only)<br/>";
+        help += "/squad-accept / /squad-decline - Respond to an invite<br/>";
+        help += "/squad-leave - Leave your squad<br/>";
+        help += "/squad-info - Show squad members<br/>";
+        help += "/s &lt;message&gt; - Send a message to your squad<br/>";
         help += "<br/><b>Guild commands (up to " + std::to_string(kMaxGuildSize) +
                 " members, persistent):</b><br/>";
         help += "/guild-create &lt;name&gt; - Create a new guild (5-char alphanumeric ID)<br/>";
@@ -617,7 +700,10 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
                     "sessions), unmute &lt;playerId/username&gt;, notification &lt;type&gt; "
                     "&lt;message&gt;, clear_notifications, delete_guests, list_today_logins, "
                     "guild_list, guild_info &lt;guild name&gt;, guild_force_join &lt;guild "
-                    "name&gt; &lt;username&gt;";
+                    "name&gt; &lt;username&gt;, restart [&lt;N&gt;(s|m|h)|cancel|status], "
+                    "backup_db [list], update [now|&lt;N&gt;(s|m|h)|status|cancel] (backs up "
+                    "DB first, then installs latest build + restarts), change-maze "
+                    "[next|garden|desert|ocean|&lt;dayNumber&gt;]";
         }
         out(help);
         return true;
@@ -625,6 +711,174 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
 
     out(kUnknownCommand);
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Squads
+// ---------------------------------------------------------------------------
+
+void GameServer::runSquadCommand(Session& session, net::Connection& connection,
+                                 const std::string& sub, const std::string& argument) {
+    const auto out = [&](const std::string& text) { sendSystem(connection, text); };
+    const SquadMemberId me = squadIdOf(session);
+    const auto now = static_cast<std::int64_t>(clockMillis_);
+
+    if (sub == "create") {
+        const bool isPublic = lowerCase(argument) == "public";
+        Squad* squad = squads_.create(me, isPublic, rng_);
+        if (squad == nullptr) {
+            out("You are already in a squad.");
+            return;
+        }
+        sendSquadUpdate(connection, squad);
+        out(std::string("<span style=\"color: #4fc3f7;\">") + (isPublic ? "public" : "private") +
+            " squad created! Use /squad-invite &lt;username&gt; to invite players" +
+            (isPublic ? ", or wait for others to join via /squad-find-public" : "") + ".</span>");
+        return;
+    }
+
+    if (sub == "invite" && !argument.empty()) {
+        SquadMemberId target;
+        if (!resolveSquadTarget(argument, target)) {
+            out("Player \"" + argument + "\" not found.");
+            return;
+        }
+        if (target == me) {
+            out("You cannot invite yourself.");
+            return;
+        }
+        if (target.bot()) {
+            // A bot has nobody to answer an invitation, so it joins outright.
+            // That is also the ONLY way a squad ever gets one, which is why the
+            // leader test is repeated here rather than left to invite().
+            Squad* squad = squads_.forMember(me);
+            if (squad == nullptr) {
+                out("You are not in a squad. Use /squad create first.");
+                return;
+            }
+            if (!(squad->leader == me)) {
+                out("Only the squad leader can invite players.");
+                return;
+            }
+            const std::string error = squads_.addBot(squad->id, target);
+            if (!error.empty()) {
+                out(error);
+                return;
+            }
+            sendSquadSystem(*squad, squadDisplayName(target) + " has joined the squad.");
+            broadcastSquadUpdate(*squad);
+            return;
+        }
+        const std::string error = squads_.invite(me, target, session.username, now);
+        if (!error.empty()) {
+            out(error);
+            return;
+        }
+        out("<span style=\"color: #4fc3f7;\">Invite sent to " + argument + ".</span>");
+        if (net::Connection* peer = squadConnection(target)) {
+            sendSystem(*peer, "<span style=\"color: #4fc3f7;\">@" + session.username +
+                                  " has invited you to their squad. Use /squad accept or "
+                                  "/squad decline.</span>");
+        }
+        return;
+    }
+
+    if (sub == "find-public") {
+        const std::vector<const Squad*> open = squads_.publicSquads();
+        if (open.empty()) {
+            out("No public squads available. Create one with /squad create public.");
+            return;
+        }
+        std::string lines;
+        for (const Squad* squad : open) {
+            if (!lines.empty()) lines += "<br/>";
+            // An em dash as bytes, where the reference writes `&mdash;`: the
+            // client's entity table carries only the handful the server
+            // actually needs, and one more name in it is one more thing to
+            // keep true.
+            lines += squad->id + " \xE2\x80\x94 leader: " + squadDisplayName(squad->leader) +
+                     " (" + std::to_string(squad->members.size()) + "/" +
+                     std::to_string(kMaxSquadSize) + ") [/squad-join " + squad->id + "]";
+        }
+        out("<span style=\"color: #4fc3f7;\">Public squads:<br/>" + lines + "</span>");
+        return;
+    }
+
+    if (sub == "join" && !argument.empty()) {
+        const std::string error = squads_.joinPublic(argument, me);
+        if (!error.empty()) {
+            out(error);
+            return;
+        }
+        Squad* squad = squads_.find(argument);
+        if (squad == nullptr) return;
+        sendSquadSystem(*squad, squadDisplayName(me) + " has joined the squad.");
+        broadcastSquadUpdate(*squad);
+        return;
+    }
+
+    if (sub == "public" || sub == "private") {
+        Squad* squad = nullptr;
+        const std::string error = squads_.setVisibility(me, sub == "public", &squad);
+        if (!error.empty()) {
+            out(error);
+            return;
+        }
+        sendSquadSystem(*squad, "Squad is now " + sub + ".");
+        broadcastSquadUpdate(*squad);
+        return;
+    }
+
+    if (sub == "accept") {
+        std::string squadId;
+        const std::string error = squads_.accept(me, now, squadId);
+        if (!error.empty()) {
+            out(error);
+            return;
+        }
+        Squad* squad = squads_.find(squadId);
+        if (squad == nullptr) return;
+        sendSquadSystem(*squad, squadDisplayName(me) + " has joined the squad.");
+        broadcastSquadUpdate(*squad);
+        return;
+    }
+
+    if (sub == "decline") {
+        squads_.decline(me);
+        out("Squad invite declined.");
+        return;
+    }
+
+    if (sub == "leave") {
+        if (squads_.forMember(me) == nullptr) {
+            out("You are not in a squad.");
+            return;
+        }
+        departSquad(session, &connection, squadDisplayName(me));
+        out("You have left the squad.");
+        return;
+    }
+
+    if (sub == "info") {
+        const Squad* squad = squads_.forMember(me);
+        if (squad == nullptr) {
+            out("You are not in a squad.");
+            return;
+        }
+        std::string lines;
+        for (const SquadMemberId& member : squad->members) {
+            if (!lines.empty()) lines += "<br/>";
+            lines += "@" + squadAccountName(member) + " [" + squadDisplayName(member) + "]";
+            if (squad->leader == member) lines += " (Leader)";
+        }
+        out("<span style=\"color: #4fc3f7;\">Squad " + squad->id + " [" +
+            (squad->isPublic ? "public" : "private") + "] (" +
+            std::to_string(squad->members.size()) + "/" + std::to_string(kMaxSquadSize) +
+            "):<br/>" + lines + "</span>");
+        return;
+    }
+
+    out(kSquadCommands);
 }
 
 // ---------------------------------------------------------------------------
@@ -1568,6 +1822,167 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
                                   guildName + "\" by an admin.</span>");
         }
         broadcastGuildRoster(guilds[guildName]);
+        return;
+    }
+
+    // -- the process itself ------------------------------------------------
+    //
+    // A restart IS a process exit: pm2, systemd or docker is what brings the
+    // server back, on both builds. Players get the reference's warnings on the
+    // way down, which is the whole reason it is scheduled rather than done.
+
+    if (verb == "restart") {
+        const std::string arg = lowerCase(rest);
+        if (arg.empty()) {
+            out(scheduleRestart(60000.0, "admin")
+                    ? "Restart scheduled in 60 seconds. Use \"restart cancel\" to abort."
+                    : "Cannot schedule: a restart is already firing.");
+            return;
+        }
+        if (arg == "status") {
+            double remaining = 0;
+            std::string reason;
+            if (!scheduledRestartInfo(remaining, reason)) {
+                out("No restart scheduled.");
+                return;
+            }
+            const long minutes = static_cast<long>(remaining / 60000.0);
+            const long seconds = static_cast<long>(std::fmod(remaining, 60000.0) / 1000.0);
+            out("Restart scheduled in " + std::to_string(minutes) + "m " +
+                std::to_string(seconds) + "s (reason: " + reason + ").");
+            return;
+        }
+        if (arg == "cancel" || arg == "abort") {
+            out(cancelScheduledRestart() ? "Pending restart cancelled."
+                                         : "No pending restart to cancel.");
+            return;
+        }
+        double millis = 0;
+        if (!parseDurationMillis(arg, millis)) {
+            out("Usage: restart [<seconds>|<N>(s|m|h)|cancel|status]");
+            return;
+        }
+        if (!scheduleRestart(millis, "admin")) {
+            out("Cannot schedule: a restart is already firing.");
+            return;
+        }
+        out("Restart scheduled in " + std::to_string(std::lround(millis / 1000.0)) +
+            "s. Use \"restart cancel\" to abort.");
+        return;
+    }
+
+    if (verb == "backup_db" || verb == "db_backup") {
+        const std::string arg = lowerCase(rest);
+        if (arg == "list") {
+            const std::vector<Database::BackupInfo> backups = database_.listBackups();
+            if (backups.empty()) {
+                out("No database backups yet. Run \"backup_db\" to create one.");
+                return;
+            }
+            out("Database backups (" + std::to_string(backups.size()) + ", newest first):");
+            for (const Database::BackupInfo& backup : backups) {
+                out("  " + backup.file + " \xE2\x80\x94 " + kilobytes(backup.bytes) +
+                    " KB \xE2\x80\x94 " + localeTimestamp(backup.modifiedMillis));
+            }
+            out("To restore: copy a backup over inventory.json (in dist/) and restart the "
+                "server.");
+            return;
+        }
+        if (!arg.empty()) {
+            out("Usage: backup_db [list]");
+            return;
+        }
+        Database::BackupInfo backup;
+        std::string error;
+        if (!database_.backup("manual-" + session.username, backup, error)) {
+            out("Database backup FAILED: " + error);
+            return;
+        }
+        out("Database backed up to " + backup.file + " (" + kilobytes(backup.bytes) + " KB)");
+        return;
+    }
+
+    if (verb == "update") {
+        const std::string arg = lowerCase(rest);
+        if (arg == "status") {
+            out(autoupdate::inProgress() ? "Update in progress. " + autoupdate::lastStatus()
+                                         : autoupdate::lastStatus());
+            double remaining = 0;
+            std::string reason;
+            if (scheduledRestartInfo(remaining, reason) && reason == "update") {
+                out("Post-update restart in " +
+                    std::to_string(static_cast<long>(std::ceil(remaining / 1000.0))) + "s.");
+            }
+            return;
+        }
+        if (arg == "cancel" || arg == "abort") {
+            if (autoupdate::inProgress()) {
+                out("Update is mid-install and cannot be cancelled (it only takes a few "
+                    "seconds).");
+                return;
+            }
+            double remaining = 0;
+            std::string reason;
+            if (scheduledRestartInfo(remaining, reason) && reason == "update" &&
+                cancelScheduledRestart()) {
+                out("Post-update restart cancelled. The new build is already on disk and will "
+                    "load on the next restart.");
+            } else {
+                out("No pending post-update restart to cancel.");
+            }
+            return;
+        }
+        if (arg == "help" || arg == "?") {
+            out("Usage: update [now|<N>(s|m|h)|status|cancel]");
+            out("  Backs up the database FIRST (aborts if that fails), downloads the latest");
+            out("  build (dist/) from the GitHub repo, installs it over the running server");
+            out("  (inventory.json is never touched), then restarts. Default restart delay");
+            out("  is 60s so players get warned.");
+            return;
+        }
+
+        double delayMillis = 60000.0;
+        if (arg == "now") {
+            delayMillis = 0;
+        } else if (!arg.empty() && !parseDurationMillis(arg, delayMillis)) {
+            out("Usage: update [now|<N>(s|m|h)|status|cancel]");
+            return;
+        }
+        if (!autoupdate::supported()) {
+            out(autoupdate::lastStatus());
+            return;
+        }
+        if (autoupdate::inProgress()) {
+            out("An update is already in progress. Use \"update status\" to check on it.");
+            return;
+        }
+
+        // Step one is the server's own, not the installer's: the backup has to
+        // succeed before a single file is touched, and a failure here aborts
+        // with the running build untouched.
+        out("[UPDATE] Step 1/4: backing up database (required before updating)...");
+        Database::BackupInfo backup;
+        std::string error;
+        if (!database_.backup("pre-update", backup, error)) {
+            out("[UPDATE] FAILED: Database backup FAILED - update aborted, nothing was "
+                "changed. (" + error + ")");
+            return;
+        }
+        out("[UPDATE] Database backed up to " + backup.file + " (" + kilobytes(backup.bytes) +
+            " KB)");
+
+        updateRestartDelayMillis_ = delayMillis;
+        // The progress lines follow the SOCKET, not the session: the answer is
+        // for whoever is still on the other end of it when each step lands.
+        updateRequester_ = session.connection;
+        if (!autoupdate::start(autoupdate::defaultUrl())) {
+            out("An update is already in progress. Use \"update status\" to check on it.");
+        }
+        return;
+    }
+
+    if (verb == "change-maze" || verb == "change_maze") {
+        out(adminChangeMaze(rest));
         return;
     }
 

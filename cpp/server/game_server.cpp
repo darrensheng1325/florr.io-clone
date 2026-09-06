@@ -3,15 +3,18 @@
 #include "shared/core/process_stats.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <optional>
 #include <thread>
 
+#include "server/auto_update.h"
 #include "server/bot_identity.h"
 #include "server/guilds.h"
 #include "server/text.h"
@@ -196,6 +199,11 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     mobAi_->allocateNetId = [this] { return netIds_.next(); };
     spawning_->netIds = &netIds_;
     loot_->netIds = &netIds_;
+    // One table, two readers: what a corpse pays XP for and what it reserves
+    // its drops for must be the same answer. rebuildSquadIndex() refreshes it
+    // once a tick; the pointer never moves.
+    loot_->squads = &squadIndex_;
+    combat_->squads = &squadIndex_;
 
     // The annotation layer is a read-only service, so the systems that need it
     // hold a pointer rather than being handed it per call. Left null they fall
@@ -223,12 +231,17 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     listener_.webRoot = config.webRoot;
     if (!listener_.start(config.port, errorOut)) return false;
 
+    // Seeded before the first tick can set it: a message may be serviced ahead
+    // of the first tick, and a deadline stamped from a zero clock is one that
+    // has already passed.
+    clockMillis_ = monotonicMillis();
     running_ = true;
     return true;
 }
 
 void GameServer::run() {
     nextTickMillis_ = monotonicMillis();
+    clockMillis_ = nextTickMillis_;
     while (step()) {
     }
     shutdown();
@@ -314,8 +327,24 @@ std::size_t GameServer::playerCount() const {
 
 void GameServer::tick(double nowMillis) {
     ++tick_;
+    clockMillis_ = nowMillis;
 
     for (auto& entry : sessions_) refillAllowances(entry.second, nowMillis);
+
+    // Invitations lapse on the server's own clock rather than on a timer per
+    // invite, which is a timer that has to be cancelled when its target
+    // disconnects. The ranking table is rebuilt beside it because a member's
+    // BODY changes on every death: cached against the roster it would go stale
+    // without the roster ever moving.
+    squads_.expire(static_cast<std::int64_t>(nowMillis));
+    rebuildSquadIndex();
+
+    // Above the idle gate on purpose: a server with nobody left on it is
+    // exactly the one a scheduled restart is usually waiting for, and an
+    // install that finished while the last player left still has a restart to
+    // schedule.
+    serviceAutoUpdate();
+    serviceScheduledRestart(nowMillis);
 
     // Housekeeping, ABOVE the idle gate: an account registered by somebody
     // sitting on the title screen is dirty in memory and would otherwise wait
@@ -640,11 +669,17 @@ void GameServer::replicate(double nowMillis) {
     frame.nowMillis = nowMillis;
     frame.events = &events_;
 
+    // Reused across recipients rather than allocated per session: it is at
+    // most three entities and almost always none.
+    std::vector<Entity> squadBodies;
     for (auto& entry : sessions_) {
         Session& session = entry.second;
         if (!session.playing()) continue;
         net::Connection* connection = listener_.find(session.connection);
         if (!connection) continue;
+
+        collectSquadBodies(session, squadBodies);
+        frame.alwaysVisible = squadBodies.empty() ? nullptr : &squadBodies;
 
         scratch_.clear();
         replicator_.build(world_, session.entity, views_[session.connection], frame, scratch_);
@@ -679,6 +714,9 @@ void GameServer::onConnect(net::Connection& connection) {
 
 void GameServer::onDisconnect(net::Connection& connection, const std::string&) {
     if (Session* session = sessionFor(connection.id())) {
+        // Before the body is destroyed, so the line the squad is told still
+        // knows what this flower was called.
+        departSquad(*session, nullptr, squadDisplayName(squadIdOf(*session)));
         if (session->playing()) {
             persistPlayer(*session);
             despawnPlayer(*session, false);
@@ -2356,16 +2394,438 @@ void GameServer::guildKick(Session& session, net::Connection& connection,
     broadcastGuildRoster(guild);
 }
 
+// ---------------------------------------------------------------------------
+// Scheduled restart
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// How long before a restart each warning goes out, longest first. The
+/// reference's RESTART_WARNINGS_MS.
+constexpr std::array<double, 4> kRestartWarnings = {600000.0, 300000.0, 60000.0, 10000.0};
+
+/// "daily" is the only reason with a friendlier name than itself.
+std::string restartReasonText(const std::string& reason) {
+    return reason == "daily" ? "daily maintenance" : reason;
+}
+
+/// The reference prefixes both of these with U+26A0. It is dropped here for
+/// the same reason /guild-info's bullet was: there is one font in this build
+/// and it cannot draw that glyph, so the sign would arrive as a hole in the
+/// sentence. The words are the reference's, unchanged.
+std::string restartWarning(double millis, const std::string& reason) {
+    if (millis >= 60000.0) {
+        const long minutes = std::lround(millis / 60000.0);
+        return "<span style=\"color:#ffb74d;\">Server will restart in " +
+               std::to_string(minutes) + (minutes == 1 ? " minute (" : " minutes (") +
+               restartReasonText(reason) + ").</span>";
+    }
+    const long seconds = std::lround(millis / 1000.0);
+    return "<span style=\"color:#ff6b6b;\">Server restarting in " + std::to_string(seconds) +
+           (seconds == 1 ? " second!</span>" : " seconds!</span>");
+}
+
+} // namespace
+
+bool GameServer::scheduleRestart(double delayMillis, const std::string& reason) {
+    // A restart that has already announced itself and closed the door is not
+    // one anybody can reschedule.
+    if (restart_.firing) return false;
+    if (delayMillis < 0) delayMillis = 0;
+
+    restart_.pending = true;
+    restart_.atMillis = clockMillis_ + delayMillis;
+    restart_.reason = reason;
+    // Warnings longer than the delay itself are skipped outright rather than
+    // fired late: "restarting in 10 minutes" said one second before the exit
+    // is worse than saying nothing.
+    restart_.warningsSaid = 0;
+    while (restart_.warningsSaid < kRestartWarnings.size() &&
+           kRestartWarnings[restart_.warningsSaid] >= delayMillis) {
+        ++restart_.warningsSaid;
+    }
+    return true;
+}
+
+bool GameServer::cancelScheduledRestart() {
+    if (restart_.firing || !restart_.pending) return false;
+    restart_ = ScheduledRestart{};
+    return true;
+}
+
+bool GameServer::scheduledRestartInfo(double& remainingMillis, std::string& reason) const {
+    if (!restart_.pending && !restart_.firing) return false;
+    remainingMillis = std::max(0.0, restart_.atMillis - clockMillis_);
+    reason = restart_.reason;
+    return true;
+}
+
+void GameServer::serviceScheduledRestart(double nowMillis) {
+    if (restart_.firing) {
+        // The gap between the last word and the exit exists so the socket
+        // writes actually leave: stopping in the same breath as the broadcast
+        // drops the message that explains the disconnect.
+        if (nowMillis >= restart_.stopAtMillis) stop();
+        return;
+    }
+    if (!restart_.pending) return;
+
+    const double remaining = restart_.atMillis - nowMillis;
+    while (restart_.warningsSaid < kRestartWarnings.size() &&
+           remaining <= kRestartWarnings[restart_.warningsSaid]) {
+        broadcastChat(net::ChatChannel::System, "System",
+                      restartWarning(kRestartWarnings[restart_.warningsSaid], restart_.reason));
+        ++restart_.warningsSaid;
+    }
+    if (remaining > 0) return;
+
+    restart_.pending = false;
+    restart_.firing = true;
+    restart_.stopAtMillis = nowMillis + 1000.0;
+    broadcastChat(net::ChatChannel::System, "System",
+                  "<span style=\"color:#ff6b6b;\">Server restarting now (" +
+                      restartReasonText(restart_.reason) +
+                      "). Reconnecting shortly...</span>");
+    std::printf("[restart] scheduled restart triggered (reason: %s)\n", restart_.reason.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Self-update
+// ---------------------------------------------------------------------------
+
+void GameServer::serviceAutoUpdate() {
+    net::Connection* requester =
+        updateRequester_ != 0 ? listener_.find(updateRequester_) : nullptr;
+
+    // Drained whether or not anybody is still listening: the lines are also
+    // the JS side's console output, and leaving them queued would replay a
+    // finished update's whole log at the next admin who asks for one.
+    for (const std::string& line : autoupdate::drainLog()) {
+        if (requester != nullptr) sendSystem(*requester, line);
+    }
+
+    switch (autoupdate::takeOutcome()) {
+        case autoupdate::Outcome::Installed: {
+            const bool scheduled = scheduleRestart(updateRestartDelayMillis_, "update");
+            if (requester == nullptr) break;
+            if (scheduled) {
+                const long seconds = std::lround(updateRestartDelayMillis_ / 1000.0);
+                sendSystem(*requester,
+                           "[UPDATE] Done. Server restarts in " + std::to_string(seconds) +
+                               "s to load the new build (\"restart cancel\" or \"update cancel\" "
+                               "to abort the restart -- the new files stay installed either "
+                               "way).");
+            } else {
+                sendSystem(*requester,
+                           "[UPDATE] Done. A restart is already firing -- the new build loads "
+                           "when the server comes back up.");
+            }
+            break;
+        }
+        case autoupdate::Outcome::Failed:
+            // The JS side already said what went wrong, through the log above.
+            break;
+        case autoupdate::Outcome::None:
+            break;
+    }
+
+    if (!autoupdate::inProgress()) updateRequester_ = 0;
+}
+
+// ---------------------------------------------------------------------------
+// The maze
+// ---------------------------------------------------------------------------
+
+std::string GameServer::adminChangeMaze(const std::string& argument) {
+    static const std::array<const char*, 3> kBiomeNames = {{"garden", "desert", "ocean"}};
+    const auto biomeName = [](MazeBiome biome) {
+        return kBiomeNames[static_cast<std::size_t>(biome)];
+    };
+
+    const std::int64_t currentDay = activeMaze().day();
+    const std::string token = lowerCase(trimmed(argument));
+
+    std::int64_t targetDay = 0;
+    if (token.empty() || token == "next") {
+        targetDay = currentDay + 1;
+    } else if (token == "garden" || token == "desert" || token == "ocean") {
+        // The three layouts are authored, not generated: the day number only
+        // picks which one is active, so asking for a biome means asking for the
+        // nearest day that lands on it.
+        const auto want = static_cast<std::int64_t>(
+            token == "garden" ? 0 : (token == "desert" ? 1 : 2));
+        const std::int64_t current = ((currentDay % 3) + 3) % 3;
+        const std::int64_t advance = ((want - current) + 3) % 3;
+        if (advance == 0) return "Maze is already " + token + ".";
+        targetDay = currentDay + advance;
+    } else {
+        int parsed = 0;
+        bool numeric = !token.empty();
+        std::size_t at = (token[0] == '-') ? 1 : 0;
+        if (at >= token.size()) numeric = false;
+        for (std::size_t i = at; numeric && i < token.size(); ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(token[i]))) numeric = false;
+        }
+        if (!numeric) {
+            return std::string("Usage: change-maze [next|garden|desert|ocean|<dayNumber>] ")
+                       .append("\xE2\x80\x94 current: day ") +
+                   std::to_string(currentDay) + " (" + biomeName(activeMaze().biome()) + ")";
+        }
+        parsed = std::atoi(token.c_str());
+        targetDay = parsed;
+    }
+
+    if (targetDay == currentDay) {
+        return "Maze is already day " + std::to_string(currentDay) + " (" +
+               biomeName(activeMaze().biome()) + ").";
+    }
+
+    mazeDayOffset_ = targetDay - currentMazeDay();
+    setActiveMazeDay(targetDay);
+
+    // Anyone standing in the old layout is standing in the new one's walls.
+    // The reference moves them to the new entrance; so does this, and the
+    // client cuts its interpolation on the jump by itself.
+    const Vec2 entrance = activeMaze().spawn();
+    Query<PlayerTag, Transform> flowers{world_};
+    std::vector<Entity> inside;
+    flowers.each([&](Entity entity, PlayerTag&, Transform& transform) {
+        if (isInMazeRegion(transform.position)) inside.push_back(entity);
+    });
+    for (const Entity entity : inside) teleportEntity(entity, entrance);
+
+    return "Maze changed to day " + std::to_string(activeMaze().day()) + " (" +
+           biomeName(activeMaze().biome()) + "). Offset from real day: " +
+           (mazeDayOffset_ >= 0 ? "+" : "") + std::to_string(mazeDayOffset_) + ".";
+}
+
+// ---------------------------------------------------------------------------
+// Squads
+// ---------------------------------------------------------------------------
+//
+// The rules are server/squads.h. What lives here is everything those rules
+// deliberately know nothing about: which body a member currently owns, what to
+// call them, and who to tell.
+
+std::string GameServer::squadAccountName(SquadMemberId member) {
+    if (!member.bot()) {
+        const Session* session = sessionFor(member.connection);
+        return session != nullptr && !session->username.empty() ? session->username : "Unknown";
+    }
+    // A bot has no account. The reference reads its "username" off its
+    // nameplate for exactly this listing, and `/squad-invite` matches on the
+    // same string, so the two agree by construction.
+    if (const PlayerAccount* account = world_.tryGet<PlayerAccount>(member.entity)) {
+        return account->username;
+    }
+    return "Unknown";
+}
+
+std::string GameServer::squadDisplayName(SquadMemberId member) {
+    if (!member.bot()) {
+        const Session* session = sessionFor(member.connection);
+        if (session == nullptr) return "Unknown";
+        return session->displayName.empty() ? session->username : session->displayName;
+    }
+    return squadAccountName(member);
+}
+
+Entity GameServer::squadEntity(SquadMemberId member) {
+    if (member.bot()) {
+        return world_.isAlive(member.entity) ? member.entity : NULL_ENTITY;
+    }
+    const Session* session = sessionFor(member.connection);
+    if (session == nullptr || !session->playing()) return NULL_ENTITY;
+    return session->entity;
+}
+
+net::Connection* GameServer::squadConnection(SquadMemberId member) {
+    return member.bot() ? nullptr : listener_.find(member.connection);
+}
+
+void GameServer::sendSquadUpdate(net::Connection& connection, const Squad* squad) {
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadUpdate));
+    if (squad == nullptr) {
+        w.boolean(false);
+        connection.send(w);
+        return;
+    }
+    w.boolean(true);
+    w.str(squad->id);
+    w.boolean(squad->isPublic);
+    w.u8(static_cast<std::uint8_t>(squad->members.size()));
+    for (const SquadMemberId& member : squad->members) {
+        w.str(squadAccountName(member));
+        w.str(squadDisplayName(member));
+        // The wire id, not the entity: it is what the client's own world is
+        // keyed by, and it is 0 for a member with no body just now -- somebody
+        // sitting on the title screen, or waiting on a death card.
+        const Entity body = squadEntity(member);
+        const NetId* id = body != NULL_ENTITY ? world_.tryGet<NetId>(body) : nullptr;
+        w.u32(id != nullptr ? id->value : 0);
+        std::uint8_t flags = 0;
+        if (squad->leader == member) flags |= 1u;
+        if (member.bot()) flags |= 2u;
+        w.u8(flags);
+    }
+    connection.send(w);
+}
+
+void GameServer::broadcastSquadUpdate(const Squad& squad) {
+    for (const SquadMemberId& member : squad.members) {
+        if (net::Connection* peer = squadConnection(member)) sendSquadUpdate(*peer, &squad);
+    }
+}
+
+void GameServer::sendSquadSystem(const Squad& squad, const std::string& text) {
+    // Signed "[Squad]" rather than "System", which is what tells a member
+    // whether a line was said to the world or to the four of them.
+    for (const SquadMemberId& member : squad.members) {
+        if (net::Connection* peer = squadConnection(member)) {
+            sendChatTo(*peer, net::ChatChannel::Squad, "[Squad]",
+                       "<span style=\"color: #4fc3f7;\">" + text + "</span>");
+        }
+    }
+}
+
+bool GameServer::resolveSquadTarget(const std::string& name, SquadMemberId& out) {
+    if (Session* session = sessionForUser(name)) {
+        out = squadIdOf(*session);
+        return true;
+    }
+    // Then a bot, by nameplate: bots own no account, and inviting one is half
+    // of what squads are for on a quiet server.
+    const std::string key = lowerCase(trimmed(name));
+    if (key.empty()) return false;
+    for (const Bot& bot : bots_) {
+        if (bot.entity == NULL_ENTITY || !world_.isAlive(bot.entity)) continue;
+        if (lowerCase(bot.name) != key) continue;
+        out = SquadMemberId::ofBot(bot.entity);
+        return true;
+    }
+    return false;
+}
+
+void GameServer::departSquad(Session& session, net::Connection* connection,
+                             const std::string& leaverName) {
+    const SquadRoster::Departure departure = squads_.leave(squadIdOf(session));
+    if (!departure.wasMember) return;
+    if (connection != nullptr) sendSquadUpdate(*connection, nullptr);
+
+    Squad* remaining = squads_.find(departure.squadId);
+    if (remaining == nullptr) return;
+    // Promotion first, then the departure: that is the order the reference
+    // emits them in, because the promotion happens inside its leaveSquad and
+    // the "has left" line is said by the caller afterwards.
+    if (departure.promoted.valid()) {
+        sendSquadSystem(*remaining, squadDisplayName(departure.promoted) +
+                                        " is now the squad leader.");
+    }
+    sendSquadSystem(*remaining, leaverName + " has left the squad.");
+    broadcastSquadUpdate(*remaining);
+}
+
+void GameServer::removeBotFromSquad(Entity body) {
+    const SquadMemberId member = SquadMemberId::ofBot(body);
+    if (squads_.forMember(member) == nullptr) return;
+    // Read while the body is still alive: a destroyed bot has no nameplate to
+    // put in the line its squad is about to be sent.
+    const std::string name = squadDisplayName(member);
+    const SquadRoster::Departure departure = squads_.leave(member);
+    Squad* remaining = squads_.find(departure.squadId);
+    if (remaining == nullptr) return;
+    if (departure.promoted.valid()) {
+        sendSquadSystem(*remaining, squadDisplayName(departure.promoted) +
+                                        " is now the squad leader.");
+    }
+    sendSquadSystem(*remaining, name + " has left the squad.");
+    broadcastSquadUpdate(*remaining);
+}
+
+void GameServer::rebuildSquadIndex() {
+    squadIndex_.clear();
+    if (squads_.empty()) return;
+    for (const auto& entry : squads_.all()) {
+        std::vector<Entity> bodies;
+        for (const SquadMemberId& member : entry.second.members) {
+            const Entity body = squadEntity(member);
+            if (body != NULL_ENTITY) bodies.push_back(body);
+        }
+        // One body in the world is not a pool: leaving it out keeps the
+        // ordinary case -- a squad whose other members are on the title screen
+        // -- ranking exactly as a solo player does.
+        if (bodies.size() < 2) continue;
+        const std::size_t group = squadIndex_.groups.size();
+        for (const Entity body : bodies) squadIndex_.group[body] = group;
+        squadIndex_.groups.push_back(std::move(bodies));
+    }
+}
+
+Squad* GameServer::squadOrCreate(Session& session, net::Connection& connection) {
+    const SquadMemberId me = squadIdOf(session);
+    if (Squad* existing = squads_.forMember(me)) return existing;
+    Squad* squad = squads_.create(me, false, rng_);
+    // A squad made this way is announced nowhere else, so the client that
+    // caused it would otherwise not know it exists.
+    if (squad != nullptr) sendSquadUpdate(connection, squad);
+    return squad;
+}
+
+void GameServer::collectSquadBodies(const Session& session, std::vector<Entity>& out) {
+    out.clear();
+    const SquadMemberId me = squadIdOf(session);
+    const Squad* squad = squads_.forMember(me);
+    if (squad == nullptr) return;
+    for (const SquadMemberId& member : squad->members) {
+        if (member == me) continue;
+        const Entity body = squadEntity(member);
+        if (body != NULL_ENTITY) out.push_back(body);
+    }
+}
+
 void GameServer::handleGuildSquadAll(Session& session, net::Connection& connection) {
     if (!session.authenticated()) return;
-    if (guildNameForUser(session.username).empty()) {
+    const std::string guildName = guildNameForUser(session.username);
+    if (guildName.empty()) {
         sendNotice(connection, net::NoticeSeverity::Warning, "You are not in a guild.");
         return;
     }
-    // This build has no squads, so the reference's own "no squad" branch is the
-    // whole answer -- its getOrCreateSquad returns null here and it says this.
-    sendNotice(connection, net::NoticeSeverity::Warning,
-               "Only your squad leader can invite guildmates into the squad.");
+    Squad* squad = squadOrCreate(session, connection);
+    if (squad == nullptr || !(squad->leader == squadIdOf(session))) {
+        sendNotice(connection, net::NoticeSeverity::Warning,
+                   "Only your squad leader can invite guildmates into the squad.");
+        return;
+    }
+
+    const Json& members = database_.storedTable("guilds")[guildName]["memberUsernames"];
+    const auto now = static_cast<std::int64_t>(clockMillis_);
+    int invited = 0;
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        const std::string member = members[i].asString();
+        if (lowerCase(member) == lowerCase(session.username)) continue;
+        // +1 for the invitation already in flight this iteration: an invite is
+        // a claim on a seat, and the reference stops one short for it.
+        if (squad->members.size() + 1 >= kMaxSquadSize) break;
+        Session* target = sessionForUser(member);
+        if (target == nullptr) continue;
+        if (!squads_.invite(squadIdOf(session), squadIdOf(*target), session.username, now).empty()) {
+            continue;
+        }
+        ++invited;
+        if (net::Connection* peer = listener_.find(target->connection)) {
+            sendSystem(*peer, "<span style=\"color: #4fc3f7;\">@" + session.username +
+                                  " (guild) invited you to their squad. Use /squad-accept or "
+                                  "/squad-decline.</span>");
+        }
+    }
+    if (invited == 0) {
+        sendNotice(connection, net::NoticeSeverity::Warning,
+                   "No online guildmates available to invite (or squad is full).");
+        return;
+    }
+    sendNotice(connection, net::NoticeSeverity::Good,
+               "Sent squad invites to " + std::to_string(invited) + " online guildmate(s).");
 }
 
 void GameServer::handleGuildInviteToSquad(Session& session, net::Connection& connection,
@@ -2386,11 +2846,29 @@ void GameServer::guildInviteToSquad(Session& session, net::Connection& connectio
         sendNotice(connection, net::NoticeSeverity::Warning, target + " is not in your guild.");
         return;
     }
-    if (connectionForUser(target) == nullptr) {
+    Session* peerSession = sessionForUser(target);
+    if (peerSession == nullptr) {
         sendNotice(connection, net::NoticeSeverity::Warning, target + " is offline.");
         return;
     }
-    sendNotice(connection, net::NoticeSeverity::Warning, "Failed to create a squad.");
+    Squad* squad = squadOrCreate(session, connection);
+    if (squad == nullptr) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "Failed to create a squad.");
+        return;
+    }
+    const std::string error =
+        squads_.invite(squadIdOf(session), squadIdOf(*peerSession), session.username,
+                       static_cast<std::int64_t>(clockMillis_));
+    if (!error.empty()) {
+        sendNotice(connection, net::NoticeSeverity::Warning, error);
+        return;
+    }
+    sendNotice(connection, net::NoticeSeverity::Good, "Squad invite sent to " + target + ".");
+    if (net::Connection* peer = listener_.find(peerSession->connection)) {
+        sendSystem(*peer, "<span style=\"color: #4fc3f7;\">@" + session.username +
+                              " (guild) invited you to their squad. Use /squad-accept or "
+                              "/squad-decline.</span>");
+    }
 }
 
 void GameServer::handleRespawn(Session& session) {
@@ -2681,6 +3159,9 @@ Entity GameServer::createBotBody(const std::string& name, Vec2 spawn) {
 
 void GameServer::destroyBot(Bot& bot) {
     if (bot.entity == NULL_ENTITY) return;
+    // Before the body goes: a squad holding a destroyed entity would rank a
+    // corpse for loot, and the line its squadmates get needs its nameplate.
+    removeBotFromSquad(bot.entity);
     if (world_.isAlive(bot.entity)) {
         // The ring belongs to the body, not to the name, so it goes with it.
         if (const Loadout* loadout = world_.tryGet<Loadout>(bot.entity)) {
@@ -2935,6 +3416,10 @@ Entity GameServer::spawnPlayer(Session& session) {
     session.stage = SessionStage::Playing;
     // A fresh body has a death of its own still to announce.
     session.deathReported = false;
+    // The roster carries WIRE IDS, and this player just acquired a new one.
+    // Without this a squadmate's dot and party bar stay pinned to the body
+    // they had before they died.
+    if (const Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
     return entity;
 }
 
@@ -3025,6 +3510,9 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
     session.entity = NULL_ENTITY;
     session.stage = SessionStage::Authenticated;
     views_[session.connection].reset();
+    // Same reason as the spawn: the id this member was known by is gone, and a
+    // roster still naming it points every squadmate's HUD at nothing.
+    if (const Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
 }
 
 } // namespace flix

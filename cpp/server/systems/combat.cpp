@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "server/loot_eligibility.h"
+
 namespace flix {
 
 namespace {
@@ -442,22 +444,21 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
 
     // TypeScript ranks positive contributors and grants the mob's FULL XP to
     // each eligible looter; it does not divide one pool in damage proportion.
-    // The native server has no split-player or squad entities, so ranking the
-    // player contributors directly is the equivalent rule.
+    // The ranking itself is the loot system's -- one rule, so the players a
+    // corpse pays XP to are exactly the ones it reserves its drops for, squads
+    // included.
     std::vector<Bounty::Share> shares;
     for (const Bounty::Share& share : bounty->contributors) {
         if (share.damage > 0.0 && world.has<PlayerTag>(share.player)) shares.push_back(share);
     }
-    std::sort(shares.begin(), shares.end(), [](const Bounty::Share& a, const Bounty::Share& b) {
-        return a.damage > b.damage;
-    });
+    std::stable_sort(shares.begin(), shares.end(),
+                     [](const Bounty::Share& a, const Bounty::Share& b) {
+                         return a.damage > b.damage;
+                     });
     Rarity rarity = Rarity::Common;
     if (const MobType* type = world.tryGet<MobType>(victim)) rarity = type->rarity;
-    int slots = 4;
-    if (rarity == Rarity::Ultra) slots = 15;
-    else if (rarity == Rarity::Super) slots = 20;
-    else if (rarity == Rarity::Unique || rarity == Rarity::Apex) slots = 25;
-    if (static_cast<int>(shares.size()) > slots) shares.resize(static_cast<std::size_t>(slots));
+    std::vector<Entity> recipients;
+    selectLootRecipients(shares, lootSlotsForRarity(rarity), squads, recipients);
 
     // Resolved and rounded per RECIPIENT rather than once per mob, because the
     // leaderboard factor is a property of the account being paid: the top ten
@@ -465,10 +466,10 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
     // which is the whole of the catch-up mechanic. payFullXpToEach() rounds
     // AFTER multiplying, so a 0.5x share of 45 XP is 23 and not 22.
     const double baseXp = bounty->xp;
-    for (const Bounty::Share& share : shares) {
-        PlayerProgress* progress = world.tryGet<PlayerProgress>(share.player);
+    for (const Entity recipient : recipients) {
+        PlayerProgress* progress = world.tryGet<PlayerProgress>(recipient);
         if (progress == nullptr) continue;
-        const PlayerAccount* account = world.tryGet<PlayerAccount>(share.player);
+        const PlayerAccount* account = world.tryGet<PlayerAccount>(recipient);
         // A ranking the owner has not written yet is worth full XP, never a
         // NaN: this figure is added to a total that is persisted.
         const double multiplier =
@@ -487,13 +488,13 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
             // addXPToPlayer(), before the death broadcast. Waiting for next
             // tick's petal pass leaves one snapshot with the new level and old
             // health/damage.
-            const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(share.player);
+            const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(recipient);
             const double healthScale = modifiers ? modifiers->maxHealthScale : 1.0;
-            if (Health* health = world.tryGet<Health>(share.player)) {
+            if (Health* health = world.tryGet<Health>(recipient)) {
                 health->max = std::round(maxHealthForLevel(level) * healthScale);
                 health->current = health->max;
             }
-            if (ContactDamage* contact = world.tryGet<ContactDamage>(share.player)) {
+            if (ContactDamage* contact = world.tryGet<ContactDamage>(recipient)) {
                 contact->amount = bodyDamageForLevel(level);
             }
         }

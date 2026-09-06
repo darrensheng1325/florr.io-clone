@@ -2,6 +2,7 @@
 
 #include "client/net_client.h"
 #include "client/interpolation.h"
+#include "server/db.h"
 #include "server/game_server.h"
 #include "server_harness.h"
 #include "shared/game/config.h"
@@ -98,6 +99,80 @@ TEST(a_content_mismatch_is_reported_rather_than_misparsed) {
     CHECK(client.connect("127.0.0.1", h.port));
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Failed; }));
     CHECK(!client.lastError().empty());
+}
+
+TEST(a_refused_handshake_is_not_redialled) {
+    Harness h("proto-noretry");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    client.contentHash = 0xDEADBEEF;
+    CHECK(client.connect("127.0.0.1", h.port));
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Failed; }));
+
+    // A server that refuses this build refuses it every time, so nothing
+    // redials. What has to change is the build, which is what the flag says.
+    CHECK(!client.reconnecting());
+    CHECK(client.staleBuild);
+}
+
+TEST(a_client_redials_a_server_that_restarted) {
+    const auto seed = [](const std::string& path) {
+        Database db;
+        std::string error;
+        db.load(path, error);
+        db.setPasswordCost(4);
+        db.createUser("returner", "password7");
+        db.markDirty();
+        db.save();
+    };
+
+    NetClient client;
+    std::uint16_t port = 0;
+    {
+        Harness first("restart-a", seed);
+        if (!first.ready) { CHECK(false); return; }
+        port = first.port;
+        CHECK(connectClient(first, client));
+        client.requestLogin("returner", "password7");
+        CHECK(first.stepUntil({&client},
+                              [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    }
+    // The server process is gone -- which is exactly what a restart looks like
+    // from here.
+    for (int i = 0; i < 200 && client.status() != NetClient::Status::Failed; ++i) {
+        client.poll(1);
+    }
+    CHECK(client.status() == NetClient::Status::Failed);
+    CHECK(client.reconnecting());
+    CHECK(!client.reconnected);
+
+    // The same port, because the harness takes the lowest free one and the
+    // first server has just released it. A client that redialled somewhere
+    // else would not be testing anything.
+    Harness second("restart-b", seed);
+    if (!second.ready) { CHECK(false); return; }
+    CHECK(second.port == port);
+
+    // The backoff starts at a second, so this is real elapsed time rather than
+    // simulated ticks; the budget covers two or three attempts.
+    const bool back = second.stepUntil({&client},
+                                       [&] { return client.status() == NetClient::Status::Ready ||
+                                                    client.status() == NetClient::Status::LoggedIn; },
+                                       2000);
+    CHECK(back);
+    CHECK(client.reconnected);
+
+    // And the socket is genuinely usable again, not merely open: the account
+    // goes back in over it.
+    //
+    // With a password rather than the token this client is still holding.
+    // Sessions live in the database, and these two harnesses own separate
+    // files -- on a real restart the same inventory.json comes back up and the
+    // token resumes, which is what App::onReconnected presents.
+    client.requestLogin("returner", "password7");
+    CHECK(second.stepUntil({&client},
+                           [&] { return client.status() == NetClient::Status::LoggedIn; }));
 }
 
 TEST(two_players_see_each_other_move) {

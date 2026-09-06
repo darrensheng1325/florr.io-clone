@@ -325,6 +325,18 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     const double t = easeAmount(easeRatePerSecond, dtSeconds);
     const double renderMillis = nowMillis - interpolationDelayMillis;
 
+    // Reapplied per frame rather than once when the command runs: the server
+    // resends the real flags with every snapshot, and an override written once
+    // would last until the next one and no longer.
+    if (localFlags.overridesFace || localFlags.overridesEquip || localFlags.overridesRender) {
+        const auto mine = entities_.find(self_.netId);
+        if (mine != entities_.end()) {
+            if (localFlags.overridesFace) mine->second.faceFlags = localFlags.faceFlags;
+            if (localFlags.overridesEquip) mine->second.equipFlags = localFlags.equipFlags;
+            if (localFlags.overridesRender) mine->second.renderFlags = localFlags.renderFlags;
+        }
+    }
+
     // --- the viewer's own flower ------------------------------------------
     //
     // First, because the camera, the cursor control law and this flower's own

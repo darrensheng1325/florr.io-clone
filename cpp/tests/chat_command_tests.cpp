@@ -14,6 +14,7 @@
 #include "server_harness.h"
 #include "server/bot_identity.h"
 #include "server/db.h"
+#include "shared/game/terrain.h"
 
 using namespace flix;
 using namespace flix::testsupport;
@@ -62,6 +63,15 @@ bool say(Harness& h, NetClient& client, const std::string& text, int maxTicks = 
     const std::size_t before = client.chat().size();
     client.sendChat(text);
     return h.stepUntil({&client}, [&] { return client.chat().size() > before; }, maxTicks);
+}
+
+/// The snapshots this harness's database wrote, read back off disk. A backup
+/// is only a backup if it loads, so the test that makes one opens it.
+std::vector<Database::BackupInfo> reopenBackups(Harness& h) {
+    Database probe;
+    std::string error;
+    probe.load(h.dbPath, error);
+    return probe.listBackups();
 }
 
 } // namespace
@@ -485,14 +495,280 @@ TEST(a_command_this_build_lacks_is_left_unanswered) {
     // The reference's command chain falls off its last branch for an admin
     // verb it does not know, and the echo is all the operator sees. This build
     // says exactly as much -- no apology of its own about what it lacks.
-    CHECK(say(h, client, "/admin update now"));
-    CHECK(sawText(client, "[ADMIN] boss executed: update now"));
+    CHECK(say(h, client, "/admin nosuchverb"));
+    CHECK(sawText(client, "[ADMIN] boss executed: nosuchverb"));
     CHECK(!sawText(client, "not available"));
 
-    // A squad line is not a command here, so it gets the answer any unknown
-    // slash line gets rather than a message written for this build.
-    CHECK(say(h, client, "/squad-create public"));
-    CHECK(sawText(client, "Unknown command. Available commands:"));
+    // `update` is the one command that answers with what this build cannot do,
+    // because the thing it installs is a JavaScript build and a native server
+    // has nowhere to put one. Note it does NOT back the database up first:
+    // refusing has to happen before the step that writes a file.
+    CHECK(say(h, client, "/admin update now"));
+    CHECK(sawText(client, "cannot update itself"));
+    CHECK(!sawText(client, "Step 1/4"));
+}
+
+TEST(a_squad_forms_talks_and_disbands) {
+    Harness h("cmd-squad", [](const std::string& path) {
+        seedUser(path, "lead", "password7");
+        seedUser(path, "mate", "password7");
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient lead;
+    NetClient mate;
+    CHECK(loginAs(h, lead, "lead", "password7"));
+    CHECK(loginAs(h, mate, "mate", "password7"));
+
+    CHECK(say(h, lead, "/squad-create"));
+    CHECK(sawText(lead, "private squad created!"));
+    CHECK(lead.squad().inSquad);
+    CHECK(lead.squad().members.size() == 1);
+
+    // The hyphen form and the space form are the same command: the reference
+    // rewrites one into the other, and so does this.
+    CHECK(say(h, lead, "/squad invite mate"));
+    CHECK(sawText(lead, "Invite sent to mate."));
+    // say() only polls the client it spoke for, and the invitation is a line
+    // sent to the OTHER one.
+    h.step(3, {&lead, &mate});
+    CHECK(sawText(mate, "@lead has invited you to their squad."));
+
+    CHECK(say(h, mate, "/squad-accept"));
+    h.step(3, {&lead, &mate});
+    CHECK(sawText(lead, "mate has joined the squad."));
+    CHECK(lead.squad().members.size() == 2);
+    CHECK(mate.squad().members.size() == 2);
+    CHECK(mate.squad().id == lead.squad().id);
+
+    CHECK(say(h, lead, "/squad-info"));
+    CHECK(sawText(lead, "@lead [lead] (Leader)"));
+    CHECK(sawText(lead, "@mate [mate]"));
+
+    const std::size_t before = mate.chat().size();
+    lead.sendChat("/s regroup");
+    CHECK(h.stepUntil({&lead, &mate}, [&] { return mate.chat().size() > before; }));
+    CHECK(sawText(mate, "regroup"));
+    CHECK(sawText(lead, "regroup"));
+
+    // The leader leaving promotes the next member and tells them both things.
+    CHECK(say(h, lead, "/squad-leave"));
+    h.step(3, {&lead, &mate});
+    CHECK(sawText(lead, "You have left the squad."));
+    CHECK(!lead.squad().inSquad);
+    CHECK(sawText(mate, "mate is now the squad leader."));
+    CHECK(sawText(mate, "lead has left the squad."));
+    CHECK(mate.squad().members.size() == 1);
+}
+
+TEST(a_squad_invite_is_refused_when_it_should_be) {
+    Harness h("cmd-squad-refuse", [](const std::string& path) {
+        seedUser(path, "one", "password7");
+        seedUser(path, "two", "password7");
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient one;
+    NetClient two;
+    CHECK(loginAs(h, one, "one", "password7"));
+    CHECK(loginAs(h, two, "two", "password7"));
+
+    CHECK(say(h, one, "/squad-invite nobody"));
+    CHECK(sawText(one, "Player \"nobody\" not found."));
+
+    CHECK(say(h, one, "/squad-create"));
+    CHECK(say(h, one, "/squad-invite one"));
+    CHECK(sawText(one, "You cannot invite yourself."));
+
+    // A member who is not the leader may not invite, which is the rule a squad
+    // filling itself up from four directions at once would break.
+    CHECK(say(h, one, "/squad-invite two"));
+    CHECK(say(h, two, "/squad-accept"));
+    h.step(3, {&one, &two});
+    CHECK(say(h, two, "/squad-invite one"));
+    CHECK(sawText(two, "Only the squad leader can invite players."));
+
+    CHECK(say(h, one, "/squad-invite two"));
+    CHECK(sawText(one, "That player is already in a squad."));
+}
+
+TEST(a_public_squad_is_listed_and_joinable) {
+    Harness h("cmd-squad-public", [](const std::string& path) {
+        seedUser(path, "host", "password7");
+        seedUser(path, "guest", "password7");
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient host;
+    NetClient guest;
+    CHECK(loginAs(h, host, "host", "password7"));
+    CHECK(loginAs(h, guest, "guest", "password7"));
+
+    CHECK(say(h, host, "/squad-create public"));
+    CHECK(sawText(host, "public squad created!"));
+
+    CHECK(say(h, guest, "/squad-find-public"));
+    CHECK(sawText(guest, "Public squads:"));
+    CHECK(sawText(guest, "leader: host"));
+
+    const std::string squadId = host.squad().id;
+    CHECK(!squadId.empty());
+    CHECK(say(h, guest, "/squad-join " + squadId));
+    h.step(3, {&host, &guest});
+    CHECK(sawText(host, "guest has joined the squad."));
+    CHECK(guest.squad().members.size() == 2);
+
+    // A private squad drops off the listing, which is the whole difference
+    // between the two.
+    CHECK(say(h, host, "/squad-private"));
+    h.step(3, {&host, &guest});
+    CHECK(sawText(guest, "Squad is now private."));
+    CHECK(!host.squad().isPublic);
+}
+
+TEST(a_squadmate_is_streamed_across_the_map) {
+    Harness h("cmd-squad-view", [](const std::string& path) {
+        seedUser(path, "near", "password7", true);
+        seedUser(path, "far", "password7");
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient near;
+    NetClient far;
+    CHECK(loginAs(h, near, "near", "password7"));
+    CHECK(loginAs(h, far, "far", "password7"));
+    near.joinGame(1280, 720, {}, "near");
+    far.joinGame(1280, 720, {}, "far");
+    CHECK(h.stepUntil({&near, &far}, [&] {
+        return near.status() == NetClient::Status::Playing &&
+               far.status() == NetClient::Status::Playing;
+    }));
+
+    // Half a world apart: well outside the four-screen box the replicator
+    // streams, so nothing but a squad could put them in each other's view.
+    CHECK(say(h, near, "/admin teleport near 1000 1000"));
+    CHECK(say(h, near, "/admin teleport far 30000 30000"));
+    h.step(20, {&near, &far});
+
+    const auto sees = [](const NetClient& viewer, const NetClient& other) {
+        return viewer.view().entities().count(other.view().self().netId) != 0;
+    };
+    CHECK(!sees(near, far));
+
+    CHECK(say(h, near, "/squad-create"));
+    CHECK(say(h, near, "/squad-invite far"));
+    h.step(3, {&near, &far});
+    CHECK(say(h, far, "/squad-accept"));
+    h.step(20, {&near, &far});
+
+    // Both directions: the exemption is the VIEWER's squad, so it has to be
+    // applied per recipient rather than to the entity being looked at.
+    CHECK(sees(near, far));
+    CHECK(sees(far, near));
+    CHECK(near.squad().members.size() == 2);
+    for (const SquadState::Member& member : near.squad().members) {
+        // A member in the world carries the wire id the minimap and the party
+        // bars find their body by.
+        CHECK(member.netId != 0);
+    }
+
+    // And it stops when the squad does.
+    CHECK(say(h, far, "/squad-leave"));
+    h.step(20, {&near, &far});
+    CHECK(!sees(near, far));
+}
+
+TEST(a_restart_warns_and_can_be_called_off) {
+    Harness h("cmd-restart", [](const std::string& path) {
+        seedUser(path, "boss", "password7", true);
+        seedUser(path, "player", "password7");
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient boss;
+    NetClient player;
+    CHECK(loginAs(h, boss, "boss", "password7"));
+    CHECK(loginAs(h, player, "player", "password7"));
+
+    CHECK(say(h, boss, "/admin restart cancel"));
+    CHECK(sawText(boss, "No pending restart to cancel."));
+
+    CHECK(say(h, boss, "/admin restart 12s"));
+    CHECK(sawText(boss, "Restart scheduled in 12s."));
+
+    CHECK(say(h, boss, "/admin restart status"));
+    CHECK(sawText(boss, "(reason: admin)."));
+
+    // Every player is warned, not just the one who typed it. Two seconds of
+    // ticks reaches the ten-second mark and no other.
+    h.step(90, {&boss, &player});
+    CHECK(sawText(player, "Server restarting in 10 seconds!"));
+    CHECK(!sawText(player, "Server will restart in 1 minute"));
+
+    CHECK(say(h, boss, "/admin restart cancel"));
+    CHECK(sawText(boss, "Pending restart cancelled."));
+
+    // And nothing fires afterwards: fifteen more seconds of ticks past what
+    // was the deadline.
+    const std::size_t before = player.chat().size();
+    h.step(450, {&boss, &player});
+    CHECK(player.chat().size() == before);
+}
+
+TEST(the_database_backs_up_and_lists_its_backups) {
+    Harness h("cmd-backup", [](const std::string& path) {
+        seedUser(path, "boss", "password7", true);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient boss;
+    CHECK(loginAs(h, boss, "boss", "password7"));
+
+    CHECK(say(h, boss, "/admin backup_db"));
+    CHECK(sawText(boss, "Database backed up to"));
+    CHECK(sawText(boss, "-manual-boss.json"));
+
+    CHECK(say(h, boss, "/admin backup_db list"));
+    CHECK(sawText(boss, "Database backups (1, newest first):"));
+    CHECK(sawText(boss, "To restore: copy a backup over inventory.json"));
+
+    CHECK(say(h, boss, "/admin backup_db everything"));
+    CHECK(sawText(boss, "Usage: backup_db [list]"));
+
+    // The snapshot is a real, complete file: anything less is worse than none,
+    // because it looks like a rescue and is not one.
+    const std::vector<Database::BackupInfo> backups = reopenBackups(h);
+    CHECK(backups.size() == 1);
+    for (const Database::BackupInfo& info : backups) {
+        Database written;
+        std::string error;
+        CHECK(written.load(info.file, error));
+        CHECK(written.findUser("boss") != nullptr);
+        std::remove(info.file.c_str());
+    }
+}
+
+TEST(change_maze_rotates_the_active_maze) {
+    Harness h("cmd-maze", [](const std::string& path) {
+        seedUser(path, "boss", "password7", true);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient boss;
+    CHECK(loginAs(h, boss, "boss", "password7"));
+
+    const std::int64_t started = activeMaze().day();
+    CHECK(say(h, boss, "/admin change-maze next"));
+    CHECK(sawText(boss, "Maze changed to day " + std::to_string(started + 1)));
+    CHECK(activeMaze().day() == started + 1);
+
+    CHECK(say(h, boss, "/admin change-maze rubbish"));
+    CHECK(sawText(boss, "Usage: change-maze [next|garden|desert|ocean|"));
+
+    // Back where the rest of the suite expects it: the active maze is one
+    // process-wide object, so a test that moves it has to put it back.
+    CHECK(say(h, boss, "/admin change-maze " + std::to_string(started)));
+    CHECK(activeMaze().day() == started);
 }
 
 TEST(api_keys_are_minted_and_revoked_per_account) {

@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -518,6 +520,119 @@ bool Database::save() {
     }
     dirty_ = false;
     return true;
+}
+
+std::string Database::backupDirectory() const {
+    // One level above the runtime directory, which is what puts snapshots
+    // outside dist/ and therefore out of reach of a redeploy that replaces it.
+    const std::size_t slash = path_.find_last_of('/');
+    // A bare `inventory.json`: the working directory IS the level above.
+    if (slash == std::string::npos) return "db_backups";
+    const std::string directory = path_.substr(0, slash);
+    const std::size_t parent = directory.find_last_of('/');
+    // A single relative component ("dist/inventory.json"), so again the
+    // working directory.
+    if (parent == std::string::npos) return "db_backups";
+    // A single ABSOLUTE component ("/tmp/inventory.json"). The level above is
+    // the filesystem root, which is not a place anything writes; the database's
+    // own directory is as far up as this can usefully go.
+    if (parent == 0) return directory + "/db_backups";
+    return directory.substr(0, parent) + "/db_backups";
+}
+
+bool Database::backup(const std::string& label, BackupInfo& out, std::string& errorOut) {
+    // Same latch as save(): the in-memory database is the empty default when a
+    // load fails, and a "backup" of that is a file that looks like a rescue and
+    // is total account loss.
+    if (loadFailed_) {
+        errorOut = "the database failed to load; refusing to snapshot an empty one";
+        return false;
+    }
+
+    std::string safeLabel;
+    for (const char c : toLower(label)) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (ok) safeLabel.push_back(c);
+        else if (!safeLabel.empty() && safeLabel.back() != '-') safeLabel.push_back('-');
+        if (safeLabel.size() >= 40) break;
+    }
+    while (!safeLabel.empty() && safeLabel.back() == '-') safeLabel.pop_back();
+    if (safeLabel.empty()) safeLabel = "manual";
+
+    const std::string directory = backupDirectory();
+    if (::mkdir(directory.c_str(), 0755) != 0 && errno != EEXIST) {
+        errorOut = "could not create " + directory;
+        return false;
+    }
+
+    // The reference's `new Date().toISOString()` with ':' and '.' replaced,
+    // because a colon is not a filename character everywhere this runs.
+    const std::int64_t millis = nowMillis();
+    const std::int64_t days = millis / 86400000 - (millis % 86400000 < 0 ? 1 : 0);
+    std::int64_t rest = millis - days * 86400000;
+    char stamp[64];
+    std::snprintf(stamp, sizeof stamp, "%sT%02d-%02d-%02d-%03dZ", civilFromDays(days).c_str(),
+                  static_cast<int>(rest / 3600000), static_cast<int>(rest / 60000 % 60),
+                  static_cast<int>(rest / 1000 % 60), static_cast<int>(rest % 1000));
+
+    const std::string file = directory + "/inventory-" + stamp + "-" + safeLabel + ".json";
+    // Pretty-printed, as the reference writes it: a backup is read by a person
+    // trying to rescue an account, not by the loader's hot path.
+    const std::string text = toJson().dump(2);
+
+    std::FILE* handle = std::fopen(file.c_str(), "wb");
+    if (handle == nullptr) {
+        errorOut = "could not open " + file;
+        return false;
+    }
+    const std::size_t written = text.empty() ? 0 : std::fwrite(text.data(), 1, text.size(), handle);
+    const bool flushed = std::fflush(handle) == 0;
+    if (flushed) ::fsync(::fileno(handle));
+    const bool closed = std::fclose(handle) == 0;
+
+    struct stat info {};
+    if (written != text.size() || !flushed || !closed || ::stat(file.c_str(), &info) != 0 ||
+        static_cast<std::size_t>(info.st_size) != text.size()) {
+        std::remove(file.c_str());
+        errorOut = "the snapshot did not write in full";
+        return false;
+    }
+
+    out.file = file;
+    out.bytes = text.size();
+    out.modifiedMillis = millis;
+
+    // Pruning is best-effort: it must never turn a good backup into a failure.
+    std::vector<BackupInfo> existing = listBackups();
+    for (std::size_t i = kMaxDatabaseBackups; i < existing.size(); ++i) {
+        std::remove(existing[i].file.c_str());
+    }
+    return true;
+}
+
+std::vector<Database::BackupInfo> Database::listBackups() const {
+    std::vector<BackupInfo> out;
+    const std::string directory = backupDirectory();
+    DIR* dir = ::opendir(directory.c_str());
+    if (dir == nullptr) return out;
+    while (const dirent* entry = ::readdir(dir)) {
+        const std::string name = entry->d_name;
+        if (name.rfind("inventory-", 0) != 0) continue;
+        if (name.size() < 5 || name.compare(name.size() - 5, 5, ".json") != 0) continue;
+        const std::string full = directory + "/" + name;
+        struct stat info {};
+        if (::stat(full.c_str(), &info) != 0) continue;
+        out.push_back({full, static_cast<std::size_t>(info.st_size),
+                       static_cast<std::int64_t>(info.st_mtime) * 1000});
+    }
+    ::closedir(dir);
+    // Newest first, which is the order somebody looking for the last good one
+    // wants to read.
+    std::sort(out.begin(), out.end(), [](const BackupInfo& a, const BackupInfo& b) {
+        if (a.modifiedMillis != b.modifiedMillis) return a.modifiedMillis > b.modifiedMillis;
+        return a.file > b.file;
+    });
+    return out;
 }
 
 bool Database::maybeSave(std::int64_t nowMillis) {
