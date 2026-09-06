@@ -8,11 +8,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Two, chosen with -DFLIX_BUILD=dev or -DFLIX_BUILD=release:
 #
 #   dev      what you build while working on the game. Still optimised: the
-#            client rasterises every pixel on the CPU, and an -O0 build does
-#            not reach a frame rate you can judge anything by, so the useful
-#            half of a debug build here is the debug info and the asserts, not
-#            the missing optimiser. Frame pointers are kept so a profile has
-#            call stacks.
+#            native client rasterises every pixel on the CPU, and an -O0 build
+#            does not reach a frame rate you can judge anything by. The web
+#            client always emits browser Canvas2D operations instead. Frame
+#            pointers are kept so a profile has call stacks.
 #   release  what ships. -O3, no debug info, asserts and the web build's
 #            runtime checks compiled out.
 #
@@ -63,17 +62,11 @@ add_library(cpp_canvas STATIC
 )
 target_include_directories(cpp_canvas PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cpp_canvas)
 target_compile_options(cpp_canvas PRIVATE -w)   # third-party: not ours to lint
-# SDL is attached here rather than to the whole directory, and PUBLIC so that
-# it reaches the client sources that include SDL.h themselves. Directory-wide
-# options would put it on the server too, which draws nothing and, on the web
-# build, would pull emscripten's SDL port into a Node program.
-if(EMSCRIPTEN)
-  # Emscripten's own port rather than the host's pkg-config. It has to be on
-  # the compile line as well as the link line: SDL.h is the port's header, not
-  # the system one.
-  target_compile_options(cpp_canvas PUBLIC "-sUSE_SDL=2")
-  target_link_options(cpp_canvas PUBLIC "-sUSE_SDL=2")
-else()
+# SDL is desktop-only and attached here rather than to the whole directory.
+# PUBLIC lets it reach the native client sources that open links through SDL.
+# Browser rendering and input use Canvas2D and DOM APIs directly, so the web
+# artifact does not link Emscripten's SDL/WebGL compatibility layer at all.
+if(NOT EMSCRIPTEN)
   target_link_libraries(cpp_canvas PUBLIC PkgConfig::SDL2)
 endif()
 
@@ -217,10 +210,14 @@ if(EMSCRIPTEN)
   # from at all. The whole set is ~1MB, which is smaller than the wasm.
   set(FLIX_EMBED_DATA "--embed-file" "${FLIX_DATA_DIR}@data")
 
-  # Shared by both web targets. Memory grows because the rasterizer allocates
-  # per frame and the world is not a fixed size; a heap sized for the worst
-  # case would be wasted on every other.
-  set(FLIX_WEB_LINK_OPTIONS "-sEXIT_RUNTIME=0" "-sALLOW_MEMORY_GROWTH=1")
+  # Shared by both web targets. Memory grows because game state and transient
+  # command data are not fixed-size; browser rendering itself stays in the
+  # browser's Canvas2D surfaces rather than a Wasm software framebuffer.
+  set(FLIX_WEB_LINK_OPTIONS
+  "-sEXIT_RUNTIME=0"
+  "-sALLOW_MEMORY_GROWTH=1"
+  "-sINITIAL_MEMORY=256MB"
+  )
 
   # Emscripten's own checks are the web half of the flavour: out-of-bounds
   # heap access, a stack overflow and a bad pointer passed to the runtime are
@@ -254,11 +251,16 @@ if(EMSCRIPTEN)
   # flowrix_server, which is what the parity rigs and the docs invoke.
   set_target_properties(flowrix_client PROPERTIES OUTPUT_NAME bundle SUFFIX ".html")
   set_target_properties(flowrix_server PROPERTIES OUTPUT_NAME server)
+  target_compile_options(flowrix_client PRIVATE
+   "-flto"
+   "-fno-rtti"
+   "-fno-exceptions"
+  )
+  target_compile_options(flowrix_server PRIVATE "-flto")
   target_link_options(flowrix_client PRIVATE
     ${FLIX_WEB_LINK_OPTIONS}
-    # Every draw goes through the page's own 2D context, so the 2D canvas
-    # backend is all SDL is asked for.
-    "-sMIN_WEBGL_VERSION=1"
+    # Every draw goes through the page's own 2D context. There is deliberately
+    # no SDL or WebGL compatibility backend in this target.
     "-sENVIRONMENT=web"
     # The newer filesystem, for its pluggable backends: the client mounts one
     # of its own over browser storage so that a reload does not forget the
@@ -267,6 +269,10 @@ if(EMSCRIPTEN)
     # WasmFS's own OPFS backend needs threads, which a client that draws every
     # frame through the page's 2D context cannot have.
     "-sWASMFS"
+    "-flto"
+    "-msimd128"
+    "-sEVAL_CTORS=1"
+    "-fno-rtti -fno-exceptions"
     ${FLIX_WEB_CLIENT_OPT}
     ${FLIX_EMBED_DATA}
     "--shell-file" "${CMAKE_CURRENT_SOURCE_DIR}/client/web/shell.html")
@@ -295,6 +301,9 @@ if(EMSCRIPTEN)
     # directory it lives in is mounted from the host filesystem. Everything
     # else -- all of the embedded content above -- stays in memory.
     "-sFORCE_FILESYSTEM=1"
+    "-flto"
+    "-msimd128"
+    "-sEVAL_CTORS=1"
     "-lnodefs.js"
     "-sEXPORTED_RUNTIME_METHODS=['FS']"
     ${FLIX_EMBED_DATA})

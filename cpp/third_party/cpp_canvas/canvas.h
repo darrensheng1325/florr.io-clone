@@ -27,17 +27,53 @@ public:
     void ellipse(float x, float y, float radiusX, float radiusY, float rotation, float startAngle, float endAngle, bool counterClockwise = false);
     void rect(float x, float y, float width, float height); void roundRect(float x, float y, float width, float height, float radius);
     void addPath(const Path2D& other);
-    void clear() { segments_.clear(); glyphOutlines_ = false; }
+    void clear() { segments_.clear(); glyphOutlines_ = false; touch(); }
     bool empty() const { return segments_.empty(); }
     const std::vector<Segment>& segments() const { return segments_; }
-    std::vector<Segment>& segments() { return segments_; }
+    // Mutable access, so the revision moves whether or not the caller writes.
+    // Over-invalidating costs a rebuild; under-invalidating draws stale
+    // geometry, which is not a trade worth making for one increment.
+    std::vector<Segment>& segments() { touch(); return segments_; }
+
+    // Identity for the browser build's retained-path cache. A path that has
+    // not changed since it was last drawn is named to the page by key alone,
+    // so neither side rebuilds it. Keys are unique for the life of the process
+    // and never reused, so a cache entry outliving its path is only ever
+    // wasted memory -- never another path's geometry.
+    std::uint32_t cacheKey() const;
+    std::uint32_t revision() const { return revision_; }
+
+    Path2D() = default;
+    ~Path2D() = default;
+    // A copy is a different path and takes its own key; a moved-from path is
+    // emptied, so its revision moves too or its old key would still name the
+    // geometry it no longer has.
+    Path2D(const Path2D& other) : segments_(other.segments_), glyphOutlines_(other.glyphOutlines_) {}
+    Path2D(Path2D&& other) noexcept
+        : segments_(std::move(other.segments_)), glyphOutlines_(other.glyphOutlines_) { other.touch(); }
+    Path2D& operator=(const Path2D& other) {
+        if (this != &other) { segments_ = other.segments_; glyphOutlines_ = other.glyphOutlines_; touch(); }
+        return *this;
+    }
+    Path2D& operator=(Path2D&& other) noexcept {
+        if (this != &other) {
+            segments_ = std::move(other.segments_); glyphOutlines_ = other.glyphOutlines_;
+            touch(); other.touch();
+        }
+        return *this;
+    }
     // True once Font::appendText has put glyph outlines in here. The browser
     // does not rasterize text the way it rasterizes a shape -- glyph coverage
     // goes up a gamma ramp, shape coverage does not -- and this is how the
     // rasterizer tells the two apart, since a glyph here IS an ordinary path.
     bool glyphOutlines() const { return glyphOutlines_; }
     void markGlyphOutlines() { glyphOutlines_ = true; }
-private: std::vector<Segment> segments_; bool glyphOutlines_ = false;
+private:
+    void touch() { ++revision_; }
+    std::vector<Segment> segments_;
+    mutable std::uint32_t key_ = 0;
+    std::uint32_t revision_ = 1;
+    bool glyphOutlines_ = false;
 };
 
 // CanvasRenderingContext2D-style API. Emscripten calls the real browser context
@@ -117,8 +153,42 @@ private:
     Canvas(int width, int height, bool isVirtual);
     int width_, height_, contextId_ = -1; bool virtual_ = false; std::string elementId_;
     int logicalWidth_ = 0, logicalHeight_ = 0;
-    Color fill_{0, 0, 0}, stroke_{0, 0, 0}; float lineWidth_ = 1.0f; Path2D currentPath_; std::vector<Color> pixels_;
+    Color fill_{0, 0, 0}, stroke_{0, 0, 0}; float lineWidth_ = 1.0f; Path2D currentPath_;
+#ifdef __EMSCRIPTEN__
+    // A mirror of the browser context's own state, so that setting a value it
+    // already holds costs nothing. The UI redraws the same few colours and
+    // stroke styles over and over -- on the title screen, 124 stroked boxes a
+    // frame each set lineCap, lineJoin, lineWidth and strokeStyle to what they
+    // were already set to -- and every one of those is a call out of wasm and
+    // into the browser's state machine.
+    //
+    // Defaults are the context's own defaults, which is what makes the mirror
+    // valid from the first call rather than from the first write of each field.
+    struct WebState {
+        std::string fill = "#000000", stroke = "#000000", font = "10px sans-serif";
+        std::string lineCap = "butt", lineJoin = "miter";
+        std::string textAlign = "start", textBaseline = "alphabetic";
+        std::string composite = "source-over", filter = "none", direction = "inherit";
+        std::string smoothingQuality = "low", shadowColour = "#00000000";
+        std::vector<float> dash;
+        float lineWidth = 1, alpha = 1, miterLimit = 10, dashOffset = 0;
+        float shadowBlur = 0, shadowOffsetX = 0, shadowOffsetY = 0;
+        bool smoothing = true;
+    };
+    WebState web_;
+    std::vector<WebState> webStack_;
+    // save() is deferred: a save/restore pair whose body only sets values that
+    // were already current has nothing to undo, so neither op is emitted. The
+    // pair is materialised by the first change that would really need
+    // unwinding -- which is what flushSaves() is called before.
+    int pendingSaves_ = 0;
+    void flushSaves();
+#endif
 #ifndef __EMSCRIPTEN__
+    // The software framebuffer does not exist in an Emscripten object. This
+    // makes accidentally sending a browser draw through the CPU rasterizer a
+    // compile-time error rather than a slower path that can silently ship.
+    std::vector<Color> pixels_;
     // Software backend state. Everything the browser context tracks per save()
     // lives here; clip is a shared coverage mask so restore() is a pointer swap.
     struct ClipMask { int x0 = 0, y0 = 0, x1 = 0, y1 = 0; std::vector<std::uint8_t> alpha; };

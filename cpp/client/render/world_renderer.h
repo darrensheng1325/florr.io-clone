@@ -357,7 +357,11 @@ private:
     // and blitted twice per burst frame.
     mutable std::unique_ptr<Canvas> glitchBody_;
     mutable std::unique_ptr<Canvas> glitchTint_;
+#ifndef __EMSCRIPTEN__
+    // Only the desktop software backend needs a CPU-side tint buffer. The web
+    // build makes both tints with native Canvas2D composite operations.
     mutable std::vector<std::uint8_t> glitchPixels_;
+#endif
     mutable int glitchSide_ = 0;
 };
 

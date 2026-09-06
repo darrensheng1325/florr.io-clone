@@ -1,10 +1,10 @@
 // The game client.
 //
-// Every pixel is drawn through cpp_canvas, into an SDL window natively and
-// into a <canvas> under emscripten. Either way the drawing is the same code:
-// the browser build hosts the program, it does not render for it. The one
-// thing the page is asked for is the handful of chat tags that need a
-// document to mean anything -- see client/ui/markup.h.
+// Every frame is described through cpp_canvas. The desktop build consumes
+// those calls with its software canvas and presents through SDL; Emscripten
+// forwards them to the page's native Canvas2D contexts, including text,
+// offscreen blits and post-process compositing. The browser build never owns a
+// Wasm software framebuffer.
 //
 // The two builds differ in who owns the frame loop. Natively this program
 // does, in App::run(). In the browser the event loop belongs to the page, so

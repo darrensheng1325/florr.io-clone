@@ -125,23 +125,11 @@ void outlinedText(Canvas& canvas, const std::string& s, double x, double y,
             break;
     }
 
-    Path2D glyphs;
-    appendGlyphs(glyphs, s, penX, penY, style.size, style.bold);
-    if (glyphs.empty()) return;
-
-    const double strokeWidth =
-        style.strokeWidth < 0 ? style.size * kTextStrokeRatio : style.strokeWidth;
-    if (strokeWidth > 0) {
-        canvas.save();
-        canvas.setLineJoin("round");
-        canvas.setLineCap("butt");
-        canvas.setLineWidth(static_cast<float>(strokeWidth));
-        setStroke(canvas, style.stroke, strokeAlpha);
-        canvas.stroke(glyphs);
-        canvas.restore();
-    }
-    setFill(canvas, style.fill);
-    canvas.fill(glyphs, "nonzero");
+    // This painter has always joined the outline round, whatever the style
+    // asked for; paintRun reads the flag, so it is set rather than assumed.
+    TextStyle rounded = style;
+    rounded.roundJoin = true;
+    paintRun(canvas, s, penX, penY, rounded, strokeAlpha);
 }
 
 TextStyle panelLabel(double size, Align align, Baseline baseline) {

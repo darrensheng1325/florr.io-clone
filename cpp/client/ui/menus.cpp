@@ -2,7 +2,11 @@
 
 #include "shared/core/process_stats.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#else
 #include <SDL.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +24,26 @@
 namespace flix {
 
 using namespace flix::ui;
+
+#ifdef __EMSCRIPTEN__
+EM_JS(int, flix_open_external_link, (const char* url), {
+    const opened = window.open(UTF8ToString(url), '_blank');
+    if (!opened) return -1;
+    opened.opener = null;
+    return 0;
+});
+#endif
+
+bool openExternalLink(const std::string& url) {
+#ifdef __EMSCRIPTEN__
+    if (flix_open_external_link(url.c_str()) == 0) return true;
+    std::fprintf(stderr, "flowrix: browser blocked external link %s\n", url.c_str());
+#else
+    if (SDL_OpenURL(url.c_str()) == 0) return true;
+    std::fprintf(stderr, "flowrix: could not open %s (%s)\n", url.c_str(), SDL_GetError());
+#endif
+    return false;
+}
 
 namespace {
 
@@ -46,6 +70,28 @@ const std::array<MenuMeta, kMenuCount> kMenus = {{
     {"Notifications", Key::Unknown},
     {"Guild", Key::Unknown},
     {"Debug", Key::J},
+}};
+
+/// Every rebindable action, indexed by ControlAction, in the browser's
+/// DEFAULT_CONTROLS order. The four rows with a menu behind them repeat that
+/// menu's key from kMenus rather than owning a second copy of it: the panel
+/// reads and writes those through ClientSettings::hotkeys.
+const std::array<ControlMeta, kControlCount> kControls = {{
+    {"Move up",               Key::W,          MenuId::None},
+    {"Move down",             Key::S,          MenuId::None},
+    {"Move left",             Key::A,          MenuId::None},
+    {"Move right",            Key::D,          MenuId::None},
+    {"Inventory",             Key::Z,          MenuId::Inventory},
+    {"Crafting",              Key::C,          MenuId::Crafting},
+    {"Skills",                Key::X,          MenuId::Talents},
+    {"Toggle mouse controls", Key::K,          MenuId::None},
+    {"Toggle hitboxes",       Key::H,          MenuId::None},
+    {"Toggle debug menu",     Key::J,          MenuId::Debug},
+    {"Zoom in",               Key::Equals,     MenuId::None},
+    {"Zoom out",              Key::Minus,      MenuId::None},
+    {"Chat",                  Key::Enter,      MenuId::None},
+    {"Extend petals",         Key::Space,      MenuId::None},
+    {"Retract petals",        Key::LeftShift,  MenuId::None},
 }};
 
 /// The two icon groups, which are NOT the same button at two positions.
@@ -99,14 +145,6 @@ bool insideInclusive(Rect r, Vec2 p) {
 }
 
 int menuIndex(MenuId id) { return static_cast<int>(id); }
-
-/// A native client has no tab to open, so the browser's `window.open` becomes
-/// the desktop's own handler for the link. Reported rather than swallowed on
-/// failure: a button that silently does nothing is worse than a log line.
-void openExternalLink(const char* url) {
-    if (SDL_OpenURL(url) == 0) return;
-    std::fprintf(stderr, "flowrix: could not open %s (%s)\n", url, SDL_GetError());
-}
 
 // --- the loadout bar --------------------------------------------------------
 
@@ -275,10 +313,73 @@ const char* keyName(Key key) {
 // Settings
 // ---------------------------------------------------------------------------
 
+namespace {
+
+/// The other half of a modifier pair, or Key::Unknown for everything else.
+Key pairedKey(Key key) {
+    switch (key) {
+        case Key::LeftShift: return Key::RightShift;
+        case Key::RightShift: return Key::LeftShift;
+        case Key::LeftCtrl: return Key::RightCtrl;
+        case Key::RightCtrl: return Key::LeftCtrl;
+        case Key::LeftAlt: return Key::RightAlt;
+        case Key::RightAlt: return Key::LeftAlt;
+        default: return Key::Unknown;
+    }
+}
+
+} // namespace
+
+bool boundKeyDown(const Window& window, Key key) {
+    if (key == Key::Unknown) return false;
+    const Key other = pairedKey(key);
+    return window.keyDown(key) || (other != Key::Unknown && window.keyDown(other));
+}
+
+bool boundKeyPressed(const Window& window, Key key) {
+    if (key == Key::Unknown) return false;
+    const Key other = pairedKey(key);
+    return window.keyPressed(key) || (other != Key::Unknown && window.keyPressed(other));
+}
+
+const ControlMeta& controlMeta(ControlAction action) {
+    static constexpr ControlMeta kUnbound{"", Key::Unknown, MenuId::None};
+    const int i = static_cast<int>(action);
+    if (i < 0 || i >= kControlCount) return kUnbound;
+    return kControls[static_cast<std::size_t>(i)];
+}
+
 ClientSettings::ClientSettings() {
     for (int i = 0; i < kMenuCount; ++i) {
         hotkeys[static_cast<std::size_t>(i)] = kMenus[static_cast<std::size_t>(i)].defaultKey;
     }
+    for (int i = 0; i < kControlCount; ++i) {
+        controls[static_cast<std::size_t>(i)] = kControls[static_cast<std::size_t>(i)].defaultKey;
+    }
+}
+
+Key ClientSettings::controlKey(ControlAction action) const {
+    const ControlMeta& meta = controlMeta(action);
+    if (meta.menu != MenuId::None) return hotkeys[static_cast<std::size_t>(meta.menu)];
+    const int i = static_cast<int>(action);
+    if (i < 0 || i >= kControlCount) return Key::Unknown;
+    return controls[static_cast<std::size_t>(i)];
+}
+
+void ClientSettings::bindControl(ControlAction action, Key key) {
+    const int i = static_cast<int>(action);
+    if (i < 0 || i >= kControlCount) return;
+    const ControlMeta& meta = controlMeta(action);
+    if (meta.menu == MenuId::None) {
+        controls[static_cast<std::size_t>(i)] = key;
+        return;
+    }
+    for (int other = 1; other < kMenuCount; ++other) {
+        if (hotkeys[static_cast<std::size_t>(other)] == key) {
+            hotkeys[static_cast<std::size_t>(other)] = Key::Unknown;
+        }
+    }
+    hotkeys[static_cast<std::size_t>(meta.menu)] = key;
 }
 
 bool ClientSettings::load(const std::string& path) {
@@ -299,10 +400,11 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "stats") showStats = number != 0;
         else if (key == "debugButton") showDebugButton = number != 0;
         else if (key == "changelogSeen") changelogSeen = number;
-        else if (key == "zoom") zoom = clamp(std::atof(value.c_str()), 0.6, 1.6);
+        else if (key == "zoom") zoom = clamp(std::atof(value.c_str()), kMinZoom, kMaxZoom);
         else if (key == "interp") interpolation = clamp(std::atof(value.c_str()), 0.05, 0.5);
         else if (key == "renderScale") renderScale = clamp(std::atof(value.c_str()), 0.25, 1.0);
         else if (key == "biome") spawnBiome = (value == "-" ? std::string() : value);
+        else if (key == "mouseControls") useMouseControls = number != 0;
         else if (key == "tutorialDone") tutorialCompleted = number != 0;
         else if (key == "tutorialStep") tutorialStep = number;
         else if (key == "notifRead") readNotifications.push_back(value);
@@ -311,6 +413,15 @@ bool ClientSettings::load(const std::string& path) {
             if (slot > 0 && slot < kMenuCount && number > 0 &&
                 number < static_cast<int>(Key::Count)) {
                 hotkeys[static_cast<std::size_t>(slot)] = static_cast<Key>(number);
+            }
+        }
+        // Unknown is a real value here, unlike a menu hotkey: a row can be
+        // left bound to nothing, and a zero must not fall back to the default.
+        else if (key.rfind("ctl.", 0) == 0) {
+            const int slot = std::atoi(key.c_str() + 4);
+            if (slot >= 0 && slot < kControlCount && number >= 0 &&
+                number < static_cast<int>(Key::Count)) {
+                controls[static_cast<std::size_t>(slot)] = static_cast<Key>(number);
             }
         }
     }
@@ -335,6 +446,7 @@ bool ClientSettings::save(const std::string& path) const {
          // A dash rather than an empty field: the reader splits on whitespace,
          // and an empty value would swallow the next key as its own.
          << "biome " << (spawnBiome.empty() ? std::string("-") : spawnBiome) << '\n'
+         << "mouseControls " << (useMouseControls ? 1 : 0) << '\n'
          << "tutorialDone " << (tutorialCompleted ? 1 : 0) << '\n'
          << "tutorialStep " << tutorialStep << '\n';
     // Capped at the server's own retention: it keeps the last thousand
@@ -348,6 +460,13 @@ bool ClientSettings::save(const std::string& path) const {
     }
     for (int i = 1; i < kMenuCount; ++i) {
         file << "key." << i << ' ' << static_cast<int>(hotkeys[static_cast<std::size_t>(i)])
+             << '\n';
+    }
+    // The menu-backed rows are already above as key.<menu>; writing their
+    // unused slots too would leave two spellings of one binding on disk.
+    for (int i = 0; i < kControlCount; ++i) {
+        if (kControls[static_cast<std::size_t>(i)].menu != MenuId::None) continue;
+        file << "ctl." << i << ' ' << static_cast<int>(controls[static_cast<std::size_t>(i)])
              << '\n';
     }
     return static_cast<bool>(file);
@@ -411,6 +530,24 @@ bool MenuSystem::handleKeys(Window& window) {
         if (hadSelection) return true;
     }
 
+    // Zoom, and further down the hitbox and mouse-control switches: the three
+    // settings a key changes mid-game. All three are the game screen's alone,
+    // exactly as the browser binds them inside Game's own keydown -- there is
+    // no world to zoom on the title screen. Zoom is tested before the menu
+    // keys and the two switches after them, which is the order the browser
+    // tests them in: that order decides which action a key bound to two of
+    // them reaches, and this client has to decide it the same way.
+    if (inGame_) {
+        if (boundKeyPressed(window, settings_.controlKey(ControlAction::ZoomOut))) {
+            settings_.zoom = clamp(settings_.zoom - kZoomKeyStep, kMinZoom, kMaxZoom);
+            return true;
+        }
+        if (boundKeyPressed(window, settings_.controlKey(ControlAction::ZoomIn))) {
+            settings_.zoom = clamp(settings_.zoom + kZoomKeyStep, kMinZoom, kMaxZoom);
+            return true;
+        }
+    }
+
     // The loadout keys are recorded rather than acted on: only drawLoadoutBar
     // has the network client and the account's loadout to act with.
     //
@@ -441,6 +578,17 @@ bool MenuSystem::handleKeys(Window& window) {
         if (static_cast<MenuId>(i) == MenuId::Debug && !settings_.showDebugButton) continue;
         toggle(static_cast<MenuId>(i));
         return true;
+    }
+
+    if (inGame_) {
+        if (boundKeyPressed(window, settings_.controlKey(ControlAction::ToggleMouseControls))) {
+            settings_.useMouseControls = !settings_.useMouseControls;
+            return true;
+        }
+        if (boundKeyPressed(window, settings_.controlKey(ControlAction::ToggleHitboxes))) {
+            settings_.render.hitboxes = !settings_.render.hitboxes;
+            return true;
+        }
     }
     return false;
 }

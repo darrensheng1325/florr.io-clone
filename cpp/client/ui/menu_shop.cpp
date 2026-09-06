@@ -346,23 +346,7 @@ void fadedText(Canvas& canvas, const std::string& s, double x, double y, const T
             break;
     }
 
-    Path2D glyphs;
-    appendGlyphs(glyphs, s, penX, penY, style.size, style.bold);
-    if (glyphs.empty()) return;
-
-    const double strokeWidth =
-        style.strokeWidth < 0 ? style.size * kTextStrokeRatio : style.strokeWidth;
-    if (strokeWidth > 0) {
-        canvas.save();
-        canvas.setLineJoin(style.roundJoin ? "round" : "miter");
-        canvas.setLineCap("butt");
-        canvas.setLineWidth(static_cast<float>(strokeWidth));
-        setStroke(canvas, style.stroke);
-        canvas.stroke(glyphs);
-        canvas.restore();
-    }
-    setFill(canvas, style.fill, fillAlpha);
-    canvas.fill(glyphs, "nonzero");
+    paintRun(canvas, s, penX, penY, style, 1.0, fillAlpha);
 }
 
 /// The star glyph, from the same game-icons.net document the browser recolours

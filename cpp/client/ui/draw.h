@@ -50,6 +50,27 @@ void setStroke(Canvas&, std::uint32_t rgb, double alpha = 1.0);
 void text(Canvas&, const std::string& s, double x, double y, const TextStyle& style = {});
 double textWidth(Canvas&, const std::string& s, double size, bool bold = false);
 
+/// Paints one text run whose pen is already resolved: `penX` is the run's left
+/// edge and `baseline` its alphabetic baseline. `text()` is this plus the
+/// alignment arithmetic; the painters that need a per-run alpha, a per-glyph
+/// pen or the reverse paint order call it directly.
+///
+/// This is the one seam where the web build stops being a path renderer. A
+/// glyph outline is an ordinary path, so the native rasterizer draws text the
+/// way it draws any other shape -- but a browser keeps a cache of rasterized
+/// glyphs, and handing it a freshly built Path2D of contours every frame
+/// throws that cache away and re-rasterizes every letter on screen. Measured
+/// on the title screen, that was ~6,000 of the frame's ~8,700 canvas
+/// operations. The web build hands the run to the page's own text engine
+/// instead, which is what the reference client did; the native build keeps the
+/// outlines, having no other text engine to hand it to.
+///
+/// `fillFirst` puts the fill under the outline instead of over it -- the
+/// changelog bullet is the one glyph in the build drawn that way.
+void paintRun(Canvas&, const std::string& s, double penX, double baseline,
+              const TextStyle& style, double strokeAlpha = 1.0, double fillAlpha = 1.0,
+              bool fillFirst = false);
+
 /// A filled, outlined, rounded rectangle -- the basis of every panel, slot and
 /// button in the game.
 void plate(Canvas&, Rect r, std::uint32_t fill, double radius = kPanelRadius,

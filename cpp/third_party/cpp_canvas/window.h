@@ -111,12 +111,11 @@ public:
     // Changes when the window is dragged onto another monitor.
     double devicePixelRatio() const;
 
-    // The fraction of the display's native resolution the canvas is
-    // rasterised at, 0.25 to 1. Below 1 the canvas is smaller than the
-    // drawable and the GPU stretches it on the way to the screen, which is
-    // the cheap way to buy frame rate out of a software rasteriser. Only the
-    // sharpness moves: uiScale() absorbs the change, so nothing on screen
-    // shifts or resizes.
+    // The fraction of the display's native resolution the canvas is rendered
+    // at, 0.25 to 1. Below 1 the canvas is smaller than the drawable and the
+    // host stretches it on the way to the screen. This buys CPU rasterizer
+    // time on desktop and native Canvas2D fill-rate in a browser. Only the
+    // sharpness moves: uiScale() absorbs the change, so nothing shifts.
     void setRenderScale(double scale);
     double renderScale() const;
 
@@ -143,6 +142,9 @@ public:
 
     float mouseX() const;
     float mouseY() const;
+    /// Whether the pointer is currently over the window/canvas. Browser
+    /// builds track DOM enter/leave events; desktop builds ask SDL.
+    bool pointerInside() const;
     float wheelDelta() const;
 
     /// UTF-8 typed this frame, for text fields. Distinct from keyPressed:

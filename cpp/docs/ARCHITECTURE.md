@@ -146,8 +146,15 @@ cmake --build . -j8      # -> bundle.{html,js,wasm}, server.{js,wasm}
 
 `npm run build` at the repository root does the same thing and then stages the
 result in `dist/`, which is what ships: `scripts/build-web.js` configures and
-builds both web targets and copies them out. `npm start` builds the server half
-and runs it. The web build's outputs carry the names the TypeScript build's did
+builds both web targets and copies them out. `npm start` is that build followed
+by running it, so what it serves is never a half-stale `dist/`. Both pin
+`FLIX_BUILD=release` rather than letting the environment decide — they are the
+commands that produce what ships. `npm run build:dev` is the dev-flavoured
+build, and `npm run start_nobuild` runs whatever is already staged. Switching
+flavour deletes `cpp/build-web` first: the Makefile generator does not make an
+object depend on the flags it was compiled with, so reconfiguring in place would
+relink the previous flavour's objects with the new flavour's name on them.
+The web build's outputs carry the names the TypeScript build's did
 — the page's script is `bundle.js` and the server is `server.js` — so nginx,
 pm2 and the autoupdate zipball did not have to learn new ones; `bundle.html` is
 staged as `dist/index.html`. Only the web build is renamed, at the link, by
@@ -157,18 +164,21 @@ and `flowrix_server`.
 `-DFLIX_BUILD` picks the flavour, and is the only build knob: `CMAKE_BUILD_TYPE`
 follows from it rather than being set alongside it.
 
-* **`dev`** (the default) — `-O2 -g`, `assert()` live, frame pointers kept, and
-  emscripten's own heap and stack checks on. Still optimised: the client
-  rasterises every pixel on the CPU, so an `-O0` build does not reach a frame
-  rate anything can be judged by. The web link is left at the configuration's
-  own `-O2 -g`, because wasm-opt at `-O3` is most of the wait on a relink.
+* **`dev`** (cmake's default; the npm scripts pin `release`) — `-O2 -g`, `assert()` live, frame pointers kept, and
+  emscripten's own heap and stack checks on. The native client remains
+  optimised because its CPU rasterizer is not useful at `-O0`; the web client
+  always delegates drawing and compositing to the browser's Canvas2D backend.
+  The web link is left at the configuration's own `-O2 -g`, because wasm-opt
+  at `-O3` is most of the wait on a relink.
 * **`release`** — `-O3`, `NDEBUG`, no debug info, emscripten's checks off, and
   the client's web link pinned at `-O3` whatever else is on the line. About 2MB
   of wasm against dev's 19MB.
 
-Both are the same programs as the native ones — the same tick, the same
-systems, the same rasterizer drawing the same frames — and differ in three
-places only.
+Both are the same programs as the native ones — the same tick and the same
+systems issuing the same Canvas-shaped draw list. The native build consumes
+that list with its software rasterizer; Emscripten sends every draw, offscreen
+blit, text run, and composite operation to browser Canvas2D. It never allocates
+the software framebuffer in Wasm. The builds otherwise differ in three places.
 
 * **Who owns the loop.** Natively `App::run()` and `GameServer::run()` do. In a
   page the event loop belongs to the browser, and under Node it belongs to

@@ -8,32 +8,34 @@
 // a cheat.
 //
 // The panel keeps more between frames than SettingsPanel has members for: a
-// tab, a press, a slider drag, a focused field, and the bindings and switches
-// that have no home in ClientSettings yet. That state lives in this file
-// because menus.h, which declares the class, is not this file's to change;
-// there is exactly one settings panel in the process, so a file-scope instance
-// is the same thing as a member.
+// tab, a press, a slider drag, a focused field, and the switches that have no
+// home in ClientSettings yet. That state lives in this file because there is
+// exactly one settings panel in the process, so a file-scope instance is the
+// same thing as a member.
 //
 // Which rows reach the rest of the client, and which do not:
-//   wired   Show Hitboxes -> settings.render.hitboxes, Enable Debug Menu
-//           button -> settings.showDebugButton, and the Inventory, Crafting,
-//           Skills and Toggle debug menu bindings -> settings.hotkeys. These
-//           are read elsewhere and persisted with the rest of ClientSettings.
-//   local   every other switch, the three sliders and the other eleven
-//           bindings. The rows are drawn because the reference draws them --
-//           the row set is the panel's shape, not a claim about this client --
-//           but their consumers are outside this file: movement, the petal
-//           keys and the zoom keys are read in App, the stats readout and the
-//           console overlay are drawn there, and a value cannot outlive the
-//           process until ClientSettings carries a field for it to be saved
-//           in. Until then they are remembered for the session and no longer.
-//   inert   Anti-aliasing and GPU Acceleration have no native counterpart at
-//           all: SDL owns the backbuffer and the canvas rasteriser is not
-//           switchable at runtime. They keep their row and their value, and
-//           nothing behind them will ever read it. Render Resolution used to
-//           be one of these and no longer is -- it sizes the canvas through
-//           Window::setRenderScale, which is the one graphics setting on this
-//           client that actually buys frame rate.
+//   wired   all fifteen bindings -> ClientSettings, which is what App reads
+//           for movement, the petal keys, chat and zoom and what MenuSystem
+//           reads for the panel keys and the two in-game switches; Show
+//           Hitboxes -> settings.render.hitboxes, Use Mouse Controls ->
+//           settings.useMouseControls, Enable Debug Menu button ->
+//           settings.showDebugButton. These are read elsewhere and persisted
+//           with the rest of ClientSettings.
+//   local   every other switch and the mob-framerate slider. The rows are
+//           drawn because the reference draws them -- the row set is the
+//           panel's shape, not a claim about this client -- but a value
+//           cannot outlive the process until ClientSettings carries a field
+//           for it to be saved in, so they are remembered for the session and
+//           no longer. Number Keys Use Items is the one whose row is real and
+//           whose behaviour is not: this client has no "use the petal in a
+//           slot" path for the number keys to take, so the switch has nothing
+//           to switch yet.
+//   inert   Anti-aliasing and GPU Acceleration are not switchable at runtime.
+//           The browser build always uses its native Canvas2D backend; the
+//           desktop build owns a fixed software canvas plus SDL presentation.
+//           The rows keep their value for parity, but nothing reads it. Render
+//           Resolution is different: it sizes the backing canvas through
+//           Window::setRenderScale and genuinely buys frame rate.
 
 #include <algorithm>
 #include <array>
@@ -153,33 +155,10 @@ enum Slider : int { kRenderScale, kMobFramerate, kInterpolation };
 
 enum Button : int { kSaveControls, kResetControls, kResetTutorial, kLogOut };
 
-/// One row of the Controls tab, in DEFAULT_CONTROLS order. `menu` names the
-/// panel a row really opens, and those four live in ClientSettings::hotkeys;
-/// MenuId::None means the binding is kept locally.
-struct ControlRow {
-    const char* label;
-    Key fallback;
-    MenuId menu;
-};
-
-constexpr int kControlCount = 15;
-constexpr std::array<ControlRow, kControlCount> kControlRows = {{
-    {"Move up",               Key::W,          MenuId::None},
-    {"Move down",             Key::S,          MenuId::None},
-    {"Move left",             Key::A,          MenuId::None},
-    {"Move right",            Key::D,          MenuId::None},
-    {"Inventory",             Key::Z,          MenuId::Inventory},
-    {"Crafting",              Key::C,          MenuId::Crafting},
-    {"Skills",                Key::X,          MenuId::Talents},
-    {"Toggle mouse controls", Key::K,          MenuId::None},
-    {"Toggle hitboxes",       Key::H,          MenuId::None},
-    {"Toggle debug menu",     Key::J,          MenuId::Debug},
-    {"Zoom in",               Key::Equals,     MenuId::None},
-    {"Zoom out",              Key::Minus,      MenuId::None},
-    {"Chat",                  Key::Enter,      MenuId::None},
-    {"Extend petals",         Key::Space,      MenuId::None},
-    {"Retract petals",        Key::LeftShift,  MenuId::None},
-}};
+/// The Controls tab's rows are ControlAction's own order, and every binding
+/// they show lives in ClientSettings -- see controlMeta() in menus.h. The
+/// panel keeps none of them: a key the player rebinds here is read by the app
+/// and written to the settings file, which is the whole point of the row.
 
 /// A key as the browser's `event.key` spells it, which is what the browser
 /// panel stores and shows: lower-case letters, "Space", "Shift", "=", "-".
@@ -226,8 +205,6 @@ struct PanelState {
     int dragging = -1;              ///< index into Slider, or -1
     bool ipFocused = false;
     std::string serverIp = kDefaultServerAddress;
-    /// Bindings for the rows that are not backed by ClientSettings::hotkeys.
-    std::array<Key, kControlCount> keys{};
     std::array<bool, kToggleCount> toggles{};
     double mobFramerate = 15.0;
     // No `interpolation` or `renderScale` here: those two sliders are bound
@@ -246,9 +223,6 @@ struct PanelState {
     double tutorialResetArmedUntil = 0;
 
     PanelState() {
-        for (int i = 0; i < kControlCount; ++i) {
-            keys[static_cast<std::size_t>(i)] = kControlRows[static_cast<std::size_t>(i)].fallback;
-        }
         toggles[kMobDeathAnimation] = true;
         toggles[kAntialiasing] = true;
         toggles[kGpuAcceleration] = true;
@@ -267,6 +241,7 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
         case kShowHitboxes: return &settings.render.hitboxes;
         case kShowStats: return &settings.showStats;
         case kDebugMenuEnabled: return &settings.showDebugButton;
+        case kUseMouseControls: return &settings.useMouseControls;
         // Everything else lands in the panel's own copy, because ClientSettings
         // has no field for it: nothing outside this file could read one, and
         // nothing would write it to disk. A row moves up here the moment a
@@ -276,28 +251,8 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
     }
 }
 
-Key controlKey(const PanelState& st, const ClientSettings& settings, int row) {
-    const ControlRow& meta = kControlRows[static_cast<std::size_t>(row)];
-    if (meta.menu == MenuId::None) return st.keys[static_cast<std::size_t>(row)];
-    return settings.hotkeys[static_cast<std::size_t>(meta.menu)];
-}
-
-void bindControl(PanelState& st, ClientSettings& settings, int row, Key key) {
-    const ControlRow& meta = kControlRows[static_cast<std::size_t>(row)];
-    if (meta.menu == MenuId::None) {
-        st.keys[static_cast<std::size_t>(row)] = key;
-        return;
-    }
-    // A key already in use is taken from whoever had it rather than the rebind
-    // being refused: two menus on one key is the only broken state, and telling
-    // the player off for it is worse than just moving it.
-    for (int other = 1; other < kMenuCount; ++other) {
-        if (settings.hotkeys[static_cast<std::size_t>(other)] == key) {
-            settings.hotkeys[static_cast<std::size_t>(other)] = Key::Unknown;
-        }
-    }
-    settings.hotkeys[static_cast<std::size_t>(meta.menu)] = key;
-}
+/// The row index the panel lays out in, as the action it binds.
+ControlAction rowAction(int row) { return static_cast<ControlAction>(row); }
 
 // --- primitives -------------------------------------------------------------
 
@@ -531,7 +486,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
         for (int code = 1; code < static_cast<int>(Key::Count); ++code) {
             const Key key = static_cast<Key>(code);
             if (!ctx.window.keyPressed(key)) continue;
-            bindControl(st, settings, rebinding_, key);
+            settings.bindControl(rowAction(rebinding_), key);
             rebinding_ = -1;
             break;
         }
@@ -623,11 +578,11 @@ bool SettingsPanel::render(MenuContext& ctx) {
             for (int i = 0; i < kControlCount; ++i) {
                 const Rect box{contentX + labelW, p.cy, inputW, kKeyBoxHeight};
                 const bool editing = rebinding_ == i;
-                text(canvas, kControlRows[static_cast<std::size_t>(i)].label, contentX,
+                text(canvas, controlMeta(rowAction(i)).label, contentX,
                      p.cy + kKeyBoxHeight * 0.5, bodyStyle(12.0, kPaper, kInk, 2.0));
                 insetSurface(canvas, box, surfaceColour(editing, p.over(box)));
                 TextStyle keyText = bodyStyle(12.0, kInk, kInk, 0.0, Align::Centre);
-                text(canvas, editing ? "..." : keyLabel(controlKey(st, settings, i)),
+                text(canvas, editing ? "..." : keyLabel(settings.controlKey(rowAction(i))),
                      box.x + box.w * 0.5, p.cy + kKeyBoxHeight * 0.5, keyText);
                 if (p.click(box)) rebinding_ = i;
                 p.cy += kKeyBoxHeight + 6.0;
@@ -643,7 +598,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
             if (p.button(Rect{contentX + btnW + 10.0, p.cy, btnW, 30.0}, "Reset to Default",
                          kNeutralFill, 13.0, kResetControls)) {
                 for (int i = 0; i < kControlCount; ++i) {
-                    bindControl(st, settings, i, kControlRows[static_cast<std::size_t>(i)].fallback);
+                    settings.bindControl(rowAction(i), controlMeta(rowAction(i)).defaultKey);
                 }
                 rebinding_ = -1;
             }

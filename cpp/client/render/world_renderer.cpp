@@ -967,12 +967,29 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
     const double shift = std::min(6.0, (0.04 + fringe * 0.12) * radius);
 
     // The reference builds each copy by multiplying the body with a pure
-    // primary and re-masking it to the body's own alpha. cpp_canvas has no
-    // composite operations at all, so the same two steps are one pass over the
-    // buffer's pixels: keep the named channels, drop the rest, keep the alpha.
+    // primary and re-masking it to the body's own alpha. In a browser those
+    // are native Canvas2D composite operations: keep the body and tint buffers
+    // in the browser, never read their pixels into Wasm. The native client has
+    // no compositing backend, so it keeps the equivalent CPU pixel pass.
+#ifdef __EMSCRIPTEN__
+    const auto buildTint = [&](Color colour) {
+        glitchTint_->clearRect(0, 0, static_cast<float>(glitchSide_),
+                               static_cast<float>(glitchSide_));
+        glitchTint_->drawCanvas(buffer, 0, 0, static_cast<float>(glitchSide_),
+                                static_cast<float>(glitchSide_));
+        glitchTint_->setGlobalCompositeOperation("multiply");
+        glitchTint_->setFillStyle(colour);
+        glitchTint_->fillRect(0, 0, static_cast<float>(glitchSide_),
+                              static_cast<float>(glitchSide_));
+        glitchTint_->setGlobalCompositeOperation("destination-in");
+        glitchTint_->drawCanvas(buffer, 0, 0, static_cast<float>(glitchSide_),
+                                static_cast<float>(glitchSide_));
+        glitchTint_->setGlobalCompositeOperation("source-over");
+    };
+#else
     const std::vector<std::uint8_t> silhouette =
         buffer.getImageData(0, 0, glitchSide_, glitchSide_);
-    const auto blitTint = [&](bool keepRed, double offset) {
+    const auto buildTint = [&](bool keepRed) {
         glitchPixels_ = silhouette;
         for (std::size_t i = 0; i + 3 < glitchPixels_.size(); i += 4) {
             if (keepRed) {
@@ -985,16 +1002,27 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
         glitchTint_->clearRect(0, 0, static_cast<float>(glitchSide_),
                                static_cast<float>(glitchSide_));
         glitchTint_->putImageData(glitchPixels_, glitchSide_, glitchSide_, 0, 0);
-        canvas.drawCanvas(*glitchTint_, static_cast<float>(screen.x - bufferHalf + offset),
-                          static_cast<float>(screen.y - bufferHalf));
     };
+#endif
     canvas.save();
-    // The reference adds these copies ('lighter'); cpp_canvas composites only
-    // source-over, so the fringe darkens where the reference brightens. The
-    // offset, the alpha and which bursts carry one all match.
+#ifdef __EMSCRIPTEN__
+    canvas.setGlobalCompositeOperation("lighter");
+#endif
     canvas.setGlobalAlpha(0.36f);
-    blitTint(true, -shift);
-    blitTint(false, shift);
+#ifdef __EMSCRIPTEN__
+    buildTint(Color{255, 0, 0});
+#else
+    buildTint(true);
+#endif
+    canvas.drawCanvas(*glitchTint_, static_cast<float>(screen.x - bufferHalf - shift),
+                      static_cast<float>(screen.y - bufferHalf));
+#ifdef __EMSCRIPTEN__
+    buildTint(Color{0, 255, 255});
+#else
+    buildTint(false);
+#endif
+    canvas.drawCanvas(*glitchTint_, static_cast<float>(screen.x - bufferHalf + shift),
+                      static_cast<float>(screen.y - bufferHalf));
     canvas.restore();
 }
 

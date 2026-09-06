@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 
 namespace flix::ui {
 
@@ -39,6 +40,17 @@ double baselineY(double y, double size, Baseline baseline, bool bold) {
     }
 }
 
+#ifdef __EMSCRIPTEN__
+/// The CSS font shorthand for a run. `Ubuntu` is the face the page loads and
+/// the same one `data/Ubuntu-*.ttf` supplies to `measure()`, so a layout
+/// measured against the outlines still fits what the browser draws.
+std::string fontSpec(double size, bool bold) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%s%.3fpx Ubuntu, sans-serif", bold ? "bold " : "", size);
+    return buf;
+}
+#endif
+
 /// The rounded box every gardn-style control is built from: fill the path,
 /// then stroke it CENTRED, exactly as `drawGardnButton` does. The stroke sits
 /// half outside `r`, which is why nothing here insets first -- a control that
@@ -72,37 +84,69 @@ void setStroke(Canvas& canvas, std::uint32_t rgb, double alpha) {
     canvas.setStrokeStyle(toColor(rgb, alpha));
 }
 
-void text(Canvas& canvas, const std::string& s, double x, double y, const TextStyle& style) {
+void paintRun(Canvas& canvas, const std::string& s, double penX, double baseline,
+              const TextStyle& style, double strokeAlpha, double fillAlpha, bool fillFirst) {
     if (s.empty() || !Fonts::ready()) return;
-
-    Path2D glyphs;
-    appendGlyphs(glyphs, s, originX(x, measure(s, style.size, style.bold), style.align),
-                 baselineY(y, style.size, style.baseline, style.bold), style.size,
-                 style.bold);
-    if (glyphs.empty()) return;
 
     const double strokeWidth =
         style.strokeWidth < 0 ? style.size * kTextStrokeRatio : style.strokeWidth;
 
-    // Stroke first, then fill. The other order eats the glyph with its own
-    // outline, which is what every hand-rolled attempt at this gets wrong.
-    //
-    // Scoped: leaking a join and a cap out of a text call silently restyles
-    // whatever shape is stroked next, which is a bug that only ever shows up
-    // several draw calls away from its cause.
-    if (strokeWidth > 0) {
+#ifdef __EMSCRIPTEN__
+    // The pen is already resolved, so the run is anchored the same way on both
+    // builds: the browser is told to put the pen exactly where the outline
+    // path would have started it, not to do the alignment itself.
+    canvas.setFont(fontSpec(style.size, style.bold));
+    canvas.setTextAlign("left");
+    canvas.setTextBaseline("alphabetic");
+
+    const auto strokePass = [&] {
+        if (strokeWidth <= 0) return;
+        // Scoped exactly as the outline path is: leaking a join and a cap out
+        // of a text call silently restyles whatever shape is stroked next,
+        // which is a bug that only ever shows up several draw calls away from
+        // its cause. The fill colour still leaks, as it always has.
         canvas.save();
         canvas.setLineJoin(style.roundJoin ? "round" : "miter");
         canvas.setLineCap("butt");
         canvas.setLineWidth(static_cast<float>(strokeWidth));
-        setStroke(canvas, style.stroke);
+        setStroke(canvas, style.stroke, strokeAlpha);
+        canvas.strokeText(s, static_cast<float>(penX), static_cast<float>(baseline));
+        canvas.restore();
+    };
+    const auto fillPass = [&] {
+        setFill(canvas, style.fill, fillAlpha);
+        canvas.fillText(s, static_cast<float>(penX), static_cast<float>(baseline));
+    };
+    if (fillFirst) { fillPass(); strokePass(); } else { strokePass(); fillPass(); }
+#else
+    Path2D glyphs;
+    appendGlyphs(glyphs, s, penX, baseline, style.size, style.bold);
+    if (glyphs.empty()) return;
+
+    const auto strokePass = [&] {
+        if (strokeWidth <= 0) return;
+        canvas.save();
+        canvas.setLineJoin(style.roundJoin ? "round" : "miter");
+        canvas.setLineCap("butt");
+        canvas.setLineWidth(static_cast<float>(strokeWidth));
+        setStroke(canvas, style.stroke, strokeAlpha);
         canvas.stroke(glyphs);
         canvas.restore();
-    }
+    };
+    const auto fillPass = [&] {
+        setFill(canvas, style.fill, fillAlpha);
+        canvas.fill(glyphs, "nonzero");
+    };
+    // Stroke first, then fill. The other order eats the glyph with its own
+    // outline, which is what every hand-rolled attempt at this gets wrong.
+    if (fillFirst) { fillPass(); strokePass(); } else { strokePass(); fillPass(); }
+#endif
+}
 
-    setFill(canvas, style.fill);
-    canvas.fill(glyphs, "nonzero");
-
+void text(Canvas& canvas, const std::string& s, double x, double y, const TextStyle& style) {
+    if (s.empty() || !Fonts::ready()) return;
+    paintRun(canvas, s, originX(x, measure(s, style.size, style.bold), style.align),
+             baselineY(y, style.size, style.baseline, style.bold), style);
 }
 
 double textWidth(Canvas&, const std::string& s, double size, bool bold) {

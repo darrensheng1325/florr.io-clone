@@ -14,11 +14,8 @@
 // face's own leading is, and deriving it would put every row of a 7896px list
 // a little further out of place than the row above it.
 
-#include <SDL.h>
-
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -460,21 +457,15 @@ std::vector<Segment> parseChange(const std::string& change) {
 /// 14px that outline is most of what the bullet looks like, which is why the
 /// order is reproduced rather than routed through ui::text().
 void drawBullet(Canvas& canvas, double x, double y, double strokeWidth) {
-    Path2D glyph;
-    appendGlyphs(glyph, "•", x,
-                 y + (ascent(kChangeSize) + descent(kChangeSize)) * 0.5, kChangeSize);
-    if (glyph.empty()) return;
-
-    setFill(canvas, kPaper);
-    canvas.fill(glyph);
-    if (strokeWidth <= 0) return;
-    canvas.save();
-    canvas.setLineJoin("miter");
-    canvas.setLineCap("butt");
-    canvas.setLineWidth(static_cast<float>(strokeWidth));
-    setStroke(canvas, kInk);
-    canvas.stroke(glyph);
-    canvas.restore();
+    TextStyle style;
+    style.size = kChangeSize;
+    style.fill = kPaper;
+    style.stroke = kInk;
+    // Clamped, not passed through: a negative strokeWidth means "derive one"
+    // to paintRun, where here it has always meant "no outline".
+    style.strokeWidth = std::max(0.0, strokeWidth);
+    paintRun(canvas, "•", x, y + (ascent(kChangeSize) + descent(kChangeSize)) * 0.5, style,
+             1.0, 1.0, /*fillFirst=*/true);
 }
 
 /// Paints one change line. `strokeWidth` is threaded by reference because a
@@ -490,7 +481,9 @@ void drawChange(Canvas& canvas, const std::string& change, double x, double y,
         TextStyle style;
         style.size = kChangeSize;
         style.fill = segment.url.empty() ? kPaper : kLinkFill;
-        style.strokeWidth = strokeWidth;
+        // Clamped, not passed through: a negative strokeWidth means "derive one"
+        // to paintRun, where here it has always meant "no outline".
+        style.strokeWidth = std::max(0.0, strokeWidth);
         text(canvas, segment.text, penX, y, style);
 
         if (!segment.url.empty()) {
@@ -641,12 +634,7 @@ bool ChangelogPanel::render(MenuContext& ctx) {
     if (view.contains(mouse)) {
         for (const LinkHit& link : links) {
             if (!link.rect.contains(mouse)) continue;
-            // A native client has no tab to open, so the browser's window.open
-            // becomes the desktop's own handler for the link.
-            if (SDL_OpenURL(link.url.c_str()) != 0) {
-                std::fprintf(stderr, "flowrix: could not open %s (%s)\n", link.url.c_str(),
-                             SDL_GetError());
-            }
+            openExternalLink(link.url);
             break;
         }
     }

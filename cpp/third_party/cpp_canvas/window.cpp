@@ -228,6 +228,9 @@ struct Window::Impl {
   float mouseX = 0, mouseY = 0, wheel = 0;
   std::string typed;
   bool shift = false, ctrl = false, alt = false;
+#ifdef __EMSCRIPTEN__
+  bool pointerInside = false;
+#endif
 
 #ifndef __EMSCRIPTEN__
   // Built on first use and kept: SDL_CreateSystemCursor allocates, and a
@@ -377,6 +380,12 @@ struct Window::Impl {
     Impl* impl = implOf(userData);
     recordPointer(impl, event->targetX, event->targetY);
     recordModifiers(impl, event->shiftKey, event->ctrlKey, event->altKey, event->metaKey);
+    if (type == EMSCRIPTEN_EVENT_MOUSEMOVE || type == EMSCRIPTEN_EVENT_MOUSEDOWN) {
+      // A pointer event targeted at the canvas is also authoritative when the
+      // pointer was already there as callbacks were installed and no enter
+      // event was delivered afterwards.
+      impl->pointerInside = true;
+    }
     if (type == EMSCRIPTEN_EVENT_MOUSEMOVE) return EM_TRUE;
 
     std::size_t index = kButtonCount;
@@ -387,6 +396,24 @@ struct Window::Impl {
       const bool downNow = type == EMSCRIPTEN_EVENT_MOUSEDOWN;
       impl->mouseHeld[index] = downNow;
       (downNow ? impl->pendingDownEdge : impl->pendingUpEdge)[index] = true;
+    }
+    return EM_TRUE;
+  }
+
+  static EM_BOOL onPointerBoundary(int type, const EmscriptenMouseEvent* event,
+                                   void* userData) {
+    Impl* impl = implOf(userData);
+    recordPointer(impl, event->targetX, event->targetY);
+    impl->pointerInside = type == EMSCRIPTEN_EVENT_MOUSEENTER;
+    if (impl->pointerInside) return EM_TRUE;
+
+    // Match the page client's mouseleave rule: a drag that leaves the canvas
+    // releases its latched buttons instead of leaving gameplay stuck down.
+    for (std::size_t i = 0; i < kButtonCount; ++i) {
+      if (impl->mouseHeld[i]) {
+        impl->mouseHeld[i] = false;
+        impl->pendingUpEdge[i] = true;
+      }
     }
     return EM_TRUE;
   }
@@ -528,6 +555,8 @@ bool Window::open(int width, int height, const std::string& title, std::string& 
   const char* canvasTarget = "#canvas";
   emscripten_set_mousemove_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onMouse);
   emscripten_set_mousedown_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onMouse);
+  emscripten_set_mouseenter_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onPointerBoundary);
+  emscripten_set_mouseleave_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onPointerBoundary);
   // Release is watched on the WINDOW, not the canvas: a drag that ends off the
   // element would otherwise never report its mouseup and the button would
   // stay held.
@@ -598,6 +627,8 @@ void Window::close() {
     const char* canvasTarget = "#canvas";
     emscripten_set_mousemove_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
     emscripten_set_mousedown_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
+    emscripten_set_mouseenter_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
+    emscripten_set_mouseleave_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
     emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE, nullptr);
     emscripten_set_wheel_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE, nullptr);
@@ -606,6 +637,9 @@ void Window::close() {
   }
   impl_->cursorRequested = CursorShape::Arrow;
   impl_->cursorApplied = CursorShape::Count;
+#ifdef __EMSCRIPTEN__
+  impl_->pointerInside = false;
+#endif
 #else
   if (impl_->texture) { SDL_DestroyTexture(impl_->texture); impl_->texture = nullptr; }
   if (impl_->renderer) { SDL_DestroyRenderer(impl_->renderer); impl_->renderer = nullptr; }
@@ -845,6 +879,13 @@ bool Window::mouseReleased(MouseButton b) const {
 }
 float Window::mouseX() const { return impl_->mouseX; }
 float Window::mouseY() const { return impl_->mouseY; }
+bool Window::pointerInside() const {
+#ifdef __EMSCRIPTEN__
+  return impl_->pointerInside;
+#else
+  return SDL_GetMouseFocus() != nullptr;
+#endif
+}
 float Window::wheelDelta() const { return impl_->wheel; }
 const std::string& Window::typedText() const { return impl_->typed; }
 bool Window::shiftHeld() const { return impl_->shift; }

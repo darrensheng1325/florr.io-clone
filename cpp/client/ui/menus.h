@@ -36,6 +36,11 @@
 
 namespace flix {
 
+/// Opens an external HTTP(S) URL with the host platform. The web build uses
+/// window.open directly, keeping Emscripten's SDL shim out of the browser
+/// artifact; the desktop build delegates to SDL.
+bool openExternalLink(const std::string& url);
+
 /// Which panel is on screen.
 ///
 /// Appended to, never reordered: `ClientSettings::hotkeys` is indexed by this
@@ -60,6 +65,54 @@ enum class MenuId : std::uint8_t {
 
 inline constexpr int kMenuCount = static_cast<int>(MenuId::Count);
 
+/// A rebindable action, in the order the settings panel lists its rows -- the
+/// browser's DEFAULT_CONTROLS order.
+///
+/// Appended to, never reordered: a binding persists as `ctl.<index>`, so an
+/// insertion in the middle silently rebinds every action after it.
+enum class ControlAction : std::uint8_t {
+    MoveUp = 0,
+    MoveDown,
+    MoveLeft,
+    MoveRight,
+    Inventory,
+    Crafting,
+    Skills,
+    ToggleMouseControls,
+    ToggleHitboxes,
+    ToggleDebugMenu,
+    ZoomIn,
+    ZoomOut,
+    Chat,
+    ExtendPetals,
+    RetractPetals,
+    Count,
+};
+
+inline constexpr int kControlCount = static_cast<int>(ControlAction::Count);
+
+/// What the settings panel shows for one action, and where its binding lives.
+/// `menu` is the panel a row really opens; MenuId::None means there is no menu
+/// behind it and the key is kept in ClientSettings::controls.
+struct ControlMeta {
+    const char* label;
+    Key defaultKey;
+    MenuId menu;
+};
+
+/// The label, default key and menu of an action. Indexed by ControlAction; an
+/// action out of range reports an unbound, unlabelled row rather than reading
+/// off the end.
+const ControlMeta& controlMeta(ControlAction action);
+
+/// keyDown/keyPressed for a BOUND key, which is not quite the same question.
+/// The browser spells both shifts, both controls and both alts as one key and
+/// binds that; a client that names physical keys has to answer for either half
+/// of the pair, or a binding made on one side of the keyboard is dead on the
+/// other. An unbound action (Key::Unknown) is never down and never pressed.
+bool boundKeyDown(const Window& window, Key key);
+bool boundKeyPressed(const Window& window, Key key);
+
 /// The loadout the bar draws: ten primary slots, ten secondary slots under
 /// them, and a trash slot at the end of the second row.
 ///
@@ -79,6 +132,13 @@ inline constexpr const char* kDiscordInvite = "https://discord.gg/e23DMCR7DV";
 /// bottom-left one. Two of the top ten open no panel -- Discord is a link and
 /// exit leaves the game -- so this is not `kMenuCount`.
 inline constexpr int kStripSlotCount = 14;
+
+/// The range ClientSettings::zoom is held to, and how far one press of a zoom
+/// key moves it. The step is the browser's own ZOOM_STEP; the range is this
+/// client's, and is the one the wheel has always scrolled through.
+inline constexpr double kMinZoom = 0.6;
+inline constexpr double kMaxZoom = 1.6;
+inline constexpr double kZoomKeyStep = 0.1;
 
 /// Everything the settings menu owns. Kept in one struct so it can be written
 /// to disk and read back as a unit, and so nothing else has to know which of
@@ -122,6 +182,18 @@ struct ClientSettings {
     std::vector<std::string> readNotifications;
     /// The key that opens each menu, indexed by MenuId.
     std::array<Key, kMenuCount> hotkeys{};
+    /// The key bound to every other action, indexed by ControlAction. The four
+    /// menu-backed actions live in `hotkeys` instead, because that is what
+    /// MenuSystem opens a panel from, and their slots here are never read:
+    /// controlKey/bindControl are what hide which action is kept where.
+    std::array<Key, kControlCount> controls{};
+    /// Whether the flower follows the cursor. Off leaves movement to the four
+    /// movement keys alone; aim follows the pointer either way. The browser
+    /// keeps the same flag in `localStorage.useMouseControls` and defaults it
+    /// off, where this client defaults it ON: cursor-following is the control
+    /// scheme it has always shipped with, and defaulting to the browser's
+    /// value would take it away from every existing player.
+    bool useMouseControls = true;
     /// The biome the player last chose to start in. Empty is the beginner
     /// ground. Remembered because it is a preference, not a game state.
     std::string spawnBiome;
@@ -136,6 +208,14 @@ struct ClientSettings {
     int tutorialStep = 0;
 
     ClientSettings();
+
+    /// The key bound to an action, wherever that binding is kept.
+    Key controlKey(ControlAction action) const;
+    /// Binds a key to an action. A key already opening some OTHER menu is
+    /// taken from it rather than the rebind being refused: two menus on one
+    /// key is the only broken state, and telling the player off for it is
+    /// worse than just moving it.
+    void bindControl(ControlAction action, Key key);
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;

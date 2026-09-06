@@ -31,6 +31,11 @@
  * Env:
  *   FLIX_BUILD    dev | release (default release -- this is the shipping build)
  *
+ * `npm run build` and `npm start` both pin FLIX_BUILD=release, so what they
+ * produce does not depend on what happens to be in the environment; `npm run
+ * build:dev` is the dev-flavoured equivalent. Switching flavour wipes
+ * cpp/build-web first -- see reconfigure() for why that has to happen.
+ *
  * Note that dist/server.js has two possible producers: this script, and
  * `npm run build:server:ts`, which is the frozen-era TypeScript server and
  * writes the same path. Whichever ran last is what `npm start` runs.
@@ -105,7 +110,30 @@ function run(cmd, argv) {
     if (res.status !== 0) fail(`${cmd} exited with status ${res.status}`);
 }
 
+/** The FLIX_BUILD the existing cpp/build-web was configured with, or null. */
+function configuredFlavour() {
+    const cache = path.join(BUILD_DIR, 'CMakeCache.txt');
+    if (!fs.existsSync(cache)) return null;
+    const m = /^FLIX_BUILD:STRING=(\w+)$/m.exec(fs.readFileSync(cache, 'utf8'));
+    return m ? m[1] : null;
+}
+
 if (!copyOnly) {
+    // A flavour switch is a full rebuild, not a reconfigure. cmake's Makefile
+    // generator does not make an object depend on the flags it was compiled
+    // with, so re-running cmake with a different FLIX_BUILD updates the flags
+    // and then relinks the *old* objects: a release build carrying dev code,
+    // with nothing in the output to say so. Ninja would notice; the generator
+    // here does not, so drop the tree instead of trusting it.
+    const previous = configuredFlavour();
+    if (previous && previous !== flavour) {
+        console.log(
+            `build-web: cpp/build-web holds a ${previous} build and this is a ` +
+            `${flavour} one -- removing it so nothing is reused across the switch.`
+        );
+        fs.rmSync(BUILD_DIR, { recursive: true, force: true });
+    }
+
     // Configure every time rather than only when the cache is missing: cmake
     // re-runs cheaply, and it is what notices an edited CMakeLists.txt or a
     // flavour switch. emcmake is what puts the emscripten toolchain file on
@@ -142,7 +170,10 @@ for (const name of selected) {
     }
 }
 
-console.log(`\nStaged the ${flavour} web build (${selected.join(', ')}) in dist/:`);
+// --copy-only builds nothing, so FLIX_BUILD says nothing about what was just
+// staged -- the cache of the tree it was copied from is the only witness.
+const staged = copyOnly ? (configuredFlavour() || 'unknown-flavour') : flavour;
+console.log(`\nStaged the ${staged} web build (${selected.join(', ')}) in dist/:`);
 for (const [name, size] of copied) {
     console.log(`  ${name.padEnd(16)} ${(size / 1024).toFixed(1).padStart(9)} KiB`);
 }

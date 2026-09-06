@@ -171,24 +171,7 @@ struct TooltipLayout {
 /// Baseline::Top.
 void paintRow(Canvas& canvas, const std::string& s, double x, double y, const TextStyle& style,
               double fillAlpha) {
-    if (s.empty() || !Fonts::ready()) return;
-    Path2D glyphs;
-    appendGlyphs(glyphs, s, x, y + ascent(style.size, style.bold), style.size, style.bold);
-    if (glyphs.empty()) return;
-
-    const double strokeWidth =
-        style.strokeWidth < 0 ? style.size * kTextStrokeRatio : style.strokeWidth;
-    if (strokeWidth > 0) {
-        canvas.save();
-        canvas.setLineJoin(style.roundJoin ? "round" : "miter");
-        canvas.setLineCap("butt");
-        canvas.setLineWidth(static_cast<float>(strokeWidth));
-        setStroke(canvas, style.stroke);
-        canvas.stroke(glyphs);
-        canvas.restore();
-    }
-    setFill(canvas, style.fill, fillAlpha);
-    canvas.fill(glyphs, "nonzero");
+    paintRun(canvas, s, x, y + ascent(style.size, style.bold), style, 1.0, fillAlpha);
 }
 
 /// Resolves alt variants, wraps long lines and stacks the result top-down.

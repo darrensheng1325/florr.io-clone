@@ -12,8 +12,6 @@
 #include <limits>
 #include <utility>
 
-#include <SDL.h>
-
 #include "client/interpolation.h"
 #include "client/ui/draw.h"
 #include "client/ui/markup.h"
@@ -315,15 +313,10 @@ BiomeDisplay titleBiomeDisplay(const std::string& id) {
     return biomeDisplay(id);
 }
 
-/// True while the pointer is over this client's window.
-///
-/// The reference drops every hover and the latched press on the canvas's
-/// `mouseleave` (index.ts:778-785), so a button the cursor was resting on goes
-/// dark the moment the pointer leaves. Window reports a position and nothing
-/// about focus -- and SDL keeps reporting the last one it saw -- so a bounds
-/// test on mouseX/mouseY would never fire. This asks SDL directly; the client
-/// owns exactly one window, so "some window has mouse focus" is that one.
-bool pointerInWindow() { return SDL_GetMouseFocus() != nullptr; }
+/// True while the pointer is over this client's window. Window gets the answer
+/// from DOM enter/leave callbacks in a page and SDL focus on the desktop; a
+/// bounds test against the last position cannot answer after the pointer left.
+bool pointerInWindow(const Window& window) { return window.pointerInside(); }
 
 /// The title screen's own hit test, inclusive on all four edges. The browser
 /// writes every one of these as `x >= left && x <= left + width` (index.ts:877,
@@ -1451,13 +1444,29 @@ void App::sendInputFrame(double dt) {
 
     // Movement follows the cursor, which is the control scheme this game is
     // built around: the flower runs toward the pointer, at a speed set by how
-    // far away it is. WASD is offered as an alternative rather than a
-    // supplement, and wins when held so the two cannot fight.
+    // far away it is. The movement keys are offered as an alternative rather
+    // than a supplement, and win when held so the two cannot fight -- and
+    // "Use Mouse Controls", which the K binding toggles in game, is what says
+    // whether the cursor half is there at all. The arrows are not a binding:
+    // the reference reads them beside whatever the four keys are bound to.
+    const ClientSettings& settings = menus_.settings();
     Vec2 keyboard{0, 0};
-    if (window_.keyDown(Key::W) || window_.keyDown(Key::Up)) keyboard.y -= 1;
-    if (window_.keyDown(Key::S) || window_.keyDown(Key::Down)) keyboard.y += 1;
-    if (window_.keyDown(Key::A) || window_.keyDown(Key::Left)) keyboard.x -= 1;
-    if (window_.keyDown(Key::D) || window_.keyDown(Key::Right)) keyboard.x += 1;
+    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveUp)) ||
+        window_.keyDown(Key::Up)) {
+        keyboard.y -= 1;
+    }
+    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveDown)) ||
+        window_.keyDown(Key::Down)) {
+        keyboard.y += 1;
+    }
+    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveLeft)) ||
+        window_.keyDown(Key::Left)) {
+        keyboard.x -= 1;
+    }
+    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveRight)) ||
+        window_.keyDown(Key::Right)) {
+        keyboard.x += 1;
+    }
 
     const Vec2 cursorWorld = camera_.screenToWorld({window_.mouseX(), window_.mouseY()});
     const Vec2 toCursor = cursorWorld - net_.view().selfDrawnPosition();
@@ -1466,10 +1475,16 @@ void App::sendInputFrame(double dt) {
         const Vec2 direction = keyboard.normalized();
         input.moveAngle = direction.angle();
         input.moveStrength = 1.0;
-    } else {
+    } else if (settings.useMouseControls) {
         const double distance = toCursor.length();
         input.moveAngle = distance > 1e-6 ? toCursor.angle() : 0.0;
         input.moveStrength = std::min(1.0, distance / kFullSpeedCursorDistance);
+    } else {
+        // Standing still is a decision, not a gap: with the cursor half off,
+        // a frame with no key held has to say "no movement" rather than leave
+        // the last angle to be read as one.
+        input.moveAngle = 0.0;
+        input.moveStrength = 0.0;
     }
 
     // Aim always follows the cursor, even under keyboard movement: where the
@@ -1478,11 +1493,12 @@ void App::sendInputFrame(double dt) {
 
     if (!chatOpen_ && !menus_.capturesMouse({window_.mouseX(), window_.mouseY()}) &&
         !tutorial_.capturesMouse({window_.mouseX(), window_.mouseY()})) {
-        if (window_.mouseDown(MouseButton::Left) || window_.keyDown(Key::Space)) {
+        if (window_.mouseDown(MouseButton::Left) ||
+            boundKeyDown(window_, settings.controlKey(ControlAction::ExtendPetals))) {
             input.flags |= net::InputAttack;
         }
-        if (window_.mouseDown(MouseButton::Right) || window_.keyDown(Key::LeftShift) ||
-            window_.keyDown(Key::RightShift)) {
+        if (window_.mouseDown(MouseButton::Right) ||
+            boundKeyDown(window_, settings.controlKey(ControlAction::RetractPetals))) {
             input.flags |= net::InputDefend;
         }
     }
@@ -1501,7 +1517,9 @@ void App::updatePlaying(double dt) {
         // game.
         const bool consumed = menus_.handleKeys(window_);
         if (!consumed) {
-            if (window_.keyPressed(Key::Enter)) chatOpen_ = true;
+            if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat))) {
+                chatOpen_ = true;
+            }
             if (window_.keyPressed(Key::Escape)) {
                 leaveToTitle();
                 return;
@@ -1527,7 +1545,7 @@ void App::updatePlaying(double dt) {
     if (!menus_.capturesMouse({window_.mouseX(), window_.mouseY()}) &&
         !tutorial_.capturesMouse({window_.mouseX(), window_.mouseY()})) {
         menus_.settings().zoom =
-            clamp(menus_.settings().zoom + window_.wheelDelta() * 0.05, 0.6, 1.6);
+            clamp(menus_.settings().zoom + window_.wheelDelta() * 0.05, kMinZoom, kMaxZoom);
     }
 }
 
@@ -1606,8 +1624,8 @@ void App::drawLogin(Canvas& canvas, double time) {
     // reference's `mouseleave` calls authForm.clearHover() and drops the
     // latched press with it.
     const std::string hovered =
-        pointerInWindow() ? authControlAt(layout, registering_, mouse) : std::string{};
-    const std::string pressed = pointerInWindow() ? pressedControl_ : std::string{};
+        pointerInWindow(window_) ? authControlAt(layout, registering_, mouse) : std::string{};
+    const std::string pressed = pointerInWindow(window_) ? pressedControl_ : std::string{};
 
     TextStyle title;
     title.size = 48;
@@ -1869,7 +1887,7 @@ void App::drawLobby(Canvas& canvas, double time) {
     // does not light up through the card standing on it. A pointer that has
     // left the window owns nothing at all -- `mouseleave` drops the hovered
     // biome, the hovered Ready button and the latched press together.
-    const bool freeMouse = pointerInWindow() && !menus_.capturesMouse(mouse);
+    const bool freeMouse = pointerInWindow(window_) && !menus_.capturesMouse(mouse);
 
     TextStyle title;
     title.size = 48.0;
@@ -2599,13 +2617,16 @@ void App::beginSceneWipe(bool toGame) {
     // asking for a design-sized rectangle of it would photograph the top-left
     // corner of the screen and stretch that over the whole wipe. It is drawn
     // back at design size in drawSceneWipe, which is where the two spaces
-    // meet.
+    // meet. Copy canvas-to-canvas rather than reading its pixels through C++:
+    // under Emscripten that stays entirely inside the browser's Canvas2D
+    // backend instead of moving a full frame into and back out of Wasm.
     const int width = canvas.pixelWidth();
     const int height = canvas.pixelHeight();
     std::unique_ptr<Canvas> snapshot;
     if (width > 0 && height > 0) {
         snapshot = std::make_unique<Canvas>(Canvas::createVirtual(width, height));
-        snapshot->putImageData(canvas.getImageData(0, 0, width, height), width, height, 0, 0);
+        snapshot->drawCanvas(canvas, 0, 0, static_cast<float>(width),
+                             static_cast<float>(height));
     }
 
     wipe_.snapshot = std::move(snapshot);

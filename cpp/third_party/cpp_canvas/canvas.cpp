@@ -4,7 +4,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <fstream>
+#include <unordered_map>
 #include <memory>
 #include <utility>
 #ifndef __EMSCRIPTEN__
@@ -20,17 +22,28 @@ Path2D::Segment segment(Path2D::Command command, std::initializer_list<float> va
 }
 }
 
-void Path2D::moveTo(float x, float y) { segments_.push_back(segment(Command::Move, {x, y})); }
-void Path2D::lineTo(float x, float y) { segments_.push_back(segment(Command::Line, {x, y})); }
-void Path2D::closePath() { segments_.push_back(segment(Command::Close, {})); }
-void Path2D::quadraticCurveTo(float a,float b,float c,float d) { segments_.push_back(segment(Command::Quadratic,{a,b,c,d})); }
-void Path2D::bezierCurveTo(float a,float b,float c,float d,float e,float f) { segments_.push_back(segment(Command::Bezier,{a,b,c,d,e,f})); }
-void Path2D::arc(float a,float b,float c,float d,float e,bool f) { segments_.push_back(segment(Command::Arc,{a,b,c,d,e},f)); }
-void Path2D::arcTo(float a,float b,float c,float d,float e) { segments_.push_back(segment(Command::ArcTo,{a,b,c,d,e})); }
-void Path2D::ellipse(float a,float b,float c,float d,float e,float f,float g,bool h) { segments_.push_back(segment(Command::Ellipse,{a,b,c,d,e,f,g},h)); }
-void Path2D::rect(float a,float b,float c,float d) { segments_.push_back(segment(Command::Rect,{a,b,c,d})); }
-void Path2D::roundRect(float a,float b,float c,float d,float e) { segments_.push_back(segment(Command::RoundRect,{a,b,c,d,e})); }
+// Lazily allocated so that the paths a frame builds and throws away never
+// consume one. Never reused: a key names one geometry for the life of the
+// process, which is what lets the page keep a cache entry that outlives the
+// path that filled it.
+std::uint32_t Path2D::cacheKey() const {
+    static std::uint32_t next = 1;
+    if (key_ == 0) key_ = next++;
+    return key_;
+}
+
+void Path2D::moveTo(float x, float y) { touch(); segments_.push_back(segment(Command::Move, {x, y})); }
+void Path2D::lineTo(float x, float y) { touch(); segments_.push_back(segment(Command::Line, {x, y})); }
+void Path2D::closePath() { touch(); segments_.push_back(segment(Command::Close, {})); }
+void Path2D::quadraticCurveTo(float a,float b,float c,float d) { touch(); segments_.push_back(segment(Command::Quadratic,{a,b,c,d})); }
+void Path2D::bezierCurveTo(float a,float b,float c,float d,float e,float f) { touch(); segments_.push_back(segment(Command::Bezier,{a,b,c,d,e,f})); }
+void Path2D::arc(float a,float b,float c,float d,float e,bool f) { touch(); segments_.push_back(segment(Command::Arc,{a,b,c,d,e},f)); }
+void Path2D::arcTo(float a,float b,float c,float d,float e) { touch(); segments_.push_back(segment(Command::ArcTo,{a,b,c,d,e})); }
+void Path2D::ellipse(float a,float b,float c,float d,float e,float f,float g,bool h) { touch(); segments_.push_back(segment(Command::Ellipse,{a,b,c,d,e,f,g},h)); }
+void Path2D::rect(float a,float b,float c,float d) { touch(); segments_.push_back(segment(Command::Rect,{a,b,c,d})); }
+void Path2D::roundRect(float a,float b,float c,float d,float e) { touch(); segments_.push_back(segment(Command::RoundRect,{a,b,c,d,e})); }
 void Path2D::addPath(const Path2D& other) {
+    touch();
     segments_.insert(segments_.end(), other.segments_.begin(), other.segments_.end());
     // A path that has absorbed glyphs is a glyph path: losing the mark here
     // would silently drop the text gamma on any composed run.
@@ -72,11 +85,23 @@ EM_JS(void, c2d_op, (int id, int op, double a,double b,double c,double d,double 
   }
 });
 EM_JS(void, c2d_dash, (int id, const float* data, int length), { Module.cppCanvasContexts[id].ctx.setLineDash(Array.from(HEAPF32.subarray(data>>2,(data>>2)+length))); });
-EM_JS(void, c2d_path, (int id, const float* data, int count, int action, const char* rule), {
-  const x=Module.cppCanvasContexts[id].ctx, p=new Path2D(), v=HEAPF32.subarray(data>>2,(data>>2)+count*10), r=UTF8ToString(rule);
-  for(let i=0;i<count;i++){const q=i*10,n=v[q],cc=!!v[q+1],a=v.subarray(q+2,q+10); switch(n){case 0:p.moveTo(a[0],a[1]);break;case 1:p.lineTo(a[0],a[1]);break;case 2:p.quadraticCurveTo(a[0],a[1],a[2],a[3]);break;case 3:p.bezierCurveTo(a[0],a[1],a[2],a[3],a[4],a[5]);break;case 4:p.arc(a[0],a[1],a[2],a[3],a[4],cc);break;case 5:p.arcTo(a[0],a[1],a[2],a[3],a[4]);break;case 6:p.ellipse(a[0],a[1],a[2],a[3],a[4],a[5],a[6],cc);break;case 7:p.rect(a[0],a[1],a[2],a[3]);break;case 8:p.roundRect(a[0],a[1],a[2],a[3],a[4]);break;case 9:p.closePath();break;}}
-  if(action===0)x.fill(p,r||'nonzero'); else if(action===1)x.stroke(p); else x.clip(p,r||'nonzero');
+// `data` null means "the cache already holds `key`" -- the C++ side owns the
+// bookkeeping, so a null here is never a guess. `evenOdd` replaces the fill
+// rule string: this runs a few hundred times a frame and a decoded JS string
+// per call is pure waste when there are two possible values.
+EM_JS(void, c2d_path, (int id, int key, const float* data, int count, int action, int evenOdd), {
+  const cache = Module.cppCanvasPaths || (Module.cppCanvasPaths = new Map());
+  let p = data ? null : cache.get(key);
+  if (!p) {
+    p = new Path2D();
+    const v=HEAPF32.subarray(data>>2,(data>>2)+count*10);
+    for(let i=0;i<count;i++){const q=i*10,n=v[q],cc=!!v[q+1],a=v.subarray(q+2,q+10); switch(n){case 0:p.moveTo(a[0],a[1]);break;case 1:p.lineTo(a[0],a[1]);break;case 2:p.quadraticCurveTo(a[0],a[1],a[2],a[3]);break;case 3:p.bezierCurveTo(a[0],a[1],a[2],a[3],a[4],a[5]);break;case 4:p.arc(a[0],a[1],a[2],a[3],a[4],cc);break;case 5:p.arcTo(a[0],a[1],a[2],a[3],a[4]);break;case 6:p.ellipse(a[0],a[1],a[2],a[3],a[4],a[5],a[6],cc);break;case 7:p.rect(a[0],a[1],a[2],a[3]);break;case 8:p.roundRect(a[0],a[1],a[2],a[3],a[4]);break;case 9:p.closePath();break;}}
+    cache.set(key, p);
+  }
+  const x=Module.cppCanvasContexts[id].ctx, r=evenOdd?'evenodd':'nonzero';
+  if(action===0)x.fill(p,r); else if(action===1)x.stroke(p); else x.clip(p,r);
 });
+EM_JS(void, c2d_path_drop, (int key), { if (Module.cppCanvasPaths) Module.cppCanvasPaths.delete(key); });
 EM_JS(int, c2d_hit, (int id,double a,double b,int stroke,const char* rule), { const x=Module.cppCanvasContexts[id].ctx; return stroke ? x.isPointInStroke(a,b) : x.isPointInPath(a,b,UTF8ToString(rule)); });
 EM_JS(double, c2d_measure, (int id,const char* text), { return Module.cppCanvasContexts[id].ctx.measureText(UTF8ToString(text)).width; });
 EM_JS(void, c2d_draw, (int dst,int src,double a,double b,double c,double d,int sized), { const x=Module.cppCanvasContexts[dst].ctx, image=Module.cppCanvasContexts[src].surface; sized ? x.drawImage(image,a,b,c,d) : x.drawImage(image,a,b); });
@@ -638,9 +663,13 @@ Canvas::Canvas(Canvas&& other) noexcept
       elementId_(std::move(other.elementId_)),
       logicalWidth_(other.logicalWidth_), logicalHeight_(other.logicalHeight_),
       fill_(other.fill_), stroke_(other.stroke_),
-      lineWidth_(other.lineWidth_), currentPath_(std::move(other.currentPath_)), pixels_(std::move(other.pixels_)) {
+      lineWidth_(other.lineWidth_), currentPath_(std::move(other.currentPath_)) {
   other.contextId_ = -1;
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+  web_ = std::move(other.web_); webStack_ = std::move(other.webStack_);
+  pendingSaves_ = other.pendingSaves_; other.pendingSaves_ = 0;
+#else
+  pixels_ = std::move(other.pixels_);
   state_ = std::move(other.state_); stack_ = std::move(other.stack_);
 #endif
 }
@@ -651,9 +680,13 @@ Canvas& Canvas::operator=(Canvas&& other) noexcept {
 #endif
   width_=other.width_; height_=other.height_; contextId_=other.contextId_; virtual_=other.virtual_;
   elementId_=std::move(other.elementId_); fill_=other.fill_; stroke_=other.stroke_; lineWidth_=other.lineWidth_;
-  currentPath_=std::move(other.currentPath_); pixels_=std::move(other.pixels_); other.contextId_=-1;
+  currentPath_=std::move(other.currentPath_); other.contextId_=-1;
   logicalWidth_=other.logicalWidth_; logicalHeight_=other.logicalHeight_;
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+  web_=std::move(other.web_); webStack_=std::move(other.webStack_);
+  pendingSaves_=other.pendingSaves_; other.pendingSaves_=0;
+#else
+  pixels_=std::move(other.pixels_);
   state_=std::move(other.state_); stack_=std::move(other.stack_);
 #endif
   return *this;
@@ -670,41 +703,103 @@ void Canvas::present(const std::string& id) {
   (void)id;
 #endif
 }
-static std::string css(Color c) { return "rgba("+std::to_string(c.r)+","+std::to_string(c.g)+","+std::to_string(c.b)+","+std::to_string(c.a/255.0f)+")"; }
+// Hex, not rgba(): the alpha channel is already an 8-bit integer, so
+// `#rrggbbaa` names exactly the same colour, and it costs one fixed-size
+// buffer instead of four std::to_string allocations -- one of which formats a
+// float -- on every colour change of every frame. The browser parses it faster
+// too, which is what the count of these actually pays for.
+static std::string css(Color c) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  char buf[9] = {'#',
+                 kHex[c.r >> 4], kHex[c.r & 15],
+                 kHex[c.g >> 4], kHex[c.g & 15],
+                 kHex[c.b >> 4], kHex[c.b & 15],
+                 kHex[c.a >> 4], kHex[c.a & 15]};
+  return std::string(buf, c.a == 255 ? 7 : 9);
+}
+#ifdef __EMSCRIPTEN__
+// Materialises the saves that were deferred. The snapshot pushed here is the
+// state as it was when save() was called: flushing happens BEFORE the change
+// that forced it, and nothing between the save and that change altered a thing
+// -- that is exactly the condition under which the save was safe to defer.
+void Canvas::flushSaves() {
+  while (pendingSaves_ > 0) { --pendingSaves_; webStack_.push_back(web_); OP(0,0,0,0,0,0,0,0,0,""); }
+}
+// Setting a value the context already holds is a no-op in the browser, so it
+// is a no-op here too. `MIRROR` is the whole pattern: compare, and on a real
+// change unwind any deferred save before the write that needs unwinding.
+#define MIRROR(field, value) \
+  do { if (web_.field == (value)) return; flushSaves(); web_.field = (value); } while (0)
+#else
+#define MIRROR(field, value) do { } while (0)
+#endif
+
 void Canvas::save() {
+#ifdef __EMSCRIPTEN__
+  ++pendingSaves_;
+#else
   OP(0,0,0,0,0,0,0,0,0,"");
-#ifndef __EMSCRIPTEN__
   stack_.push_back(state_);
 #endif
 }
 void Canvas::restore() {
+#ifdef __EMSCRIPTEN__
+  // A save that never had to be materialised has nothing to restore.
+  if (pendingSaves_ > 0) { --pendingSaves_; return; }
+  if (!webStack_.empty()) { web_ = std::move(webStack_.back()); webStack_.pop_back(); }
   OP(1,0,0,0,0,0,0,0,0,"");
-#ifndef __EMSCRIPTEN__
+#else
+  OP(1,0,0,0,0,0,0,0,0,"");
   if (!stack_.empty()) { state_=std::move(stack_.back()); stack_.pop_back(); fill_=state_.fill; stroke_=state_.stroke; lineWidth_=state_.lineWidth; }
 #endif
 }
-void Canvas::reset() { OP(2,0,0,0,0,0,0,0,0,""); resetTransform();
+void Canvas::reset() {
+#ifdef __EMSCRIPTEN__
+  // reset() empties the context's own save stack, so the mirror drops both its
+  // stack and its deferred saves rather than trying to reconcile them, and
+  // returns to the defaults reset() leaves behind.
+  pendingSaves_ = 0; webStack_.clear(); web_ = WebState{};
+#endif
+  OP(2,0,0,0,0,0,0,0,0,""); resetTransform();
 #ifndef __EMSCRIPTEN__
   state_=State{}; stack_.clear();
 #endif
 }
-void Canvas::scale(float a,float b) { OP(3,a,b,0,0,0,0,0,0,"");
+// The transform is part of what restore() unwinds, so a deferred save has to be
+// materialised before one is applied. There is no redundancy to eliminate here
+// -- a transform is a composition, not an assignment.
+void Canvas::scale(float a,float b) {
+#ifdef __EMSCRIPTEN__
+  flushSaves();
+#endif
+  OP(3,a,b,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   auto& m=state_.matrix; m[0]*=a; m[1]*=a; m[2]*=b; m[3]*=b;
 #endif
 }
-void Canvas::rotate(float a) { OP(4,a,0,0,0,0,0,0,0,"");
+void Canvas::rotate(float a) {
+#ifdef __EMSCRIPTEN__
+  flushSaves();
+#endif
+  OP(4,a,0,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   auto& m=state_.matrix; const float c=std::cos(a), s=std::sin(a), m0=m[0],m1=m[1],m2=m[2],m3=m[3];
   m[0]=m0*c+m2*s; m[1]=m1*c+m3*s; m[2]=m2*c-m0*s; m[3]=m3*c-m1*s;
 #endif
 }
-void Canvas::translate(float a,float b) { OP(5,a,b,0,0,0,0,0,0,"");
+void Canvas::translate(float a,float b) {
+#ifdef __EMSCRIPTEN__
+  flushSaves();
+#endif
+  OP(5,a,b,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   auto& m=state_.matrix; m[4]+=m[0]*a+m[2]*b; m[5]+=m[1]*a+m[3]*b;
 #endif
 }
 void Canvas::transform(float a,float b,float c,float d,float e,float f) {
+#ifdef __EMSCRIPTEN__
+  flushSaves();
+#endif
   OP(6,a,b,c,d,e,f,0,0,"");
 #ifndef __EMSCRIPTEN__
   const auto m=state_.matrix; auto& o=state_.matrix;
@@ -712,12 +807,20 @@ void Canvas::transform(float a,float b,float c,float d,float e,float f) {
   o[4]=m[0]*e+m[2]*f+m[4]; o[5]=m[1]*e+m[3]*f+m[5];
 #endif
 }
-void Canvas::setTransform(float a,float b,float c,float d,float e,float f) { OP(7,a,b,c,d,e,f,0,0,"");
+void Canvas::setTransform(float a,float b,float c,float d,float e,float f) {
+#ifdef __EMSCRIPTEN__
+  flushSaves();
+#endif
+  OP(7,a,b,c,d,e,f,0,0,"");
 #ifndef __EMSCRIPTEN__
   state_.matrix={a,b,c,d,e,f};
 #endif
 }
-void Canvas::resetTransform() { OP(8,0,0,0,0,0,0,0,0,"");
+void Canvas::resetTransform() {
+#ifdef __EMSCRIPTEN__
+  flushSaves();
+#endif
+  OP(8,0,0,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   state_.matrix={1,0,0,1,0,0};
 #endif
@@ -738,55 +841,60 @@ void Canvas::setStrokeStyle(Color c){stroke_=c;
   state_.stroke=c;
 #endif
 }
-void Canvas::setFillStyle(const std::string&s){OP(9,0,0,0,0,0,0,0,0,s.c_str());}
-void Canvas::setStrokeStyle(const std::string&s){OP(10,0,0,0,0,0,0,0,0,s.c_str());}
-void Canvas::setGlobalAlpha(float a){OP(11,a,0,0,0,0,0,0,0,"");
+void Canvas::setFillStyle(const std::string&s){MIRROR(fill,s);OP(9,0,0,0,0,0,0,0,0,s.c_str());}
+void Canvas::setStrokeStyle(const std::string&s){MIRROR(stroke,s);OP(10,0,0,0,0,0,0,0,0,s.c_str());}
+void Canvas::setGlobalAlpha(float a){MIRROR(alpha,a);OP(11,a,0,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   state_.alpha=std::clamp(a,0.f,1.f);
 #endif
 }
-void Canvas::setGlobalCompositeOperation(const std::string&s){OP(12,0,0,0,0,0,0,0,0,s.c_str());}
-void Canvas::setFilter(const std::string&s){OP(13,0,0,0,0,0,0,0,0,s.c_str());}
-void Canvas::setLineWidth(float a){lineWidth_=std::max(0.f,a);OP(14,lineWidth_,0,0,0,0,0,0,0,"");
+void Canvas::setGlobalCompositeOperation(const std::string&s){MIRROR(composite,s);OP(12,0,0,0,0,0,0,0,0,s.c_str());}
+void Canvas::setFilter(const std::string&s){MIRROR(filter,s);OP(13,0,0,0,0,0,0,0,0,s.c_str());}
+void Canvas::setLineWidth(float a){lineWidth_=std::max(0.f,a);MIRROR(lineWidth,lineWidth_);OP(14,lineWidth_,0,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   state_.lineWidth=lineWidth_;
 #endif
 }
-void Canvas::setLineCap(const std::string&s){OP(15,0,0,0,0,0,0,0,0,s.c_str());
+void Canvas::setLineCap(const std::string&s){MIRROR(lineCap,s);OP(15,0,0,0,0,0,0,0,0,s.c_str());
 #ifndef __EMSCRIPTEN__
   state_.lineCap = s=="round"?1 : s=="square"?2 : 0;
 #endif
 }
-void Canvas::setLineJoin(const std::string&s){OP(16,0,0,0,0,0,0,0,0,s.c_str());
+void Canvas::setLineJoin(const std::string&s){MIRROR(lineJoin,s);OP(16,0,0,0,0,0,0,0,0,s.c_str());
 #ifndef __EMSCRIPTEN__
   state_.lineJoin = s=="round"?1 : s=="bevel"?2 : 0;
 #endif
 }
-void Canvas::setMiterLimit(float a){OP(17,a,0,0,0,0,0,0,0,"");
+void Canvas::setMiterLimit(float a){MIRROR(miterLimit,a);OP(17,a,0,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   state_.miterLimit=std::max(1.f,a);
 #endif
 }
 void Canvas::setLineDash(const std::vector<float>&v) {
 #ifdef __EMSCRIPTEN__
+  MIRROR(dash,v);
   c2d_dash(contextId_, v.data(), static_cast<int>(v.size()));
 #else
   state_.dash=v;
 #endif
 }
-void Canvas::setLineDashOffset(float a){OP(18,a,0,0,0,0,0,0,0,"");
+void Canvas::setLineDashOffset(float a){MIRROR(dashOffset,a);OP(18,a,0,0,0,0,0,0,0,"");
 #ifndef __EMSCRIPTEN__
   state_.dashOffset=a;
 #endif
 }
 void Canvas::setShadow(Color c,float a,float b,float d){
 #ifdef __EMSCRIPTEN__
-  const std::string s=css(c);OP(19,a,b,d,0,0,0,0,0,s.c_str());
+  const std::string s=css(c);
+  if (web_.shadowColour==s && web_.shadowBlur==a && web_.shadowOffsetX==b && web_.shadowOffsetY==d) return;
+  flushSaves();
+  web_.shadowColour=s; web_.shadowBlur=a; web_.shadowOffsetX=b; web_.shadowOffsetY=d;
+  OP(19,a,b,d,0,0,0,0,0,s.c_str());
 #else
   (void)c;(void)a;(void)b;(void)d;
 #endif
 }
-void Canvas::setFont(const std::string&s){OP(20,0,0,0,0,0,0,0,0,s.c_str());
+void Canvas::setFont(const std::string&s){MIRROR(font,s);OP(20,0,0,0,0,0,0,0,0,s.c_str());
 #ifndef __EMSCRIPTEN__
   for (size_t i=0;i<s.size();++i) if (std::isdigit(static_cast<unsigned char>(s[i]))) { state_.fontSize=std::max(1.f,std::strtof(s.c_str()+i,nullptr)); break; }
   std::string f=s; for (char& c : f) c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -795,19 +903,19 @@ void Canvas::setFont(const std::string&s){OP(20,0,0,0,0,0,0,0,0,s.c_str());
                     : f.find("serif")!=std::string::npos||f.find("times")!=std::string::npos||f.find("georgia")!=std::string::npos ? 1 : 0;
 #endif
 }
-void Canvas::setTextAlign(const std::string&s){OP(21,0,0,0,0,0,0,0,0,s.c_str());
+void Canvas::setTextAlign(const std::string&s){MIRROR(textAlign,s);OP(21,0,0,0,0,0,0,0,0,s.c_str());
 #ifndef __EMSCRIPTEN__
   state_.textAlign = (s=="center")?1 : (s=="right"||s=="end")?2 : 0;
 #endif
 }
-void Canvas::setTextBaseline(const std::string&s){OP(22,0,0,0,0,0,0,0,0,s.c_str());
+void Canvas::setTextBaseline(const std::string&s){MIRROR(textBaseline,s);OP(22,0,0,0,0,0,0,0,0,s.c_str());
 #ifndef __EMSCRIPTEN__
   state_.textBaseline = (s=="top"||s=="hanging")?0 : (s=="middle")?1 : (s=="bottom"||s=="ideographic")?2 : 3;
 #endif
 }
-void Canvas::setDirection(const std::string&s){OP(23,0,0,0,0,0,0,0,0,s.c_str());}
-void Canvas::setImageSmoothingEnabled(bool a){OP(24,a,0,0,0,0,0,0,0,"");}
-void Canvas::setImageSmoothingQuality(const std::string&s){OP(25,0,0,0,0,0,0,0,0,s.c_str());}
+void Canvas::setDirection(const std::string&s){MIRROR(direction,s);OP(23,0,0,0,0,0,0,0,0,s.c_str());}
+void Canvas::setImageSmoothingEnabled(bool a){MIRROR(smoothing,a);OP(24,a,0,0,0,0,0,0,0,"");}
+void Canvas::setImageSmoothingQuality(const std::string&s){MIRROR(smoothingQuality,s);OP(25,0,0,0,0,0,0,0,0,s.c_str());}
 void Canvas::clear(Color c) {
 #ifdef __EMSCRIPTEN__
   save(); resetTransform(); setFillStyle(c); fillRect(0,0,width_,height_); restore();
@@ -855,29 +963,81 @@ void Canvas::stroke() {
 #endif
 }
 void Canvas::clip(const std::string&s){
+#ifdef __EMSCRIPTEN__
+  // The clip region is save/restore state, so a deferred save has to exist
+  // before one is narrowed.
+  flushSaves();
+#endif
   OP(46,0,0,0,0,0,0,0,0,s.c_str());
 #ifndef __EMSCRIPTEN__
   clip(currentPath_, s);
 #endif
 }
-static std::vector<float> pack(const Path2D&p){std::vector<float>r;r.reserve(p.segments().size()*10);for(auto&q:p.segments()){r.push_back((float)q.command);r.push_back(q.counterClockwise);for(float x:q.v)r.push_back(x);}return r;}
+#ifdef __EMSCRIPTEN__
+// One scratch buffer: a fresh vector per path was an allocation on every fill
+// of every frame, and the packed copy is consumed before the next call needs
+// the space.
+static const std::vector<float>& pack(const Path2D&p){static std::vector<float>r;r.clear();r.reserve(p.segments().size()*10);for(auto&q:p.segments()){r.push_back((float)q.command);r.push_back(q.counterClockwise);for(float x:q.v)r.push_back(x);}return r;}
+
+namespace {
+// The C++ half of the retained-path cache: what the page is known to hold, and
+// in what order it was told. Bounded, and evicted oldest-first, so a client
+// that draws thousands of distinct paths cannot grow the page's map without
+// limit. Sized well above the ~350 paths a busy frame touches, so a path drawn
+// every frame is never the one evicted.
+constexpr std::size_t kMaxCachedPaths = 2048;
+std::unordered_map<std::uint32_t,std::uint32_t> gCachedRevision;
+std::deque<std::uint32_t> gCacheOrder;
+
+// True when the page already holds this exact geometry under this key, in
+// which case the caller sends the key alone. Records the geometry as sent
+// either way, because the caller sends it when this returns false.
+bool pathAlreadySent(const Path2D& path) {
+    const std::uint32_t key = path.cacheKey();
+    const auto it = gCachedRevision.find(key);
+    if (it != gCachedRevision.end()) {
+        if (it->second == path.revision()) return true;
+        it->second = path.revision();
+        return false;
+    }
+    gCacheOrder.push_back(key);
+    if (gCacheOrder.size() > kMaxCachedPaths) {
+        const std::uint32_t evicted = gCacheOrder.front();
+        gCacheOrder.pop_front();
+        gCachedRevision.erase(evicted);
+        c2d_path_drop(evicted);
+    }
+    gCachedRevision.emplace(key, path.revision());
+    return false;
+}
+} // namespace
+
+// action: 0 fill, 1 stroke, 2 clip.
+static void emitPath(int contextId, const Path2D& path, int action, bool evenOdd) {
+    const std::uint32_t key = path.cacheKey();
+    if (pathAlreadySent(path)) { c2d_path(contextId, key, nullptr, 0, action, evenOdd); return; }
+    const std::vector<float>& v = pack(path);
+    c2d_path(contextId, key, v.data(), static_cast<int>(path.segments().size()), action, evenOdd);
+}
+#endif
 void Canvas::fill(const Path2D&p,const std::string&s) {
 #ifdef __EMSCRIPTEN__
-  auto v=pack(p); c2d_path(contextId_,v.data(),static_cast<int>(p.segments().size()),0,s.c_str());
+  emitPath(contextId_, p, 0, s=="evenodd");
 #else
   fillDevice(p, s=="evenodd", state_.fill);
 #endif
 }
 void Canvas::stroke(const Path2D&p) {
 #ifdef __EMSCRIPTEN__
-  auto v=pack(p); c2d_path(contextId_,v.data(),static_cast<int>(p.segments().size()),1,"");
+  emitPath(contextId_, p, 1, false);
 #else
   strokeDevice(p);
 #endif
 }
 void Canvas::clip(const Path2D&p,const std::string&s) {
 #ifdef __EMSCRIPTEN__
-  auto v=pack(p); c2d_path(contextId_,v.data(),static_cast<int>(p.segments().size()),2,s.c_str());
+  flushSaves();
+  emitPath(contextId_, p, 2, s=="evenodd");
 #else
   flatten(p, state_.matrix, matrixScale(state_.matrix), gFlat);
   auto mask=std::make_shared<ClipMask>();
