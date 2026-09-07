@@ -218,6 +218,11 @@ private:
     /// thing the client does with a movement key.
     void sendInputFrame(double dt);
 
+    /// Whether a text field is taking this frame's keystrokes -- the chat
+    /// line, a login field, or a panel's own search/code box. While one is,
+    /// a key is a character and nothing else: no movement, no hotkey.
+    bool keyboardCaptured() const;
+
     /// Text entry shared by the login fields and the chat box.
     void editText(std::string& target, std::size_t maxLength);
     /// One frame of chat editing: typing, the slash-command list's keys, and

@@ -1120,6 +1120,13 @@ void App::updateConnecting() {
     screen_ = Screen::Login;
 }
 
+bool App::keyboardCaptured() const {
+    // The three things that can hold the caret, in the order updateLobby and
+    // updatePlaying resolve them: a panel's field, the chat line, and the
+    // lobby's name / auth fields.
+    return menus_.wantsText() || chatOpen_ || nameFocused_ || focusedField_ >= 0;
+}
+
 void App::editText(std::string& target, std::size_t maxLength) {
     const std::string& typed = window_.typedText();
     for (std::size_t i = 0; i < typed.size(); ++i) {
@@ -1478,21 +1485,28 @@ void App::sendInputFrame(double dt) {
     // the reference reads them beside whatever the four keys are bound to.
     const ClientSettings& settings = menus_.settings();
     Vec2 keyboard{0, 0};
-    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveUp)) ||
-        window_.keyDown(Key::Up)) {
-        keyboard.y -= 1;
-    }
-    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveDown)) ||
-        window_.keyDown(Key::Down)) {
-        keyboard.y += 1;
-    }
-    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveLeft)) ||
-        window_.keyDown(Key::Left)) {
-        keyboard.x -= 1;
-    }
-    if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveRight)) ||
-        window_.keyDown(Key::Right)) {
-        keyboard.x += 1;
+    // A typed key is a character, not a direction. The reference's key handler
+    // returns before it records anything once an <input> has focus, so while
+    // the chat line -- or a panel's own field -- is taking keystrokes, none of
+    // them reach the movement set. The cursor half keeps working: only the
+    // keyboard half goes quiet.
+    if (!keyboardCaptured()) {
+        if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveUp)) ||
+            window_.keyDown(Key::Up)) {
+            keyboard.y -= 1;
+        }
+        if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveDown)) ||
+            window_.keyDown(Key::Down)) {
+            keyboard.y += 1;
+        }
+        if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveLeft)) ||
+            window_.keyDown(Key::Left)) {
+            keyboard.x -= 1;
+        }
+        if (boundKeyDown(window_, settings.controlKey(ControlAction::MoveRight)) ||
+            window_.keyDown(Key::Right)) {
+            keyboard.x += 1;
+        }
     }
 
     const Vec2 cursorWorld = camera_.screenToWorld({window_.mouseX(), window_.mouseY()});
