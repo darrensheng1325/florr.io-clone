@@ -28,7 +28,12 @@ struct PanelSkin {
 inline constexpr PanelSkin kInventorySkin{0x6B9DD6u, 0x5680ADu, 0xAE5B58u, 0x8D4A47u, 0x5680ADu};
 inline constexpr PanelSkin kCraftingSkin{0xDB9D5Bu, 0xB17F48u, 0xBB5B61u, 0x914B31u, 0xB17F48u};
 inline constexpr PanelSkin kGallerySkin{0xE6D64Cu, 0xA89D36u, 0xCC4455u, 0x992F3Cu, 0xA89D36u};
-inline constexpr PanelSkin kTalentsSkin{0xDC7E92u, 0xB56476u, 0x8E4657u, 0x6E3543u, 0xB56476u};
+/// The talent card is the one panel drawn against a reference screenshot
+/// rather than the browser build's CSS, so its body is that shot's dusty red
+/// rather than the pink the rest of the family was derived from. The border
+/// doubles as the tree's own ink: every connector and the TP badge are drawn
+/// in it, which is what makes the fan read as part of the card.
+inline constexpr PanelSkin kTalentsSkin{0xCC625Eu, 0xA44F4Cu, 0x8E4657u, 0x6E3543u, 0xA44F4Cu};
 /// The shop is the one panel drawn against a reference screenshot rather than
 /// against the browser build's CSS, so its greens are that shot's -- and it is
 /// also the one card with NO frame: the green ring around it in that shot is

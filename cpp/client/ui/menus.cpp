@@ -632,7 +632,16 @@ Rect cornerPanel(double width, double height, double top, int, int) {
 
 Rect InventoryPanel::bounds(int w, int h) { return listPanel(preferredWidth(), w, h); }
 Rect CraftingPanel::bounds(int w, int h) { return listPanel(preferredWidth(), w, h); }
-Rect TalentsPanel::bounds(int w, int h) { return listPanel(preferredWidth(), w, h); }
+/// The talent card is SQUARE, alone among the list panels: the tree is a fan
+/// spun about its own centre, and a tall card would only add height the fan
+/// never reaches while cropping the width it spreads across. It keeps the
+/// family's left inset and bottom edge, so it still reads as one of the four;
+/// the family's nominal width is what the square's side replaces.
+Rect TalentsPanel::bounds(int w, int h) {
+    const Rect list = listPanel(preferredWidth(), w, h);
+    const double side = list.h;
+    return {list.x, list.bottom() - side, side, side};
+}
 Rect GalleryPanel::bounds(int w, int h) { return listPanel(preferredWidth(), w, h); }
 
 Rect ShopPanel::bounds(int w, int h) {

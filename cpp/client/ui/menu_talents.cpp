@@ -31,21 +31,29 @@ namespace {
 
 /// Step between two tiers of a branch, and the node drawn at each step.
 ///
-/// Absolute pixels, never fitted to the card. Scaling the fan down to make it
-/// fit would halve every node, every gap and every glyph, and would defeat the
-/// point of a tree you spin: what fits is exactly what the browser shows.
-constexpr double kBaseStep = 80.0;
-constexpr double kNodeRadius = 30.0;
+/// Absolute design units, never fitted to the card. Scaling the fan down to
+/// make it fit would halve every node, every gap and every glyph, and would
+/// defeat the point of a tree you spin: what fits is exactly what the
+/// reference shows -- about four steps across the card, with a full node's
+/// width of air between neighbours. The two move together: a step under twice
+/// the node diameter puts adjacent tiers shoulder to shoulder.
+constexpr double kBaseStep = 137.0;
+constexpr double kNodeRadius = 35.0;
+/// The node's rim, and the icon's full extent inside it. The glyph is drawn
+/// almost node-wide -- a small mark centred in a large disc reads as a bullet
+/// point rather than as the branch's own sign.
+constexpr double kNodeRim = 5.0;
+constexpr double kIconExtent = kNodeRadius * 0.89;
 
 /// Curvature: nothing for the first three tiers, then a ramp to a third of a
 /// right angle per step, easing off on the last one so a branch does not end
 /// by folding back over itself.
 constexpr double kMaxTurn = kPi * 0.37;
 
-constexpr double kAvatarRadius = 50.0;
+constexpr double kAvatarRadius = 47.0;
 /// The pivot sits near the BOTTOM of the card, not in the middle: the fan
 /// opens upward into the panel, and the flower anchors it to the lower edge.
-constexpr double kPivotAboveBottom = 90.0;
+constexpr double kPivotAboveBottom = 70.0;
 
 constexpr double kDragThreshold = 5.0;
 /// How long the card takes to slide up into place.
@@ -61,19 +69,67 @@ constexpr double kCardRadius = 6.0;
 constexpr double kCloseGlyphPad = 8.0;
 constexpr double kResetWidth = 70.0;
 constexpr double kResetHeight = 28.0;
+/// The reset button and the stat lines sit closer to the card's edge than
+/// kMenuPadding puts the other panels' chrome: the tree runs under both, and
+/// every unit of margin is a unit of fan hidden behind an opaque button.
+constexpr double kChromeInset = 10.0;
 
-constexpr std::uint32_t kFlowerBody = 0xFFE763u;
-constexpr std::uint32_t kCostRed = 0xFF5050u;
-constexpr std::uint32_t kUnlockedGreen = 0x7EEF6Du;
-constexpr std::uint32_t kAvailableYellow = 0xFFE65Du;
-constexpr std::uint32_t kLockedFill = 0x5A5A5Au;
-constexpr std::uint32_t kLockedBorder = 0x3A3A3Au;
+/// The TP counter: a disc in the card's own border colour with the number
+/// nearly filling it, and the unit spelled out beside it at half that weight.
+/// Deliberately larger than the title -- the one number a player opens this
+/// panel to read is how many points they have to spend.
+constexpr double kBadgeRadius = 21.0;
+/// The badge's centre, in from the card's top-left corner on both axes. Its
+/// own inset rather than kMenuPadding plus a radius: the disc is bigger than
+/// the chips the shared padding was chosen for, and hanging it off the corner
+/// by eye is what keeps it clear of both the border and the title.
+constexpr double kBadgeInset = 38.0;
+constexpr double kBadgeTextSize = 33.0;
+constexpr double kBadgeLabelSize = 21.0;
+constexpr double kCostTextSize = 19.0;
+/// The two lines beside the flower, and the drop from one baseline to the next.
+constexpr double kStatTextSize = 13.0;
+constexpr double kStatLineGap = 21.0;
+
+/// Connector weights, and the dash the locked ones are drawn with. The dash is
+/// measured for ROUND caps, which lengthen every painted segment and shorten
+/// every gap by one line width.
+constexpr double kLinkWidth = 7.0;
+constexpr double kLinkLockedWidth = 6.0;
+constexpr float kLinkDash = 8.0f;
+constexpr float kLinkDashGap = 11.0f;
+
+constexpr std::uint32_t kFlowerBody = 0xFBE878u;
+constexpr std::uint32_t kCostRed = 0xED706Bu;
+constexpr std::uint32_t kStatGreen = 0x7EEF6Du;
+constexpr std::uint32_t kLockedFill = 0x777777u;
+constexpr std::uint32_t kLockedBorder = 0x606060u;
+constexpr std::uint32_t kCallToAction = 0xFFE65Du;
 constexpr std::uint32_t kStatGrey = 0xE0E0E0u;
 constexpr std::uint32_t kStatusGrey = 0xAAAAAAu;
 constexpr std::uint32_t kCloseGlyph = 0xE8D8D8u;
-constexpr std::uint32_t kResetBorder = 0x7A2A2Au;
-constexpr std::uint32_t kResetFill = 0xB53030u;
-constexpr std::uint32_t kResetHoverFill = 0xD83A3Au;
+constexpr std::uint32_t kResetBorder = 0xA52B24u;
+constexpr std::uint32_t kResetFill = 0xCC362Du;
+constexpr std::uint32_t kResetHoverFill = 0xE0463Cu;
+
+/// How far a node's border is taken below its own fill. Shallower than the
+/// shared darken() default: at a 5-unit rim on a saturated fill, a quarter
+/// reads as a black ring rather than as the same colour in shadow.
+constexpr double kRimShade = 0.20;
+/// How much of its rarity colour the next affordable tier shows through the
+/// locked grey. A tint, not the colour itself: the node has not been bought,
+/// and painting it as though it had is the one thing this panel must not say.
+constexpr double kAvailableTint = 0.30;
+
+/// Linear blend, `amount` of `top` over `bottom`.
+constexpr std::uint32_t mixColor(std::uint32_t bottom, std::uint32_t top, double amount) {
+    const auto channel = [=](int shift) -> std::uint32_t {
+        const double b = static_cast<double>((bottom >> shift) & 0xFF);
+        const double t = static_cast<double>((top >> shift) & 0xFF);
+        return static_cast<std::uint32_t>(b + (t - b) * amount + 0.5);
+    };
+    return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+}
 
 /// Second Chance's two tiers each spell out what they grant; there is no
 /// multiplier to quote.
@@ -213,86 +269,153 @@ void dropShadow(Canvas& canvas, Rect card, double radius) {
     canvas.restore();
 }
 
+/// One blade of the absorption rotor: a comma that starts thin at the hub and
+/// widens to a rounded tip, swept a fixed arc around the centre.
+///
+/// Filled as a ribbon rather than stroked, because the taper IS the shape --
+/// a constant-width stroke of the same spiral reads as a snail's shell, which
+/// is what this icon used to be.
+void rotorBlade(Canvas& canvas, Vec2 at, double radius, double from, double sweep) {
+    constexpr int kSteps = 10;
+    const double hub = radius * 0.18;
+    const double tip = radius * 0.30;
+
+    Vec2 left[kSteps + 1];
+    Vec2 right[kSteps + 1];
+    for (int i = 0; i <= kSteps; ++i) {
+        const double t = static_cast<double>(i) / kSteps;
+        const double angle = from + sweep * t;
+        // The spine runs from the hub to the rim; the half-width grows with it,
+        // so the blade is a wedge with a rounded end rather than a bar.
+        const Vec2 spine = at + Vec2::fromAngle(angle, hub + (radius - tip * 0.6 - hub) * t);
+        const double half = radius * (0.055 + 0.155 * t);
+        const Vec2 normal = Vec2::fromAngle(angle + kPi * 0.5, half);
+        left[i] = spine + normal;
+        right[i] = spine - normal;
+    }
+
+    canvas.beginPath();
+    canvas.moveTo(static_cast<float>(left[0].x), static_cast<float>(left[0].y));
+    for (int i = 1; i <= kSteps; ++i) {
+        canvas.lineTo(static_cast<float>(left[i].x), static_cast<float>(left[i].y));
+    }
+    for (int i = kSteps; i >= 0; --i) {
+        canvas.lineTo(static_cast<float>(right[i].x), static_cast<float>(right[i].y));
+    }
+    canvas.closePath();
+    canvas.fill();
+
+    const Vec2 end = at + Vec2::fromAngle(from + sweep, radius - tip * 0.6);
+    canvas.fillCircle(static_cast<float>(end.x), static_cast<float>(end.y),
+                      static_cast<float>(radius * 0.21));
+}
+
+/// A rounded plus. Two overlapping capsules rather than one traced outline:
+/// the corners the reference rounds are the four outer ends, and every one of
+/// them is the end of a bar.
+void roundedCross(Canvas& canvas, Vec2 at, double extent, double thickness) {
+    const double half = extent * 0.5;
+    const double bar = thickness * 0.5;
+    const auto round = static_cast<float>(thickness * 0.22);
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(at.x - bar), static_cast<float>(at.y - half),
+                     static_cast<float>(thickness), static_cast<float>(extent), round);
+    canvas.fill();
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(at.x - half), static_cast<float>(at.y - bar),
+                     static_cast<float>(extent), static_cast<float>(thickness), round);
+    canvas.fill();
+}
+
 void drawIcon(Canvas& canvas, SkillId id, Vec2 at, double size) {
+    // `size` is the glyph's FULL extent, not a radius and not a font size, so
+    // every branch's mark occupies the same square of the node however it is
+    // built. Everything below is a fraction of it.
+    const double half = size * 0.5;
+
     canvas.save();
     setFill(canvas, kPaper);
     setStroke(canvas, kPaper);
-    canvas.setLineWidth(static_cast<float>(std::max(2.0, size * 0.13)));
     canvas.setLineCap("round");
     canvas.setLineJoin("round");
 
     switch (id) {
         case SkillId::PlayerHealth: {   // a medical cross
-            const double arm = size * 0.55;
-            const double thick = size * 0.22;
-            canvas.fillRect(static_cast<float>(at.x - thick * 0.5),
-                            static_cast<float>(at.y - arm * 0.5), static_cast<float>(thick),
-                            static_cast<float>(arm));
-            canvas.fillRect(static_cast<float>(at.x - arm * 0.5),
-                            static_cast<float>(at.y - thick * 0.5), static_cast<float>(arm),
-                            static_cast<float>(thick));
+            roundedCross(canvas, at, size, size * 0.37);
             break;
         }
         case SkillId::Damage: {         // a five-petal flower
             for (int i = 0; i < 5; ++i) {
                 const double a = (i / 5.0) * kTau - kPi * 0.5;
-                const Vec2 petal = at + Vec2::fromAngle(a, size * 0.192);
+                const Vec2 petal = at + Vec2::fromAngle(a, half * 0.58);
                 canvas.beginPath();
+                // The long axis points OUTWARD -- radiusX is measured along the
+                // ellipse's own rotation -- so five petals read as a flower
+                // rather than as a clover with its lobes touching.
                 canvas.ellipse(static_cast<float>(petal.x), static_cast<float>(petal.y),
-                               static_cast<float>(size * 0.18), static_cast<float>(size * 0.208),
+                               static_cast<float>(half * 0.42), static_cast<float>(half * 0.29),
                                static_cast<float>(a), 0.0f, static_cast<float>(kTau));
                 canvas.fill();
             }
             canvas.fillCircle(static_cast<float>(at.x), static_cast<float>(at.y),
-                              static_cast<float>(size * 0.13));
+                              static_cast<float>(half * 0.30));
             break;
         }
-        case SkillId::PetalHealth: {    // an open "C"
-            canvas.setLineWidth(static_cast<float>(size * 0.22));
+        case SkillId::PetalHealth: {    // a reload arrow: a thick ring, cut open
+            const double weight = size * 0.29;
+            const double ring = half - weight * 0.5;
+            canvas.setLineWidth(static_cast<float>(weight));
+            canvas.setLineCap("butt");
             canvas.beginPath();
-            canvas.arc(static_cast<float>(at.x), static_cast<float>(at.y),
-                       static_cast<float>(size * 0.32), static_cast<float>(kPi * 0.25),
-                       static_cast<float>(-kPi * 0.25), true);
+            // A narrow slot, not a half-open crescent: the gap says "this comes
+            // back round", where a 90-degree mouth would just read as a C. The
+            // sweep runs the LONG way -- clockwise from just below the slot all
+            // the way round to just above it -- so the arc is the ring and the
+            // gap is what is left over, not the other way about.
+            canvas.arc(static_cast<float>(at.x), static_cast<float>(at.y), static_cast<float>(ring),
+                       static_cast<float>(0.33), static_cast<float>(kTau - 0.20), false);
+            canvas.stroke();
+            // The arrow head: a square block filling the corner above the ring's
+            // upper end, flush with its outer edge.
+            canvas.fillRect(static_cast<float>(at.x + half * 0.19), static_cast<float>(at.y - half),
+                            static_cast<float>(half * 0.81), static_cast<float>(half * 0.94));
+            canvas.setLineCap("round");
+            break;
+        }
+        case SkillId::Healing: {        // a heart, drawn as an outline
+            const double s = half * 0.92;
+            canvas.setLineWidth(static_cast<float>(size * 0.11));
+            canvas.beginPath();
+            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + s * 0.86));
+            canvas.bezierCurveTo(static_cast<float>(at.x + s * 1.35), static_cast<float>(at.y - s * 0.10),
+                                 static_cast<float>(at.x + s * 0.62), static_cast<float>(at.y - s * 1.05),
+                                 static_cast<float>(at.x), static_cast<float>(at.y - s * 0.24));
+            canvas.bezierCurveTo(static_cast<float>(at.x - s * 0.62), static_cast<float>(at.y - s * 1.05),
+                                 static_cast<float>(at.x - s * 1.35), static_cast<float>(at.y - s * 0.10),
+                                 static_cast<float>(at.x), static_cast<float>(at.y + s * 0.86));
             canvas.stroke();
             break;
         }
-        case SkillId::Healing: {        // a heart
-            const double s = size * 0.34;
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + s * 0.6));
-            canvas.bezierCurveTo(static_cast<float>(at.x + s * 1.4), static_cast<float>(at.y - s * 0.2),
-                                 static_cast<float>(at.x + s * 0.6), static_cast<float>(at.y - s * 1.1),
-                                 static_cast<float>(at.x), static_cast<float>(at.y - s * 0.2));
-            canvas.bezierCurveTo(static_cast<float>(at.x - s * 0.6), static_cast<float>(at.y - s * 1.1),
-                                 static_cast<float>(at.x - s * 1.4), static_cast<float>(at.y - s * 0.2),
-                                 static_cast<float>(at.x), static_cast<float>(at.y + s * 0.6));
-            canvas.fill();
-            break;
-        }
         case SkillId::SecondChance: {   // a shield
-            const double s = size * 0.38;
+            const double s = half * 0.92;
             canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + s * 1.1));
-            canvas.lineTo(static_cast<float>(at.x - s * 0.8), static_cast<float>(at.y + s * 0.1));
-            canvas.lineTo(static_cast<float>(at.x - s * 0.8), static_cast<float>(at.y - s * 0.4));
-            canvas.quadraticCurveTo(static_cast<float>(at.x), static_cast<float>(at.y - s),
-                                    static_cast<float>(at.x + s * 0.8), static_cast<float>(at.y - s * 0.4));
-            canvas.lineTo(static_cast<float>(at.x + s * 0.8), static_cast<float>(at.y + s * 0.1));
+            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + s));
+            canvas.lineTo(static_cast<float>(at.x - s * 0.78), static_cast<float>(at.y + s * 0.09));
+            canvas.lineTo(static_cast<float>(at.x - s * 0.78), static_cast<float>(at.y - s * 0.45));
+            canvas.quadraticCurveTo(static_cast<float>(at.x), static_cast<float>(at.y - s * 1.0),
+                                    static_cast<float>(at.x + s * 0.78), static_cast<float>(at.y - s * 0.45));
+            canvas.lineTo(static_cast<float>(at.x + s * 0.78), static_cast<float>(at.y + s * 0.09));
             canvas.closePath();
             canvas.fill();
             break;
         }
-        case SkillId::Absorbing: {      // an inward spiral
-            canvas.setLineWidth(static_cast<float>(size * 0.16));
-            canvas.beginPath();
-            constexpr int kSteps = 24;
-            for (int i = 0; i <= kSteps; ++i) {
-                const double t = static_cast<double>(i) / kSteps;
-                const Vec2 p = at + Vec2::fromAngle(t * kTau * 1.75, size * 0.36 * (1.0 - t * 0.85));
-                if (i == 0) canvas.moveTo(static_cast<float>(p.x), static_cast<float>(p.y));
-                else canvas.lineTo(static_cast<float>(p.x), static_cast<float>(p.y));
+        case SkillId::Absorbing: {      // a rotor drawing inward
+            constexpr int kBlades = 8;
+            for (int i = 0; i < kBlades; ++i) {
+                rotorBlade(canvas, at, half, (i / static_cast<double>(kBlades)) * kTau, 0.62);
             }
-            canvas.stroke();
+            canvas.fillCircle(static_cast<float>(at.x), static_cast<float>(at.y),
+                              static_cast<float>(half * 0.15));
             break;
         }
         default: break;
@@ -452,8 +575,8 @@ bool TalentsPanel::render(MenuContext& ctx) {
     const Vec2 windowMouse = ctx.mouse();
 
     const Rect closeRect = closeButtonRect(panel);
-    const Rect resetRect{panel.right() - kMenuPadding - kResetWidth,
-                         panel.bottom() - kMenuPadding - kResetHeight, kResetWidth, kResetHeight};
+    const Rect resetRect{panel.right() - kChromeInset - kResetWidth,
+                         panel.bottom() - kChromeInset - kResetHeight, kResetWidth, kResetHeight};
     const bool closeHovered = closeRect.contains(mouse);
     const bool resetHovered = resetRect.contains(mouse);
     // Leaving the button disarms it, so the armed state is never painted in
@@ -533,9 +656,15 @@ bool TalentsPanel::render(MenuContext& ctx) {
             }
         }
 
-        setStroke(canvas, unlocked ? kUnlockedGreen : kInk, unlocked ? 0.85 : 0.35);
-        canvas.setLineWidth(unlocked ? 4.0f : 3.0f);
-        canvas.setLineDash(unlocked ? std::vector<float>{} : std::vector<float>{6.0f, 6.0f});
+        // Both states are the card's own border colour, and only the LINE tells
+        // them apart: solid for a tier already bought, dashed for one that is
+        // not. Colouring the bought ones green instead would put a second,
+        // brighter palette behind a fan whose nodes are already ten colours,
+        // and the branch would stop reading as one continuous run.
+        setStroke(canvas, kTalentsSkin.border);
+        canvas.setLineWidth(static_cast<float>(unlocked ? kLinkWidth : kLinkLockedWidth));
+        canvas.setLineDash(unlocked ? std::vector<float>{}
+                                    : std::vector<float>{kLinkDash, kLinkDashGap});
         canvas.beginPath();
         canvas.moveTo(static_cast<float>(from.x), static_cast<float>(from.y));
         canvas.lineTo(static_cast<float>(node.screen.x), static_cast<float>(node.screen.y));
@@ -555,28 +684,33 @@ bool TalentsPanel::render(MenuContext& ctx) {
             prereqMet && node.tier == skills.level(node.skill) + 1 && points >= cost;
 
         std::uint32_t fill = kLockedFill;
-        std::uint32_t border = kLockedBorder;
         if (unlocked) {
             fill = rarityColor(clampRarity(node.tier));
-            border = darken(fill, 0.30);
         } else if (available) {
-            fill = kAvailableYellow;
-            border = darken(fill, 0.30);
+            // A TINT of the tier's own colour over the locked grey, so the one
+            // node a click would actually buy names its rarity without ever
+            // being mistaken for a node already owned.
+            fill = mixColor(kLockedFill, rarityColor(clampRarity(node.tier)), kAvailableTint);
         }
+        const std::uint32_t border = fill == kLockedFill ? kLockedBorder : darken(fill, kRimShade);
 
         disc(canvas, node.screen, kNodeRadius, border, border, 0.0);
-        disc(canvas, node.screen, kNodeRadius - 3.0, fill, fill, 0.0);
+        disc(canvas, node.screen, kNodeRadius - kNodeRim, fill, fill, 0.0);
         if (static_cast<int>(i) == hovered && (unlocked || available)) {
-            disc(canvas, node.screen, kNodeRadius - 3.0, kPaper, kPaper, 0.0, 0.2);
+            disc(canvas, node.screen, kNodeRadius - kNodeRim, kPaper, kPaper, 0.0, 0.2);
         }
-        drawIcon(canvas, node.skill, node.screen, kNodeRadius * 0.95);
+        drawIcon(canvas, node.skill, node.screen, kIconExtent);
 
-        // Red on every node, unlocked ones included: the number is what the
-        // tier cost, not what is still owed.
-        TextStyle price = panelText(11.0, kCostRed, 3.0);
-        price.align = Align::Centre;
-        text(canvas, std::to_string(cost), node.screen.x + kNodeRadius * 0.7,
-             node.screen.y - kNodeRadius * 0.85, price);
+        // Only on a tier still to be bought. A price over an owned node is a
+        // number with nothing to do: the point of the label is what a click
+        // would cost, and every one of them shouting a receipt turns the fan
+        // into a field of red digits.
+        if (!unlocked) {
+            TextStyle price = panelText(kCostTextSize, kCostRed, 4.0);
+            price.align = Align::Centre;
+            text(canvas, std::to_string(cost), node.screen.x + kNodeRadius * 0.7,
+                 node.screen.y - kNodeRadius * 0.85, price);
+        }
     }
     drawAvatar(canvas, centre, kAvatarRadius, avatarEye(ctx.net.view()));
 
@@ -586,17 +720,21 @@ bool TalentsPanel::render(MenuContext& ctx) {
     title.baseline = Baseline::Top;
     text(canvas, "Talents", panel.x + panel.w * 0.5, panel.y + kMenuPadding, title);
 
-    const Rect badge{panel.x + kMenuPadding, panel.y + 12.0, 30.0, 30.0};
-    inlaid(canvas, badge, kLockedFill, kControlDark, 3.0, 6.0);
+    // A disc in the card's own border colour rather than the dark inlay the
+    // other panels' chips wear: it is a shadow under the number, not a plate
+    // the number sits on, and it is drawn only so the digit has something to
+    // separate it from the fan running behind the header.
+    const Vec2 badge{panel.x + kBadgeInset, panel.y + kBadgeInset};
+    disc(canvas, badge, kBadgeRadius, kTalentsSkin.border, kTalentsSkin.border, 0.0);
     // Both sit a pixel below the badge's middle, which is where the browser
     // puts them and what stops the digits reading as high in the plate.
-    const double badgeMiddle = badge.y + badge.h * 0.5 + 1.0;
-    TextStyle badgeText = panelText(16.0, kPaper, 3.0);
+    const double badgeMiddle = badge.y + 1.0;
+    TextStyle badgeText = panelText(kBadgeTextSize, kPaper, 5.0);
     badgeText.align = Align::Centre;
-    text(canvas, std::to_string(points), badge.x + badge.w * 0.5, badgeMiddle, badgeText);
-    TextStyle badgeLabel = badgeText;
+    text(canvas, std::to_string(points), badge.x, badgeMiddle, badgeText);
+    TextStyle badgeLabel = panelText(kBadgeLabelSize, kPaper, 4.0);
     badgeLabel.align = Align::Left;
-    text(canvas, "TP", badge.right() + 6.0, badgeMiddle, badgeLabel);
+    text(canvas, "TP", badge.x + kBadgeRadius + 12.0, badgeMiddle, badgeLabel);
 
     // A translucent black plate, not the maroon one the other panels wear, and
     // hover moves the glyph rather than the plate under it.
@@ -637,14 +775,27 @@ bool TalentsPanel::render(MenuContext& ctx) {
     const double health = baseHealth * skills.effectScale(SkillId::PlayerHealth);
     const double bodyDamage = kDisplayBodyDamage * skills.effectScale(SkillId::Damage);
 
-    TextStyle stat = panelText(13.0, kUnlockedGreen, 3.0);
-    stat.align = Align::Right;
-    stat.baseline = Baseline::Bottom;
-    text(canvas, "Flower Health: " + abbreviateStat(health), panel.right() - 18.0,
-         panel.bottom() - 56.0, stat);
-    stat.fill = kStatGrey;
-    text(canvas, "Body Damage: " + abbreviateStat(bodyDamage), panel.right() - 18.0,
-         panel.bottom() - 40.0, stat);
+    // Anchored to the FLOWER, not to the card's corner: these two lines say
+    // what the flower in the middle of the fan is currently worth, and reading
+    // them off the far edge of a card whose middle is that flower makes them
+    // look like a footer. Label and value are separate runs so the label can
+    // carry the stat's colour while the number stays white -- one white number
+    // beside a coloured word is legible at 13 units where a whole coloured
+    // sentence is not.
+    TextStyle statLabel = panelText(kStatTextSize, kStatGreen, 3.0);
+    statLabel.baseline = Baseline::Alphabetic;
+    TextStyle statValue = panelText(kStatTextSize, kPaper, 3.0);
+    statValue.baseline = Baseline::Alphabetic;
+
+    const double statX = centre.x + kAvatarRadius + 12.0;
+    const auto statLine = [&](const std::string& label, const std::string& value, double y,
+                              std::uint32_t color) {
+        statLabel.fill = color;
+        text(canvas, label, statX, y, statLabel);
+        text(canvas, value, statX + textWidth(canvas, label, kStatTextSize, true), y, statValue);
+    };
+    statLine("Flower Health: ", abbreviateStat(health), centre.y - 4.0, kStatGreen);
+    statLine("Body Damage: ", abbreviateStat(bodyDamage), centre.y + kStatLineGap - 4.0, kStatGrey);
 
     // Drawn here rather than through chip(): the inner plate keeps a radius of
     // 4 inside the outer 5, where inlaid()'s radius - 2 would flatten it to 3.
@@ -687,9 +838,9 @@ bool TalentsPanel::render(MenuContext& ctx) {
                                  kSkillLabels[static_cast<std::size_t>(kSecondChanceParent)],
                              12.0, kCostRed});
         } else if (unlocked) {
-            lines.push_back({"Unlocked", 12.0, kUnlockedGreen});
+            lines.push_back({"Unlocked", 12.0, kStatGreen});
         } else if (available) {
-            lines.push_back({"Click to unlock", 12.0, kAvailableYellow});
+            lines.push_back({"Click to unlock", 12.0, kCallToAction});
         } else if (nextTier) {
             lines.push_back({"Need " + std::to_string(cost - points) + " more TP", 12.0, kCostRed});
         } else {
