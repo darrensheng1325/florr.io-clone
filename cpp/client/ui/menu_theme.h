@@ -102,11 +102,11 @@ inline constexpr std::uint32_t kControlField = 0xEEEEEEu;
 
 /// The two anchors the browser build hangs panels off.
 ///
-/// The tall list panels (inventory, craft, talents, gallery) sit a third of
-/// the way down and kMenuInsetX in from the left, clear of the icon column,
-/// and run two thirds of the viewport tall. The corner panels (settings,
-/// changelog, notifications, guild, leaderboard, skins, shop, debug) are
-/// pinned directly under the top icon row instead, at their own fixed sizes.
+/// The tall list panels (inventory, craft, talents) sit a third of the way
+/// down and kMenuInsetX in from the left, clear of the icon column, and run
+/// two thirds of the viewport tall. The corner panels (settings, changelog,
+/// notifications, guild, leaderboard, skins, shop, gallery, debug) are pinned
+/// directly under the top icon row instead, at their own fixed sizes.
 inline constexpr double kMenuInsetX = 91.0;
 inline constexpr double kMenuListTopFraction = 1.0 / 3.0;
 inline constexpr double kMenuListHeightFraction = 2.0 / 3.0;

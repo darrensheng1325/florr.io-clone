@@ -343,6 +343,7 @@ public:
     bool render(MenuContext&);
     void reset();
     static double preferredWidth();
+    static double preferredHeight();
     static Rect bounds(int viewWidth, int viewHeight);
 
 private:

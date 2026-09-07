@@ -642,7 +642,14 @@ Rect TalentsPanel::bounds(int w, int h) {
     const double side = list.h;
     return {list.x, list.bottom() - side, side, side};
 }
-Rect GalleryPanel::bounds(int w, int h) { return listPanel(preferredWidth(), w, h); }
+
+/// The bestiary left the list family: it is a corner overlay, hung under the
+/// top icon row beside the other read-only cards, because it is one of them --
+/// nothing is dragged into or out of it, so it does not need to stand clear of
+/// the loadout the way the inventory, the forge and the tree do.
+Rect GalleryPanel::bounds(int w, int h) {
+    return cornerPanel(preferredWidth(), GalleryPanel::preferredHeight(), kMenuCornerY, w, h);
+}
 
 Rect ShopPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), ShopPanel::preferredHeight(), kMenuCornerY, w, h);
@@ -710,13 +717,13 @@ const std::array<MenuSystem::StripSlot, kStripSlotCount>& MenuSystem::strip() {
         {MenuId::Leaderboard,   A::OpenMenu, "leaderboard",   true,  0xE8A023u, 0xBA801Cu},
         {MenuId::Guild,         A::OpenMenu, "guild",         true,  0x27DADEu, 0x1FB3B0u},
         {MenuId::Skins,         A::OpenMenu, "skins",         true,  0xC45CFFu, 0x9A3FD0u},
+        {MenuId::Gallery,       A::OpenMenu, "mob_gallery",   true,  0xD6C206u, 0xAB9B05u},
         {MenuId::Shop,          A::OpenMenu, "stars",         true,  0x36D153u, 0x2BA742u},
         {MenuId::None,          A::Discord,  "discord",       true,  0x5865F2u, 0x4752C4u},
         {MenuId::Debug,         A::OpenMenu, "debug",         true,  0x666666u, 0x4D4D4Du},
         {MenuId::None,          A::Exit,     "exit_button",   true,  0xFF0000u, 0xCC0000u},
         {MenuId::Inventory,     A::OpenMenu, "inventory",     false, 0x00B3FFu, 0x008FCCu},
         {MenuId::Talents,       A::OpenMenu, "skills",        false, 0x9D4EDDu, 0x7E3EB1u},
-        {MenuId::Gallery,       A::OpenMenu, "mob_gallery",   false, 0xD6C206u, 0xAB9B05u},
         {MenuId::Crafting,      A::OpenMenu, "craft",         false, 0xFF9D00u, 0xCC7E00u},
     }};
     return kSlots;
@@ -1343,11 +1350,10 @@ bool DebugPanel::render(MenuContext& ctx) {
 namespace {
 
 /// The tall list panels are DOM shells that rise from `translateY(100vh)` over
-/// 300ms; the corner overlays are canvas panels drawn straight at (20, 72) with
-/// no transition at all, so only these four animate.
+/// 300ms; the corner overlays are canvas panels drawn straight at the corner
+/// anchor with no transition at all, so only these three animate.
 bool slidesUp(MenuId id) {
-    return id == MenuId::Inventory || id == MenuId::Crafting || id == MenuId::Talents ||
-           id == MenuId::Gallery;
+    return id == MenuId::Inventory || id == MenuId::Crafting || id == MenuId::Talents;
 }
 
 constexpr double kPanelSlideSeconds = 0.30;

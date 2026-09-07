@@ -1038,8 +1038,7 @@ void App::frame(double dt) {
         // petal-handling panels is up, rather than letting it poke out beside
         // the card.
         const MenuId open = menus_.open();
-        const bool panelHidesChat = open == MenuId::Inventory || open == MenuId::Crafting ||
-                                    open == MenuId::Gallery;
+        const bool panelHidesChat = open == MenuId::Inventory || open == MenuId::Crafting;
         if (menus_.settings().showChat && !panelHidesChat) drawChat(canvas, timeSeconds_);
         // Panels and the icon strip keep drawing while dead, and the scrim goes
         // over both -- but NOT over the loadout bar, which the reference paints

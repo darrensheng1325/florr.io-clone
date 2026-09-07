@@ -5,8 +5,9 @@
 // checklist of the world, and the gaps are what is left to find.
 //
 // Every mob is generated at every tier, so no cell is ever "this mob does not
-// exist here" -- an unkilled cell always shows a question mark. Hovering one
-// that HAS been killed opens a tooltip carrying the full drop table: the same
+// exist here": an unkilled cell is a bare plate in the card's own frame colour,
+// which is what makes a part-filled row read at a glance. Hovering one that HAS
+// been killed opens a tooltip carrying the full drop table: the same
 // upgrade/downgrade pipeline the server rolls, run forwards and displayed as
 // per-rarity percentages.
 
@@ -34,25 +35,64 @@ namespace {
 // Metrics
 // ---------------------------------------------------------------------------
 
-constexpr double kPad = 20.0;
+constexpr double kPad = kMenuPadding;
 constexpr double kTitleHeight = 30.0;
-constexpr double kTitleGap = 20.0;
-constexpr double kCell = 60.0;
-constexpr double kRowGap = 5.0;
+constexpr double kTitleGap = 26.0;
+/// The cell the shared item chrome is written in, and the gap the reference
+/// leaves between two of them. The bestiary is a grid of SEPARATE plates, not
+/// the edge-to-edge sheet the panel used to draw: neighbours never share a
+/// rule, and the 4-unit rim each plate carries reaches 2 units into the gap.
+constexpr double kCell = kCellSize;
+constexpr double kGridGap = kCellGap;
+constexpr double kCellRadius = 5.0;
+constexpr double kCellRim = 4.0;
+/// Reserved for the scrollbar when the grid is centred; the bar itself is
+/// drawn narrower than the reserve, hard against the right padding.
 constexpr double kScrollbarWidth = 12.0;
+constexpr double kThumbWidth = 8.0;
 
 /// Where the scrollable content starts, measured down from the card's top.
 constexpr double kContentTop = kPad + kTitleHeight + kTitleGap;
 
-/// The card is a fixed 700 wide however big the window is; only the height
-/// tracks the viewport.
-constexpr double kCardWidth = 700.0;
+/// The card is a fixed size however big the window is. It is a corner overlay
+/// now -- pinned under the top icon row rather than standing beside the icon
+/// column -- so the height is literal too instead of two thirds of a viewport.
+///
+/// The width is DERIVED, not the reference shot's literal 603: that card holds
+/// eight tiers and this game has nine (the reference has no unique), so a
+/// literal width would clip the last column against the scrollbar. It is the
+/// row, the padding either side, the scrollbar reserve, and the same ~4.5
+/// units of slack the reference leaves at each end of a row.
+constexpr double kGridSlack = 9.0;
+constexpr double kCardHeight = 607.0;
+
+/// The kill tally, top-right, tilted the way the reference shot draws it: it
+/// reads as a sticker stuck on the plate rather than as part of the artwork,
+/// and it deliberately overhangs the plate's right edge.
+constexpr double kTallySize = 12.0;
+constexpr double kTallyStroke = 3.0;
+constexpr double kTallyTilt = 19.0 * kPi / 180.0;
+/// Its CENTRE, in from the plate's top-right corner. Centred rather than
+/// right-aligned, which is what keeps "x9" and "x2.1k" sitting on the same
+/// spot instead of growing leftwards from one edge.
+constexpr double kTallyInset = 8.5;
+
+/// A mob is drawn at its own size, as the world draws it -- a baby ant is a
+/// speck inside its plate and a hornet nearly fills one, which is the one fact
+/// about a mob the grid can show without being read. Common's radius, never
+/// the cell's own rarity: a row would otherwise swell left to right and the
+/// grid would read as a size chart.
+constexpr double kIconZoom = 1.15;
+constexpr double kIconCap = 48.0;
 
 /// Apex mobs exist, but nothing in the world spawns one and no item is ever
 /// graded apex, so the tenth tier is left out of both the grid and the drop
 /// table's columns.
 constexpr int kTierColumns = kRarityCount - 1;
 constexpr int kDropTiers = kRarityCount - 1;
+
+constexpr double kGridWidth = kTierColumns * kCell + (kTierColumns - 1) * kGridGap;
+constexpr double kCardWidth = kGridWidth + kPad * 2.0 + kScrollbarWidth + 4.0 + kGridSlack;
 
 // Drop table, in the tooltip's own space.
 constexpr double kDropsGapY = 6.0;
@@ -118,12 +158,6 @@ std::string abbreviateNumber(double value) {
 std::string formatFixed(double value, int decimals) {
     char buffer[32];
     std::snprintf(buffer, sizeof buffer, "%.*f", decimals, value);
-    return buffer;
-}
-
-std::string formatCount(std::uint32_t value) {
-    char buffer[16];
-    std::snprintf(buffer, sizeof buffer, "%u", value);
     return buffer;
 }
 
@@ -390,16 +424,12 @@ void galleryCard(Canvas& canvas, Rect panel) {
     canvas.fill();
 }
 
-/// The gallery's own scrollbar: a black groove rather than the shared white
-/// one, and a 4px radius rather than a full pill.
+/// The gallery's own scrollbar: a bare thumb in the card's own frame colour,
+/// with NO groove behind it. The reference draws only the thumb, so an
+/// unscrolled panel shows one short bar in the top corner rather than a track
+/// running the height of the card.
 void galleryScrollbar(Canvas& canvas, Rect track, double contentHeight, double scroll,
                       double maxScroll) {
-    setFill(canvas, kInk, 0.15);
-    canvas.beginPath();
-    canvas.roundRect(static_cast<float>(track.x), static_cast<float>(track.y),
-                     static_cast<float>(track.w), static_cast<float>(track.h), 4.0f);
-    canvas.fill();
-
     const double thumbHeight = std::max(20.0, track.h * (track.h / contentHeight));
     const double thumbY = track.y + (scroll / maxScroll) * (track.h - thumbHeight);
     setFill(canvas, kGallerySkin.accent);
@@ -473,6 +503,8 @@ ScrollDrag& scrollDrag() {
 
 double GalleryPanel::preferredWidth() { return kCardWidth; }
 
+double GalleryPanel::preferredHeight() { return kCardHeight; }
+
 void GalleryPanel::reset() {
     // Deliberately empty. The browser panel's scroll offset is a member that
     // toggling never touches, so reopening the bestiary returns the player to
@@ -503,8 +535,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
     const Rect view{panel.x + kPad, contentTop, panel.w - kPad * 2 - kScrollbarWidth - 4.0,
                     std::max(0.0, panel.h - kContentTop - kPad)};
 
-    const double rowWidth = kTierColumns * kCell;
-    const double startX = view.x + std::max(0.0, (view.w - rowWidth) * 0.5);
+    const double startX = view.x + std::max(0.0, (view.w - kGridWidth) * 0.5);
 
     std::vector<Cell> cells;
     cells.reserve(content().mobCount() * kTierColumns);
@@ -514,17 +545,17 @@ bool GalleryPanel::render(MenuContext& ctx) {
         for (int tier = 0; tier < kTierColumns; ++tier) {
             const Rarity rarity = clampRarity(tier);
             Cell cell;
-            cell.rect = {startX + tier * kCell, y, kCell, kCell};
+            cell.rect = {startX + tier * (kCell + kGridGap), y, kCell, kCell};
             cell.mobIndex = mobIndex;
             cell.rarity = rarity;
             cell.kills = profile.killCount(mobIndex, rarity);
             cells.push_back(cell);
         }
-        y += kCell + kRowGap;
+        y += kCell + kGridGap;
     }
     // The trailing row gap counts: the reference measures from the first row's
-    // top to the cursor AFTER the last row's gap, which is 5px of slack at the
-    // bottom of the scroll range.
+    // top to the cursor AFTER the last row's gap, which is one gap of slack at
+    // the bottom of the scroll range.
     const double contentHeight = y - kContentTop;
 
     scroll_.contentHeight = contentHeight;
@@ -535,7 +566,9 @@ bool GalleryPanel::render(MenuContext& ctx) {
     // The close button answers the PRESS, before anything else can claim it.
     const bool closing = ctx.pressed() && closeRect.contains(mouse);
 
-    const Rect trackRect{panel.right() - kPad - kScrollbarWidth, view.y, kScrollbarWidth, view.h};
+    // Narrower than the reserve the grid was centred against, and hard against
+    // the right padding: the bar the reference draws is 8 wide, not 12.
+    const Rect trackRect{panel.right() - kPad - kThumbWidth, view.y, kThumbWidth, view.h};
     ScrollDrag& drag = scrollDrag();
     if (!ctx.window.mouseDown(MouseButton::Left)) drag.active = false;
     if (!closing && ctx.pressed() && maxScroll > 0 && trackRect.contains(mouse)) {
@@ -580,66 +613,58 @@ bool GalleryPanel::render(MenuContext& ctx) {
 
     for (std::size_t i = 0; i < cells.size(); ++i) {
         const Cell& cell = cells[i];
-        // The reference culls the UNSHIFTED cell y against the scroll window,
-        // so the bottom kContentTop pixels of the content area never draw a
-        // cell. It is visible -- roughly one row is always missing at the
-        // bottom edge -- and matching it is the point.
-        if (cell.rect.bottom() <= scroll_.offset ||
-            cell.rect.y >= scroll_.offset + view.h) {
-            continue;
-        }
+        // Culled in the CARD's space, which is the space cell.rect.y is
+        // measured in: a cell is on screen when it lands inside the band the
+        // content area occupies, kContentTop down from the card's top. The
+        // browser build compared the same y against a band starting at zero,
+        // which threw away the bottom row of every card it drew -- visible as
+        // a strip of bare panel under the grid, and hoverable, since the hit
+        // test never had the bug.
+        const double bandTop = scroll_.offset + kContentTop;
+        if (cell.rect.bottom() <= bandTop || cell.rect.y >= bandTop + view.h) continue;
         const Rect rect{cell.rect.x, panel.y + cell.rect.y - scroll_.offset, cell.rect.w,
                         cell.rect.h};
 
         const bool known = cell.kills > 0;
-        const std::uint32_t fill = known ? rarityColor(cell.rarity) : darken(kGallerySkin.fill, 0.15);
-        const std::uint32_t border =
-            known ? darken(fill, 0.30) : darken(kGallerySkin.fill, 0.30);
 
-        // Filled, then stroked CENTRED on the same path. Cells are laid out
-        // edge to edge, so neighbours share one rule instead of stacking two.
-        setFill(canvas, fill);
+        setFill(canvas, known ? rarityColor(cell.rarity) : kGallerySkin.accent);
         canvas.beginPath();
         canvas.roundRect(static_cast<float>(rect.x), static_cast<float>(rect.y),
-                         static_cast<float>(rect.w), static_cast<float>(rect.h), 5.0f);
+                         static_cast<float>(rect.w), static_cast<float>(rect.h),
+                         static_cast<float>(kCellRadius));
         canvas.fill();
-        setStroke(canvas, border);
-        canvas.setLineWidth(known ? 3.0f : 2.0f);
-        canvas.stroke();
+        // An unkilled cell is a bare plate in the card's own frame colour: a
+        // hole punched in the sheet rather than a tile with something in it.
+        // Only a killed one gets the rim -- the rarity at the 0.8 value every
+        // item plate in the game is outlined with -- so the grid reads as a
+        // checklist from across the panel, before a single tally is legible.
+        if (known) {
+            setStroke(canvas, shade(rarityColor(cell.rarity), kItemTilePlateShade));
+            canvas.setLineWidth(static_cast<float>(kCellRim));
+            canvas.stroke();
+        }
 
         if (known) {
+            // Common's radius, whatever tier this cell is -- see kIconZoom.
+            const double diameter =
+                std::min(kIconCap, content().mobStats(cell.mobIndex, Rarity::Common).radius * 2.0 *
+                                       kIconZoom);
             ctx.sprites.drawMob(canvas, cell.mobIndex, rect.x + rect.w * 0.5,
-                                rect.y + rect.h * 0.5 - 4.0, 40.0, 0.0, ctx.timeSeconds);
+                                rect.y + rect.h * 0.5, diameter, 0.0, ctx.timeSeconds);
 
-            TextStyle name = galleryStyle(8.0, kPaper, 2.0);
-            name.align = Align::Centre;
-            name.baseline = Baseline::Bottom;
-            // Printed exactly as mobs.json spells it: title-casing turns
-            // "JavaScript" into "Javascript".
-            text(canvas, content().mob(cell.mobIndex).name, rect.x + rect.w * 0.5,
-                 rect.bottom() - 4.0, name);
-
-            // A dark pill behind the tally: the count has to stay readable on
-            // white (unique) and on pink alike. The number is never
-            // abbreviated -- a bestiary is a tally, and "1.2k" loses it.
-            const std::string tally = formatCount(cell.kills);
-            const double width = measure(tally, 10.0, true);
-            const double pillX = rect.right() - width - 8.0;
-            setFill(canvas, kInk, 0.8);
-            canvas.beginPath();
-            canvas.roundRect(static_cast<float>(pillX), static_cast<float>(rect.y + 2.0),
-                             static_cast<float>(width + 6.0), 14.0f, 3.0f);
-            canvas.fill();
-            TextStyle count = galleryStyle(10.0, kPaper, 0.0);
-            count.baseline = Baseline::Top;
-            text(canvas, tally, pillX + 3.0, rect.y + 4.0, count);
-        } else {
-            // Content is generated for every rarity of every mob, so there is
-            // no such thing as a tier a mob cannot appear at: an unkilled cell
-            // is always a question mark, never blank.
-            TextStyle locked = galleryStyle(24.0, 0x666666u, 0.0);
-            locked.align = Align::Centre;
-            text(canvas, "?", rect.x + rect.w * 0.5, rect.y + rect.h * 0.5, locked);
+            // Abbreviated, unlike the drop table's own counts: five figures of
+            // ant kills laid across a 60-unit plate is a smear, and a bestiary
+            // tally is read for its order of magnitude.
+            const std::string tally = "x" + abbreviateNumber(cell.kills);
+            TextStyle count = galleryStyle(kTallySize, kPaper, kTallyStroke);
+            count.align = Align::Centre;
+            count.baseline = Baseline::Middle;
+            canvas.save();
+            canvas.translate(static_cast<float>(rect.right() - kTallyInset),
+                             static_cast<float>(rect.y + kTallyInset));
+            canvas.rotate(static_cast<float>(kTallyTilt));
+            text(canvas, tally, 0.0, 0.0, count);
+            canvas.restore();
         }
 
         if (hovered == static_cast<int>(i)) {
@@ -647,7 +672,8 @@ bool GalleryPanel::render(MenuContext& ctx) {
             canvas.setLineWidth(2.0f);
             canvas.beginPath();
             canvas.roundRect(static_cast<float>(rect.x), static_cast<float>(rect.y),
-                             static_cast<float>(rect.w), static_cast<float>(rect.h), 5.0f);
+                             static_cast<float>(rect.w), static_cast<float>(rect.h),
+                             static_cast<float>(kCellRadius));
             canvas.stroke();
         }
     }
@@ -704,13 +730,19 @@ bool GalleryPanel::render(MenuContext& ctx) {
                      : 0.0;
         const double minWidth = hasDrops ? tableWidth : 0.0;
 
-        // Anchored to the CELL and clamped to the card, never to the cursor:
+        // Anchored to the CELL and clamped to the SCREEN, never to the cursor:
         // a box that follows the pointer slides over the thing being read.
+        //
+        // The screen, not the card, because the card is a corner overlay now:
+        // a drop table is wider than half of it, so clamping to the card would
+        // fold the box back over the very cell it describes. Overhanging the
+        // right edge onto the world is what the reference does.
         const Vec2 size = measureTooltip(lines, minWidth, dropsHeight);
         double tx = cell.rect.right() + 8.0;
         double ty = panel.y + cell.rect.y - scroll_.offset;
-        if (tx + size.x > panel.right() - 4.0) tx = cell.rect.x - size.x - 8.0;
-        if (ty + size.y > panel.bottom() - 4.0) ty = panel.bottom() - size.y - 4.0;
+        if (tx + size.x > canvas.width() - 4.0) tx = cell.rect.x - size.x - 8.0;
+        if (ty + size.y > canvas.height() - 4.0) ty = canvas.height() - size.y - 4.0;
+        if (tx < 4.0) tx = 4.0;
         if (ty < contentTop) ty = contentTop;
 
         const Rect box = paintTooltip(canvas, tx, ty, lines, minWidth, dropsHeight);
