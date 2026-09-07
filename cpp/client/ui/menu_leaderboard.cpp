@@ -114,7 +114,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     const std::vector<LeaderboardRow>& rows = ctx.net.leaderboard();
     const bool pending = ctx.net.leaderboardPending();
 
-    const Rect closeRect = overlayCloseRect(panel);
+    const Rect closeRect = closeButtonRect(panel);
     const Rect refreshRect{panel.right() - 140.0, panel.y + 10.0, 80.0, 30.0};
     const Rect view{panel.x + 5.0, panel.y + kHeaderHeight, panel.w - 10.0,
                     std::max(0.0, panel.h - kHeaderHeight - kTrackBottomInset)};
@@ -185,7 +185,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     }
 
     pillButton(canvas, refreshRect, "Refresh", kLeaderboardSkin.border);
-    closeCrossPill(canvas, closeRect, kLeaderboardSkin.close);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     canvas.save();
     canvas.beginPath();

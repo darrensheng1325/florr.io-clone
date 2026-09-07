@@ -53,7 +53,6 @@ constexpr double kPlateInset = 8.0;
 constexpr double kPlateRadius = 6.0;
 
 constexpr double kHeaderHeight = 50.0;
-constexpr double kCloseSide = 29.0;
 
 /// The tab row sits on the card's own body between the two plates.
 constexpr double kTabTop = 65.0;
@@ -652,13 +651,14 @@ bool ShopPanel::render(MenuContext& ctx) {
     title.align = Align::Centre;
     text(canvas, "Shop", panel.x + panel.w * 0.5, header.y + header.h * 0.5, title);
 
-    const Rect closeRect{header.right() - 8.0 - kCloseSide,
-                         header.y + (header.h - kCloseSide) * 0.5, kCloseSide, kCloseSide};
+    // The one panel whose close does NOT hang off the card's corner: the shop's
+    // header is a plate inset from it, and a button outside that plate would
+    // read as belonging to the card behind it rather than to the header.
+    const Rect closeRect{header.right() - 8.0 - kCloseSize,
+                         header.y + (header.h - kCloseSize) * 0.5, kCloseSize, kCloseSize};
     const bool closeHover = !modalUp && closeRect.contains(mouse);
     if (closeHover) cursor = CursorShape::Hand;
-    inlaid(canvas, closeRect, closeHover ? lighten(kShopSkin.close, 0.15) : kShopSkin.close,
-           kShopSkin.closeBorder, kControlBorder, 5.0);
-    closeCross(canvas, closeRect, kCloseSide * 0.5 - 8.0, 3.0, true);
+    panelClose(canvas, closeRect, closeHover);
 
     // --- tabs ---------------------------------------------------------------
     // Three of them, centred on the card's own body between the two plates.

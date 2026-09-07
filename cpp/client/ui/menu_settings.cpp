@@ -59,7 +59,6 @@ constexpr double kPad = 15.0;
 constexpr double kHeaderHeight = 30.0;
 constexpr double kTabHeight = 32.0;
 constexpr double kTabGap = 5.0;
-constexpr double kCloseButtonSize = 28.0;
 constexpr double kRowStride = 32.0;
 constexpr double kCheckSize = 22.0;
 constexpr double kKeyBoxHeight = 26.0;
@@ -91,7 +90,7 @@ bool insideEdges(Rect r, Vec2 p) {
 constexpr std::uint32_t kTabActiveFill = 0x8888BBu;
 constexpr std::uint32_t kNeutralFill = 0xA3A3A3u;   ///< inactive tab, reset buttons
 constexpr std::uint32_t kActionFill = 0x5A9FDBu;    ///< Save Controls, and the slider fill
-constexpr std::uint32_t kCloseFill = 0xCC4444u;     ///< close button, Log Out
+constexpr std::uint32_t kDangerFill = 0xCC4444u;    ///< Log Out, Reset Tutorial
 /// hsvAdjust('#a3a3a3', 0.8) -- the surround every white inset field sits in.
 constexpr std::uint32_t kSurroundFill = 0x828282u;
 constexpr std::uint32_t kSurfaceIdle = 0xE6E6E6u;
@@ -120,7 +119,7 @@ constexpr int kTabCount = 4;
 /// ids ("settings_tab_graphics"), which is the same thing without an
 /// allocation per frame. Only the gardn buttons appear here: checkboxes, key
 /// boxes and the IP field have no pressed state in the browser either.
-enum class Widget : std::uint8_t { None, Close, Tab, Button };
+enum class Widget : std::uint8_t { None, Tab, Button };
 
 struct WidgetId {
     Widget kind = Widget::None;
@@ -514,13 +513,9 @@ bool SettingsPanel::render(MenuContext& ctx) {
     const bool inPanel = panel.contains(mouse);
     bool keepOpen = true;
 
-    const Rect closeRect{panel.right() - kPad - kCloseButtonSize, panel.y + kPad,
-                         kCloseButtonSize, kCloseButtonSize};
+    const Rect closeRect = closeButtonRect(panel);
     const bool closeHovered = inPanel && closeRect.contains(mouse);
-    const WidgetId closeId{Widget::Close, 0};
-    if (closeHovered && ctx.pressed()) st.pressed = closeId;
-    ui::button(canvas, closeRect, "X", closeHovered, st.pressed == closeId,
-               gardnStyle(kCloseFill, 16.0));
+    ui::panelClose(canvas, closeRect, closeHovered);
     if (closeHovered && ctx.released()) keepOpen = false;
 
     // --- tab bar ------------------------------------------------------------
@@ -639,7 +634,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
                 st.tutorialResetArmed && ctx.timeSeconds < st.tutorialResetArmedUntil;
             if (p.button(Rect{contentX, p.cy, 160.0, 30.0},
                          armed ? "Are you sure?" : "Reset Tutorial",
-                         armed ? kCloseFill : kNeutralFill, 13.0, kResetTutorial)) {
+                         armed ? kDangerFill : kNeutralFill, 13.0, kResetTutorial)) {
                 if (armed) {
                     // What the browser's two localStorage.removeItem calls do.
                     // Nothing happens to the game in progress: the reference
@@ -691,7 +686,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
             // stored one and going back to the auth form. All this row knows
             // is that it was clicked, and that its own card goes away with the
             // session it belonged to.
-            if (p.button(Rect{contentX, p.cy, 160.0, 32.0}, "Log Out", kCloseFill, 14.0, kLogOut)) {
+            if (p.button(Rect{contentX, p.cy, 160.0, 32.0}, "Log Out", kDangerFill, 14.0, kLogOut)) {
                 ctx.logoutRequested = true;
                 keepOpen = false;
             }

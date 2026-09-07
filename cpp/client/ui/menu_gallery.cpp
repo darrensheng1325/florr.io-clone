@@ -40,7 +40,6 @@ constexpr double kTitleGap = 20.0;
 constexpr double kCell = 60.0;
 constexpr double kRowGap = 5.0;
 constexpr double kScrollbarWidth = 12.0;
-constexpr double kCloseCross = 7.0;
 
 /// Where the scrollable content starts, measured down from the card's top.
 constexpr double kContentTop = kPad + kTitleHeight + kTitleGap;
@@ -391,29 +390,6 @@ void galleryCard(Canvas& canvas, Rect panel) {
     canvas.fill();
 }
 
-/// A flat red square with a white cross. No border and no press state: the
-/// shared closeButton() inlays a darker rim this panel does not have.
-void galleryClose(Canvas& canvas, Rect r, bool hovered) {
-    setFill(canvas, hovered ? 0xFF6677u : 0xCC4455u);
-    canvas.beginPath();
-    canvas.roundRect(static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w),
-                     static_cast<float>(r.h), 4.0f);
-    canvas.fill();
-
-    canvas.save();
-    setStroke(canvas, kPaper);
-    canvas.setLineWidth(2.5f);
-    canvas.setLineCap("round");
-    canvas.beginPath();
-    canvas.moveTo(static_cast<float>(r.x + kCloseCross), static_cast<float>(r.y + kCloseCross));
-    canvas.lineTo(static_cast<float>(r.right() - kCloseCross),
-                  static_cast<float>(r.bottom() - kCloseCross));
-    canvas.moveTo(static_cast<float>(r.right() - kCloseCross), static_cast<float>(r.y + kCloseCross));
-    canvas.lineTo(static_cast<float>(r.x + kCloseCross), static_cast<float>(r.bottom() - kCloseCross));
-    canvas.stroke();
-    canvas.restore();
-}
-
 /// The gallery's own scrollbar: a black groove rather than the shared white
 /// one, and a 4px radius rather than a full pill.
 void galleryScrollbar(Canvas& canvas, Rect track, double contentHeight, double scroll,
@@ -519,10 +495,8 @@ bool GalleryPanel::render(MenuContext& ctx) {
     text(canvas, "Mob Gallery", panel.x + panel.w * 0.5, panel.y + kPad + kTitleHeight * 0.5,
          title);
 
-    const Rect closeRect{panel.right() - kPad - kCloseSize,
-                         panel.y + kPad + (kTitleHeight - kCloseSize) * 0.5, kCloseSize,
-                         kCloseSize};
-    galleryClose(canvas, closeRect, closeRect.contains(mouse));
+    const Rect closeRect = closeButtonRect(panel);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     // --- layout ------------------------------------------------------------
     const double contentTop = panel.y + kContentTop;

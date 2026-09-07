@@ -53,7 +53,6 @@ constexpr double kWheelStep = 100.0;
 /// The card's own colours come from kNotificationsSkin; this is the border
 /// shade reused for the header pill, a stripe and the scrollbar thumb.
 constexpr std::uint32_t kBodyBorder = kNotificationsSkin.border;
-constexpr std::uint32_t kClosePillFill = kNotificationsSkin.close;
 
 /// How many entries one page asks for. The browser's page size, and the value
 /// the server compares against to decide whether there is more.
@@ -336,8 +335,8 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     // Neither header button has a hover or a press state in the reference.
     const Rect markAllRect{panel.right() - 180.0, panel.y + 10.0, 120.0, 30.0};
     pillButton(canvas, markAllRect, "Mark All Read", kBodyBorder, 14.0);
-    const Rect closeRect = overlayCloseRect(panel);
-    closeCrossPill(canvas, closeRect, kClosePillFill);
+    const Rect closeRect = closeButtonRect(panel);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     const Rect view{panel.x + kPadding, panel.y + kHeaderHeight, panel.w - kPadding * 2,
                     panel.h - kHeaderHeight - kPadding};

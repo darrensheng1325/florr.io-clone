@@ -50,8 +50,6 @@ constexpr std::uint32_t kStudioBody = 0x8737B6u;
 constexpr std::uint32_t kStudioWell = 0x702D97u;
 constexpr std::uint32_t kStudioRow = 0xA655DDu;
 constexpr std::uint32_t kStudioListRow = 0x5F2A86u;
-constexpr std::uint32_t kStudioClose = 0xDC7E92u;
-constexpr std::uint32_t kStudioCloseBorder = 0xB56476u;
 constexpr std::uint32_t kStudioGlyph = 0xE9EEF1u;
 constexpr std::uint32_t kStudioDelGlyph = 0xE58A8Au;
 constexpr std::uint32_t kStudioBoard = 0x3B7D4Fu;
@@ -69,6 +67,10 @@ constexpr double kPX = 20.0;
 constexpr double kPY = 72.0;
 constexpr double kPW = 600.0;
 constexpr double kPH = 540.0;
+/// The Delete/Remove button on a browsed skin.
+constexpr std::uint32_t kStudioDanger = 0xDC7E92u;
+constexpr std::uint32_t kStudioDangerBorder = 0xB56476u;
+
 constexpr double kHeaderH = 46.0;
 constexpr double kPreviewSize = 200.0;
 
@@ -694,10 +696,16 @@ void Studio::drawHeader(Canvas& canvas) {
                kStudioRow, kStudioBorder);
     }
 
+    // The same close button every other panel wears, right-aligned in the
+    // header well rather than on the card's corner -- the well IS this panel's
+    // header, exactly as the shop's plate is.
     Action close;
     close.k = Act::Close;
-    button(canvas, {kPX + kPW - 84, kPY + 11, 70, 26}, "Close", false, close, kStudioClose,
-           kStudioCloseBorder);
+    const Rect closeRect{kPX + kPW - kOverlayBorder - 10.0 - kCloseSize,
+                         kPY + kOverlayBorder + (kHeaderH - kCloseSize) * 0.5, kCloseSize,
+                         kCloseSize};
+    ui::panelClose(canvas, closeRect, hovering && hover == close);
+    regions.push_back({closeRect, close});
 }
 
 void Studio::drawPreview(Canvas& canvas) {
@@ -1016,7 +1024,7 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
             del.id = skin.id;
             del.name = skin.name;
             button(canvas, {cx + 10 + eqW + 6, by, 50, 22}, takedown ? "Remove" : "Delete", false,
-                   del, kStudioClose, kStudioCloseBorder, 10.0);
+                   del, kStudioDanger, kStudioDangerBorder, 10.0);
         }
     }
     canvas.restore();

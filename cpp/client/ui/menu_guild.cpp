@@ -281,8 +281,8 @@ bool GuildPanel::render(MenuContext& ctx) {
     text(canvas, "Guild", panel.x + 16.0, panel.y + 14.0, heading);
 
     std::vector<HitRegion> regions;
-    const Rect closeRect{panel.right() - 42.0, panel.y + 12.0, 30.0, 30.0};
-    framedCloseButton(canvas, closeRect, closeRect.contains(mouse), kGuildSkin);
+    const Rect closeRect = closeButtonRect(panel);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
     regions.push_back({closeRect, GuildAction::Close, {}});
 
     canvas.save();

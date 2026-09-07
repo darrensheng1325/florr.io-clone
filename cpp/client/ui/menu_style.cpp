@@ -32,6 +32,7 @@ constexpr double kCrossPadRatio = 0.27;
 /// Both used to be literals -- a 2px rim and a 2.5px cross whatever the button
 /// -- which drew a 29px close button with the rim of a 20px one. A close
 /// control is one shape at several sizes, so its parts scale with it.
+constexpr double kCloseRadius = 4.0;
 constexpr double kCloseRimRatio = 0.14;
 constexpr double kCloseCrossRatio = 0.105;
 
@@ -145,10 +146,6 @@ Rect closeButtonRect(Rect panel) {
             kCloseSize};
 }
 
-Rect overlayCloseRect(Rect panel) {
-    return {panel.right() - 50.0, panel.y + 10.0, 30.0, 30.0};
-}
-
 void closeCross(Canvas& canvas, Rect r, double arm, double width, bool roundCap) {
     const double cx = r.x + r.w * 0.5;
     const double cy = r.y + r.h * 0.5;
@@ -165,15 +162,13 @@ void closeCross(Canvas& canvas, Rect r, double arm, double width, bool roundCap)
     canvas.restore();
 }
 
-void closeButton(Canvas& canvas, Rect r, bool hovered, const PanelSkin& skin, double radius,
-                 double innerRadius) {
-    // Not inlaid(): that derives the inner corner as radius - 2, and neither
-    // reference panel uses that relationship (inventory 4/3, forge 3/1).
-    const double inner = innerRadius < 0 ? std::max(0.0, radius - 1.0) : innerRadius;
+void panelClose(Canvas& canvas, Rect r, bool hovered) {
+    // Not inlaid(): that derives the inner corner as radius - 2, where this
+    // button's face is one step inside its outer 4 rather than two.
     const double rim = std::max(2.0, r.w * kCloseRimRatio);
-    fillRound(canvas, r, radius, skin.closeBorder);
-    fillRound(canvas, Rect{r.x + rim, r.y + rim, r.w - rim * 2, r.h - rim * 2}, inner,
-              hovered ? lighten(skin.close, kCloseHoverLift) : skin.close);
+    fillRound(canvas, r, kCloseRadius, kCloseRim);
+    fillRound(canvas, Rect{r.x + rim, r.y + rim, r.w - rim * 2, r.h - rim * 2},
+              kCloseRadius - 1.0, hovered ? lighten(kCloseFace, kCloseHoverLift) : kCloseFace);
     closeCross(canvas, r, r.w * (0.5 - kCrossPadRatio), std::max(2.0, r.w * kCloseCrossRatio),
                true);
 }
@@ -185,13 +180,6 @@ void pillButton(Canvas& canvas, Rect r, const std::string& label, std::uint32_t 
     TextStyle caption = labelStyle(textSize, false, kPaper, 0.0);
     caption.align = Align::Centre;
     text(canvas, label, r.x + r.w * 0.5, r.y + r.h * 0.5, caption);
-}
-
-void closeCrossPill(Canvas& canvas, Rect r, std::uint32_t fill) {
-    fillRound(canvas, r, 5.0, fill);
-    // The cross is sized to the 11px span the browser's fallback face produces
-    // for U+2715 at 16px; only the ink is solved for, never the arm length.
-    closeCross(canvas, r, 5.5, 1.6, true);
 }
 
 void framedButton(Canvas& canvas, Rect r, const std::string& label, std::uint32_t labelColor,
@@ -208,10 +196,6 @@ void framedButton(Canvas& canvas, Rect r, const std::string& label, std::uint32_
     // The label sits a pixel below the button's middle: at 13px bold the
     // stroked cap height reads high without it.
     text(canvas, label, r.x + r.w * 0.5, r.y + r.h * 0.5 + 1.0, caption);
-}
-
-void framedCloseButton(Canvas& canvas, Rect r, bool hovered, const PanelSkin& skin) {
-    closeButton(canvas, r, hovered, skin, 4.0, 3.0);
 }
 
 void chip(Canvas& canvas, Rect r, const std::string& label, bool hovered, const ChipStyle& style) {

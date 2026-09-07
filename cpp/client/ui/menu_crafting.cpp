@@ -238,7 +238,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
 
     const Rect closeRect = closeButtonRect(panel);
     // 3/1, not the inventory's 4/3: the forge spells its own corners out.
-    closeButton(canvas, closeRect, closeRect.contains(mouse), kCraftingSkin, 3.0, 1.0);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     const Rect switchRect{closeRect.x - 6.0 - kSwitchWidth, closeRect.y, kSwitchWidth, kCloseSize};
     const bool switchHovered = kAbsorbAvailable && switchRect.contains(mouse);

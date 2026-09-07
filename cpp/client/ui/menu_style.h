@@ -86,18 +86,20 @@ void panelHeading(Canvas&, Rect panel, const std::string& title);
 // Buttons
 // ---------------------------------------------------------------------------
 
-/// Where the close button sits in a panel of these bounds.
+/// Where the close button sits in a panel of these bounds. Every panel that
+/// hangs one off its own top-right corner uses this; the shop, whose header is
+/// a plate inside the card, positions its own inside that plate.
 Rect closeButtonRect(Rect panel);
-/// The overlay panels' close button is bigger and hangs off the header row:
-/// 30px square, 50px in from the right edge, 10px down.
-Rect overlayCloseRect(Rect panel);
 
-/// `radius` is the outer corner, `innerRadius` the face inside the 2px rim.
-/// The two are NOT related by a constant: the browser spells both out per
-/// panel and picks 4/3 for the inventory but 3/1 for the forge. A negative
-/// `innerRadius` takes the inventory's relationship, `radius - 1`.
-void closeButton(Canvas&, Rect, bool hovered, const PanelSkin&, double radius = 4.0,
-                 double innerRadius = -1.0);
+/// THE close button. One size, one pair of radii, one colour, one hover.
+///
+/// There is deliberately no skin, no radius and no size parameter: every panel
+/// that took one grew its own dialect of this button -- a flat pill here, a
+/// translucent plate there, a framed square somewhere else -- and the control a
+/// player reaches for without looking ended up different on every card. Draw it
+/// at `closeButtonRect` unless the panel's header genuinely is not the card's
+/// corner, and size that rect kCloseSize either way.
+void panelClose(Canvas&, Rect, bool hovered);
 
 /// A flat rounded header button with a centred, unstroked label -- the pill
 /// the overlay panels put in their top-right corner ("Refresh", "Mark All
@@ -117,10 +119,6 @@ void pillButton(Canvas&, Rect, const std::string& label, std::uint32_t fill,
 /// arms of 15.6px overlapping once solve to 1.6.
 void closeCross(Canvas&, Rect, double arm, double width, bool roundCap);
 
-/// The flat close pill: a solid red rounded rect with the cross on it, no
-/// frame and no hover. The changelog, notifications and leaderboard headers.
-void closeCrossPill(Canvas&, Rect, std::uint32_t fill = kDanger);
-
 /// A coloured frame over a translucent interior, with the label in the frame's
 /// own colour -- the guild panel's buttons. Distinct from `chip` and `button`,
 /// both of which fill a solid body: these take their identity from the frame
@@ -128,10 +126,6 @@ void closeCrossPill(Canvas&, Rect, std::uint32_t fill = kDanger);
 /// filled red controls.
 void framedButton(Canvas&, Rect, const std::string& label, std::uint32_t labelColor,
                   std::uint32_t frame, bool hovered);
-
-/// The framed close control: `framedButton`'s shape in the skin's close
-/// colours, with a stroked cross instead of a label.
-void framedCloseButton(Canvas&, Rect, bool hovered, const PanelSkin&);
 
 /// A small labelled button: the panel chrome's Switch, Craft, Reset, Refresh.
 struct ChipStyle {

@@ -18,39 +18,48 @@ namespace flix::ui {
 struct PanelSkin {
     std::uint32_t fill = kPanel;
     std::uint32_t border = kPanelDark;
-    std::uint32_t close = 0xDC7E92u;
-    std::uint32_t closeBorder = 0xB56476u;
     /// Divider rules and the scrollbar thumb. Defaults to the border colour,
     /// which is what makes both read as part of the frame rather than content.
     std::uint32_t accent = kPanelDark;
 };
 
-inline constexpr PanelSkin kInventorySkin{0x6B9DD6u, 0x5680ADu, 0xAE5B58u, 0x8D4A47u, 0x5680ADu};
-inline constexpr PanelSkin kCraftingSkin{0xDB9D5Bu, 0xB17F48u, 0xBB5B61u, 0x914B31u, 0xB17F48u};
-inline constexpr PanelSkin kGallerySkin{0xE6D64Cu, 0xA89D36u, 0xCC4455u, 0x992F3Cu, 0xA89D36u};
+/// The close button's face and rim, shared by EVERY panel rather than carried
+/// per skin.
+///
+/// It is the one control on a card that does not belong to the card: it means
+/// the same thing everywhere and it is the one a player hits without looking,
+/// so tinting it per panel makes the muscle memory hunt for a different button
+/// each time. These are the inventory's, which is what the rest were dragged
+/// to match.
+inline constexpr std::uint32_t kCloseFace = 0xAE5B58u;
+inline constexpr std::uint32_t kCloseRim = 0x8D4A47u;
+
+inline constexpr PanelSkin kInventorySkin{0x6B9DD6u, 0x5680ADu, 0x5680ADu};
+inline constexpr PanelSkin kCraftingSkin{0xDB9D5Bu, 0xB17F48u, 0xB17F48u};
+inline constexpr PanelSkin kGallerySkin{0xE6D64Cu, 0xA89D36u, 0xA89D36u};
 /// The talent card is the one panel drawn against a reference screenshot
 /// rather than the browser build's CSS, so its body is that shot's dusty red
 /// rather than the pink the rest of the family was derived from. The border
 /// doubles as the tree's own ink: every connector and the TP badge are drawn
 /// in it, which is what makes the fan read as part of the card.
-inline constexpr PanelSkin kTalentsSkin{0xCC625Eu, 0xA44F4Cu, 0x8E4657u, 0x6E3543u, 0xA44F4Cu};
+inline constexpr PanelSkin kTalentsSkin{0xCC625Eu, 0xA44F4Cu, 0xA44F4Cu};
 /// The shop is the one panel drawn against a reference screenshot rather than
 /// against the browser build's CSS, so its greens are that shot's -- and it is
 /// also the one card with NO frame: the green ring around it in that shot is
 /// the page behind the card, not a border. Border and accent are the body
 /// colour deliberately, so a shared helper that draws either paints nothing.
-inline constexpr PanelSkin kShopSkin{0x65c359u, 0x65c359u, 0xAE5B58u, 0x8D4A47u, 0x7DC065u};
+inline constexpr PanelSkin kShopSkin{0x65c359u, 0x65c359u, 0x7DC065u};
 /// The skin studio is the one panel whose border is LIGHTER than its body --
 /// it borrows the strip button's own purple as the frame.
-inline constexpr PanelSkin kSkinsSkin{0x8737B6u, 0x9A3FD0u, 0xBB5B61u, 0x914B31u, 0x9A3FD0u};
-inline constexpr PanelSkin kLeaderboardSkin{0xE8A023u, 0xC4871Au, 0xFF4444u, 0xB33030u, 0xC4871Au};
+inline constexpr PanelSkin kSkinsSkin{0x8737B6u, 0x9A3FD0u, 0x9A3FD0u};
+inline constexpr PanelSkin kLeaderboardSkin{0xE8A023u, 0xC4871Au, 0xC4871Au};
 /// Settings and the debug panel share one grey card, its border the same grey
 /// at 0.8 HSV value.
-inline constexpr PanelSkin kSettingsSkin{0xAAAAAAu, 0x888888u, 0xCC4444u, 0x993333u, 0x888888u};
+inline constexpr PanelSkin kSettingsSkin{0xAAAAAAu, 0x888888u, 0x888888u};
 inline constexpr PanelSkin kDebugSkin = kSettingsSkin;
-inline constexpr PanelSkin kChangelogSkin{0x49C46Fu, 0x4CAF50u, 0xFF4444u, 0xB33030u, 0x4CAF50u};
-inline constexpr PanelSkin kNotificationsSkin{0x4A90E2u, 0x357ABDu, 0xFF4444u, 0xB33030u, 0x357ABDu};
-inline constexpr PanelSkin kGuildSkin{0x27DADEu, 0x1FB3B0u, 0xDC7E92u, 0xB56476u, 0x1FB3B0u};
+inline constexpr PanelSkin kChangelogSkin{0x49C46Fu, 0x4CAF50u, 0x4CAF50u};
+inline constexpr PanelSkin kNotificationsSkin{0x4A90E2u, 0x357ABDu, 0x357ABDu};
+inline constexpr PanelSkin kGuildSkin{0x27DADEu, 0x1FB3B0u, 0x1FB3B0u};
 
 // --- shared panel metrics ---------------------------------------------------
 

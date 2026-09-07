@@ -356,7 +356,7 @@ bool InventoryPanel::render(MenuContext& ctx) {
     // No placeholder: the browser's field is a bare white box until it is typed
     // into, and a grey "Search" there reads as a value the filter is applying.
     inputField(canvas, searchRect, search_, "", searchFocused_, ctx.timeSeconds);
-    closeButton(canvas, closeRect, closeRect.contains(mouse), kInventorySkin);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     // --- content -----------------------------------------------------------
     const Rect view{panel.x + kMenuBorder, panel.y + kHeaderHeight, panel.w - kMenuBorder * 2,

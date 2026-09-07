@@ -48,7 +48,6 @@ constexpr double kWheelStep = 100.0;
 /// The card's own colours come from kChangelogSkin; this is the border shade
 /// reused as a rule and a scrollbar thumb on the body.
 constexpr std::uint32_t kBodyBorder = kChangelogSkin.border;
-constexpr std::uint32_t kClosePillFill = kChangelogSkin.close;
 constexpr std::uint32_t kLinkFill = 0xD8F7FFu;
 
 /// The longest entry holds 17 bullets; the spare slot keeps every row's list
@@ -557,8 +556,8 @@ bool ChangelogPanel::render(MenuContext& ctx) {
     text(canvas, "Changelog", panel.x + kPadding, panel.y + kPadding, heading);
 
     // No hover and no press state, exactly as the reference pill has none.
-    const Rect closeRect = overlayCloseRect(panel);
-    closeCrossPill(canvas, closeRect, kClosePillFill);
+    const Rect closeRect = closeButtonRect(panel);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     const Rect view{panel.x + kPadding, panel.y + kHeaderHeight, panel.w - kPadding * 2,
                     panel.h - kHeaderHeight - kPadding};

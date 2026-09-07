@@ -33,11 +33,18 @@ namespace {
 ///
 /// Absolute design units, never fitted to the card. Scaling the fan down to
 /// make it fit would halve every node, every gap and every glyph, and would
-/// defeat the point of a tree you spin: what fits is exactly what the
-/// reference shows -- about four steps across the card, with a full node's
-/// width of air between neighbours. The two move together: a step under twice
-/// the node diameter puts adjacent tiers shoulder to shoulder.
-constexpr double kBaseStep = 137.0;
+/// defeat the point of a tree you spin.
+///
+/// The step is what decides how much of the tree is REACHABLE without
+/// dragging, and it is not free to match the reference's own spacing: the fan
+/// opens from a pivot near the bottom edge, so a branch's third tier is
+/// already at the card's rim and every unit added to the step takes a whole
+/// tier off every branch that does not point straight up. At 100 a branch
+/// shows four or five tiers and the sideways ones keep three; the reference's
+/// wider 137 left barely two of each on the card and the rest behind a drag.
+/// The node keeps the reference's own size either way -- it is the step that
+/// gives way, not the node.
+constexpr double kBaseStep = 100.0;
 constexpr double kNodeRadius = 35.0;
 /// The node's rim, and the icon's full extent inside it. The glyph is drawn
 /// almost node-wide -- a small mark centred in a large disc reads as a bullet
@@ -62,11 +69,9 @@ constexpr double kOpenSeconds = 0.3;
 /// the card, so the tree turns at the same rate in any window.
 constexpr double kRotationPerPixel = 0.008;
 
-/// Card geometry. The panel draws its own chrome rather than borrowing the
-/// shared close button and chip: this one's close plate is translucent black
-/// and its reset button keeps a radius the shared inlay would flatten.
+/// Card geometry. The panel draws its own reset button rather than borrowing
+/// the shared chip: it keeps a radius the shared inlay would flatten.
 constexpr double kCardRadius = 6.0;
-constexpr double kCloseGlyphPad = 8.0;
 constexpr double kResetWidth = 70.0;
 constexpr double kResetHeight = 28.0;
 /// The reset button and the stat lines sit closer to the card's edge than
@@ -107,7 +112,6 @@ constexpr std::uint32_t kLockedBorder = 0x606060u;
 constexpr std::uint32_t kCallToAction = 0xFFE65Du;
 constexpr std::uint32_t kStatGrey = 0xE0E0E0u;
 constexpr std::uint32_t kStatusGrey = 0xAAAAAAu;
-constexpr std::uint32_t kCloseGlyph = 0xE8D8D8u;
 constexpr std::uint32_t kResetBorder = 0xA52B24u;
 constexpr std::uint32_t kResetFill = 0xCC362Du;
 constexpr std::uint32_t kResetHoverFill = 0xE0463Cu;
@@ -736,27 +740,7 @@ bool TalentsPanel::render(MenuContext& ctx) {
     badgeLabel.align = Align::Left;
     text(canvas, "TP", badge.x + kBadgeRadius + 12.0, badgeMiddle, badgeLabel);
 
-    // A translucent black plate, not the maroon one the other panels wear, and
-    // hover moves the glyph rather than the plate under it.
-    setFill(canvas, kInk, 0.25);
-    canvas.beginPath();
-    canvas.roundRect(static_cast<float>(closeRect.x), static_cast<float>(closeRect.y),
-                     static_cast<float>(closeRect.w), static_cast<float>(closeRect.h), 4.0f);
-    canvas.fill();
-    setStroke(canvas, closeHovered ? kPaper : kCloseGlyph);
-    canvas.setLineWidth(3.0f);
-    canvas.setLineCap("round");
-    canvas.beginPath();
-    canvas.moveTo(static_cast<float>(closeRect.x + kCloseGlyphPad),
-                  static_cast<float>(closeRect.y + kCloseGlyphPad));
-    canvas.lineTo(static_cast<float>(closeRect.right() - kCloseGlyphPad),
-                  static_cast<float>(closeRect.bottom() - kCloseGlyphPad));
-    canvas.moveTo(static_cast<float>(closeRect.right() - kCloseGlyphPad),
-                  static_cast<float>(closeRect.y + kCloseGlyphPad));
-    canvas.lineTo(static_cast<float>(closeRect.x + kCloseGlyphPad),
-                  static_cast<float>(closeRect.bottom() - kCloseGlyphPad));
-    canvas.stroke();
-    canvas.setLineCap("butt");
+    panelClose(canvas, closeRect, closeHovered);
 
     // --- stats and reset ---------------------------------------------------
     // The base is the live max health the server sent, the same number the

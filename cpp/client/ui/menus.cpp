@@ -1290,13 +1290,8 @@ bool DebugPanel::render(MenuContext& ctx) {
     heading.strokeWidth = 3.0;
     text(canvas, "Debug", panel.x + kPad, panel.y + kPad + kHeader * 0.5, heading);
 
-    const Rect closeRect{panel.right() - kPad - 28.0, panel.y + kPad, 28.0, 28.0};
-    ButtonStyle close;
-    close.fill = 0xCC4444u;
-    close.outlineWidth = 3.0;
-    close.textSize = 16.0;
-    button(canvas, closeRect, "X", closeRect.contains(mouse), ctx.window.mouseDown(MouseButton::Left),
-           close);
+    const Rect closeRect = closeButtonRect(panel);
+    panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     constexpr double kGraphHeight = 74.0;
     constexpr double kLabelHeight = 18.0;
