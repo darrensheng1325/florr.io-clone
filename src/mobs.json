@@ -547,7 +547,7 @@
         ],
         "projectile": {
             "count": 1,
-            "distance": 500,
+            "distance": 333,
             "petalType": "hornet_missile",
             "petalRarity": "uncommon",
             "speed": 300,
@@ -807,7 +807,7 @@
         "color": "#ffffff",
         "projectile": {
             "count": 1,
-            "distance": 1500,
+            "distance": 300,
             "petalType": "javascript",
             "petalRarity": "common",
             "speed": 200,

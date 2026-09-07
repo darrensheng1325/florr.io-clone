@@ -1379,6 +1379,31 @@ void PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
     const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(player);
     const double damage = stats.damage * (modifiers ? modifiers->petalDamageScale : 1.0);
 
+    // A shot is a scale model of the flower that fired it. The petal states
+    // the shot's size at a STOCK flower, and a flower that has grown -- a
+    // level, a size-changing petal -- fires proportionally bigger ones. Stated
+    // against the body radius rather than against the modifier that produced
+    // it so that every future way of growing a flower is inherited for free.
+    const Body* ownerBody = world.tryGet<Body>(player);
+    const double ownerScale =
+        ownerBody != nullptr && kPlayerBaseRadius > 0.0
+            ? std::max(0.05, ownerBody->radius / kPlayerBaseRadius)
+            : 1.0;
+    const double shotRadius = std::max(1.0, stats.radius * 0.5 * ownerScale);
+
+    // The flower's own motion, carried into the volley. Taken from the FLOWER
+    // and not from the petal because a petal's velocity is dominated by its
+    // orbit, which would fan a volley sideways by however far round the ring
+    // the petal happened to be.
+    const Motion* ownerMotion = world.tryGet<Motion>(player);
+    const Vec2 inherited = ownerMotion != nullptr ? ownerMotion->velocity : Vec2{};
+
+    // The pool that makes a shot penetrate. It is the petal's own health,
+    // graded at the tier it was fired at, so nothing new has to be tuned: a
+    // petal that survives a mob's bite survives shooting through the same mob.
+    const double shotHealth =
+        stats.breakable && stats.health > 0.0 ? stats.health : kProjectileDefaultHealth;
+
     const int count = std::max(1, spec.count);
     // spreadAngle is the STEP between adjacent shots, not the width of the fan,
     // so the volley is centred on the petal's outward heading.
@@ -1389,9 +1414,15 @@ void PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
         const Entity shot = world.create();
         world.add<ProjectileTag>(shot);
         world.add<Transform>(shot, Transform{from, angle});
-        world.add<Motion>(shot, Motion{Vec2::fromAngle(angle, spec.speed)});
-        world.add<Body>(shot, Body{std::max(1.0, stats.radius * 0.5), 1.0});
+        world.add<Motion>(shot, Motion{Vec2::fromAngle(angle, spec.speed) + inherited});
+        // Mass is area on the same scale a mob's is, so the shove a shot
+        // delivers grows with the square of the flower that grew it.
+        world.add<Body>(shot, Body{shotRadius, projectileMass(shotRadius)});
         world.add<Faction>(shot, faction);
+        world.add<Health>(shot, Health{shotHealth, shotHealth});
+        // Added at spawn, never mid-flight: arming a ledger during the hit
+        // loop would relocate the shot out from under it.
+        world.add<HitCooldowns>(shot, HitCooldowns{});
 
         Projectile projectile;
         projectile.owner = player;

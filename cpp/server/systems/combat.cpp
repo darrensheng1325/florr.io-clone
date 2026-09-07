@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "server/loot_eligibility.h"
 
@@ -95,11 +96,47 @@ Rarity rarityOf(const World& world, Entity e) {
     return Rarity::Common;
 }
 
-/// Whether a projectile should test against this entity at all. Drops, ground
-/// effects and other shots are in the broadphase because they have bodies, not
-/// because they are targets.
+/// Whether a projectile should test against this entity at all. Drops and
+/// ground effects are in the broadphase because they have bodies, not because
+/// they are targets.
+///
+/// Other SHOTS are targets, and deliberately so: two of them meeting is the
+/// bullet-vs-bullet rule, and canDamage() is what keeps a volley from
+/// detonating against itself -- both shots resolve to the same player or the
+/// same team and are refused before any damage is exchanged.
 bool isShootable(const World& world, Entity e) {
-    return !world.has<DropTag>(e) && !world.has<GroundEffectTag>(e) && !world.has<Projectile>(e);
+    return !world.has<DropTag>(e) && !world.has<GroundEffectTag>(e);
+}
+
+/// What being hit COSTS the shot that hit it.
+///
+/// Symmetric with the damage flowing the other way: a shot pays the victim's
+/// body damage, and a victim that happens to be another shot charges its own
+/// damage stat. That is the whole of penetration -- nothing counts hits, the
+/// pool simply runs out.
+///
+/// A PETAL charges its damage stat, the same way another shot does. A ring
+/// eating an incoming volley is a real defence and it has to survive this
+/// change: a basic petal's ten points is a common missile's whole pool, so the
+/// ring still stops what it always stopped, and only a shot fat enough to
+/// outlast it now gets through. It is read off the config rather than off a
+/// component because a petal carries no ContactDamage -- the melee pass
+/// resolves a ring's damage from the registry too.
+///
+/// A FLOWER is the exception and returns infinity. It has no body damage to
+/// charge with, and post-hit invulnerability means a shot that survived would
+/// sit inside the victim until its range expired rather than landing again.
+/// Mob shots have always been consumed by the flower they hit, and they still
+/// are.
+double bodyDamageOf(const World& world, const ContentRegistry& content, Entity victim) {
+    if (world.has<PlayerTag>(victim)) return std::numeric_limits<double>::infinity();
+    if (const Projectile* shot = world.tryGet<Projectile>(victim)) return shot->damage;
+    if (const PetalInstance* petal = world.tryGet<PetalInstance>(victim)) {
+        const double damage = content.petalStats(petal->configIndex, petal->rarity).damage;
+        return damage > 0.0 ? damage : kProjectileDefaultBodyDamage;
+    }
+    if (const ContactDamage* contact = world.tryGet<ContactDamage>(victim)) return contact->amount;
+    return kProjectileDefaultBodyDamage;
 }
 
 /// Fold the live poison stacks back into the scalar summary on Afflictions.
@@ -1239,7 +1276,8 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                                    Motion& motion) {
         // Movement has already flown the shot this tick, so the budget spent
         // is the distance it just covered -- not one it is about to.
-        shots_.push_back({e, transform.position, body.radius, motion.velocity.length() * dt});
+        shots_.push_back({e, transform.position, body.radius, motion.velocity.length() * dt,
+                          body.mass, motion.velocity.length()});
     });
 
     for (const ShotSource& shot : shots_) {
@@ -1261,9 +1299,11 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         const Rarity rarity = projectile->rarity;
 
         grid.query(shot.position, shot.radius + shot.travelled + kBroadphasePad, candidates_);
-        Entity target = NULL_ENTITY;
-        Vec2 targetOffset;
-        double nearestSq = 0;
+
+        // Gathered whole before a single hit lands. The loop below marks
+        // victims Dead and that relocates their rows, so nothing here may hold
+        // a pointer into the world across an applyDamage().
+        impacts_.clear();
         for (const Entity victim : candidates_) {
             if (victim == shot.entity || !world.isAlive(victim)) continue;
             if (!isShootable(world, victim)) continue;
@@ -1276,37 +1316,127 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const double distanceSquared = offset.lengthSq();
             if (distanceSquared > reach * reach) continue;
             if (!canHit(world, victim, shot.entity, nowMillis)) continue;
-            // Nearest wins. A shot arriving into a clump has to resolve
-            // against one of them and the closest is the only answer that does
-            // not depend on grid bucket order.
-            if (target == NULL_ENTITY || distanceSquared < nearestSq) {
-                target = victim;
-                targetOffset = offset;
-                nearestSq = distanceSquared;
+            impacts_.push_back({victim, offset, distanceSquared});
+        }
+        if (impacts_.empty()) continue;
+
+        // Nearest first. A shot arriving into a clump spends its health pool
+        // front to back, and ordering by distance is the only answer that does
+        // not depend on grid bucket order.
+        std::sort(impacts_.begin(), impacts_.end(),
+                  [](const ShotImpact& a, const ShotImpact& b) {
+                      return a.distanceSquared < b.distanceSquared;
+                  });
+
+        // Only resolved once something is actually going to be hit: this is a
+        // per-shot table lookup and most shots spend their life hitting
+        // nothing at all.
+        const bool hasStats = petalIndex != kNoPetal;
+        const PetalStats stats =
+            hasStats ? content.petalStats(petalIndex, rarity) : PetalStats{};
+        const double reloadInterval = hasStats ? stats.damageIntervalMillis
+                                               : kPetalHitIntervalMillis;
+
+        for (const ShotImpact& impact : impacts_) {
+            if (!world.isAlive(shot.entity) || world.has<Dead>(shot.entity)) break;
+            // Re-tested per victim rather than trusted from the gather: an
+            // earlier impact in this same pass may have killed this one, and a
+            // corpse must not pay out twice.
+            if (!canHit(world, impact.victim, shot.entity, nowMillis)) continue;
+
+            // The shot's own ledger, so a body it is PASSING THROUGH is hit
+            // once per damage interval and not once per tick of overlap. It is
+            // added at spawn precisely so arming it here cannot relocate the
+            // shot out from under this loop.
+            if (const HitCooldowns* ledger = world.tryGet<HitCooldowns>(shot.entity)) {
+                if (!ledger->ready(impact.victim, nowMillis)) continue;
+            }
+
+            // Charged BEFORE the hit lands, because a victim marked Dead by it
+            // no longer has the components this reads.
+            const double cost = bodyDamageOf(world, content, impact.victim);
+            const bool victimIsShot = world.has<Projectile>(impact.victim);
+
+            const DamageResult hit =
+                applyDamage(world, impact.victim, shot.entity, damage, nowMillis);
+
+            // RE-FETCHED, never carried across applyDamage(). Marking the
+            // victim Dead moves it between archetypes, and an archetype
+            // swap-removes -- so when the victim is ANOTHER SHOT, the row that
+            // slides into its slot may be this one's. A ledger pointer taken
+            // before the call is exactly the dangling write the bullet-vs-
+            // bullet rule made reachable.
+            if (HitCooldowns* ledger = world.tryGet<HitCooldowns>(shot.entity)) {
+                ledger->arm(impact.victim, nowMillis + reloadInterval);
+            }
+
+            // Riders belong to flesh. A shot cannot be poisoned, slowed or
+            // shoved -- it has no Afflictions and its flight is a straight
+            // line by contract with the client's interpolation.
+            if (!hit.killed && !victimIsShot && hasStats) {
+                // The petal's own `knockback` stat is the RING's, not the
+                // volley's: projectileCollision.ts stamps a flat force on a
+                // mob whatever fired it. What replaces the flat number here is
+                // the shot's momentum, which is the same value for stock
+                // ammunition and grows only when the shot itself does.
+                applyKnockback(world, impact.victim, impact.offset,
+                               world.has<MobTag>(impact.victim) ? kMobKnockbackForce
+                                                                : stats.knockback);
+                pushFromImpact(world, impact.victim, impact.offset, shot.mass, shot.speed);
+                applyPoison(world, impact.victim, shot.entity, stats.poisonPerSecond,
+                            stats.poisonDurationMillis, nowMillis);
+                applySlow(world, impact.victim, stats.slowFactor, stats.slowDurationMillis,
+                          rarity, nowMillis);
+            }
+
+            // What the hit cost the shot. Its own health pool is the whole of
+            // penetration: nothing counts victims, the pool simply runs out.
+            // A shot whose ammunition declares no pool was born with one point
+            // and dies here, exactly as it did before it had one.
+            if (!world.isAlive(shot.entity) || world.has<Dead>(shot.entity)) break;
+            if (!std::isfinite(cost) || cost <= 0.0) {
+                world.add<Dead>(shot.entity);
+                break;
+            }
+            Health* health = world.tryGet<Health>(shot.entity);
+            if (health == nullptr) {
+                world.add<Dead>(shot.entity);
+                break;
+            }
+            health->current -= cost;
+            if (health->current <= 0.0) {
+                health->current = 0.0;
+                world.add<Dead>(shot.entity);
+                break;
             }
         }
-        if (target == NULL_ENTITY) continue;
-
-        const DamageResult hit = applyDamage(world, target, shot.entity, damage, nowMillis);
-        if (!hit.killed && petalIndex != kNoPetal) {
-            const PetalStats stats = content.petalStats(petalIndex, rarity);
-            // A shot pushes a mob with a flat force that has nothing to do with
-            // the petal that fired it -- projectileCollision.ts stamps
-            // MOB_KNOCKBACK_FORCE / mass whatever the shooter was, where the
-            // ring's own contact uses the petal's `knockback` stat. Only the
-            // contact path reads the stat, so the two must not share it.
-            applyKnockback(world, target, targetOffset,
-                           world.has<MobTag>(target) ? kMobKnockbackForce : stats.knockback);
-            applyPoison(world, target, shot.entity, stats.poisonPerSecond,
-                        stats.poisonDurationMillis, nowMillis);
-            applySlow(world, target, stats.slowFactor, stats.slowDurationMillis, rarity, nowMillis);
-        }
-        // One target per shot: a projectile is consumed by what it hits, and
-        // the same Dead tag the range check uses is what consumes it.
-        if (world.isAlive(shot.entity) && !world.has<Dead>(shot.entity)) {
-            world.add<Dead>(shot.entity);
-        }
     }
+}
+
+void CombatSystem::pushFromImpact(World& world, Entity victim, Vec2 offset, double shotMass,
+                                  double shotSpeed) {
+    if (!world.isAlive(victim)) return;
+    // Flowers are not pushed from here. applyKnockback above already writes
+    // the flower's displacement and movement drains it; doubling that up would
+    // be two shoves for one hit.
+    if (!world.has<MobTag>(victim)) return;
+
+    Transform* transform = world.tryGet<Transform>(victim);
+    if (transform == nullptr) return;
+    const Body* body = world.tryGet<Body>(victim);
+    const double push = projectilePush(shotMass, shotSpeed, body ? body->mass : 1.0);
+    if (!(push > 0.0)) return;
+
+    const Vec2 direction = offset.normalized();
+    if (direction.lengthSq() < 1e-12) return;   // exactly co-located: no direction to push along
+
+    // Committed to the position rather than to Knockback, because a MOB's
+    // Knockback component is a pure record: moveMobs() deliberately never
+    // drains it (see the note there), so a mob written to it is a mob that
+    // never moves. This is the same shape as the shove a flower takes from mob
+    // contact -- an immediate displacement, no wall resolve, small enough that
+    // the next movement step puts it back on legal ground.
+    transform->position += direction * push;
 }
 
 } // namespace flix

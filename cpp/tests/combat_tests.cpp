@@ -778,6 +778,170 @@ TEST(a_mob_shot_credits_nobody_and_still_kills) {
 }
 
 // ---------------------------------------------------------------------------
+// Projectiles as bodies (the arras.io model)
+// ---------------------------------------------------------------------------
+//
+// The tests above spawn shots with no Health at all, and they still pass: a
+// shot with no pool is consumed by the first thing it meets, which is what
+// every shot did before it had one. The pool is what the rest of this section
+// is about.
+
+namespace {
+
+/// A shot that penetrates: the same body as spawnShot, plus the health pool
+/// and the per-victim ledger that the two firing paths give a real one.
+Entity spawnDurableShot(Arena& a, Vec2 at, Vec2 velocity, double damage, double range,
+                        Entity owner, Entity creditTo, double health,
+                        Team team = Team::Players) {
+    const Entity e = spawnShot(a, at, velocity, damage, range, owner, creditTo);
+    a.world.add<Health>(e, Health{health, health});
+    a.world.add<HitCooldowns>(e, HitCooldowns{});
+    a.world.add<Faction>(e, Faction{team, false});
+    return e;
+}
+
+} // namespace
+
+TEST(a_shot_penetrates_a_line_of_mobs_until_its_pool_runs_out) {
+    Arena a;
+    const Entity player = a.player({500, 1000});
+    // Three bodies the shot is already overlapping. None declares contact
+    // damage, so each costs the shot kProjectileDefaultBodyDamage.
+    const Entity first = a.mob({1000, 1000}, 100.0);
+    const Entity second = a.mob({1030, 1000}, 100.0);
+    const Entity third = a.mob({1060, 1000}, 100.0);
+    const Entity shot =
+        spawnDurableShot(a, {1020, 1000}, {1000, 0}, 25.0, 500.0, player, player, 2.0);
+
+    a.step(0.0);
+    // Two paid for, in distance order from the shot; the third is behind a
+    // pool that is already empty.
+    CHECK_NEAR(a.health(second), 75.0, 1e-9);
+    CHECK_NEAR(a.health(first), 75.0, 1e-9);
+    CHECK_NEAR(a.health(third), 100.0, 1e-9);
+    CHECK(a.world.has<Dead>(shot));
+}
+
+TEST(a_shot_passing_through_a_body_trades_health_for_damage_every_tick) {
+    Arena a;
+    const Entity player = a.player({500, 1000});
+    const Entity mob = a.mob({1000, 1000}, 500.0);
+    // Deep enough to survive several passes, so what governs the second hit is
+    // the ledger and not the pool running out.
+    const Entity shot =
+        spawnDurableShot(a, {1000, 1000}, {1000, 0}, 25.0, 500.0, player, player, 100.0);
+
+    a.step(0.0);
+    CHECK_NEAR(a.health(mob), 475.0, 1e-9);
+    CHECK_NEAR(a.health(shot), 99.0, 1e-9);
+    CHECK(!a.world.has<Dead>(shot));
+
+    // kPetalHitIntervalMillis is ZERO, and deliberately so: the reference
+    // throttles only the three petals that name a `damageCooldown` and lets
+    // every other one damage what it overlaps on every tick, paying for it out
+    // of its own health. A shot is a petal that flies, so it does the same --
+    // damage every tick, pool spent every tick. The ledger is what carries the
+    // three throttled petals' volleys, not a default.
+    a.step(net::kTickMillis);
+    CHECK_NEAR(a.health(mob), 450.0, 1e-9);
+    CHECK_NEAR(a.health(shot), 98.0, 1e-9);
+}
+
+TEST(a_shot_from_a_throttled_petal_waits_out_its_own_ledger) {
+    Arena a;
+    const Entity player = a.player({500, 1000});
+    const Entity mob = a.mob({1000, 1000}, 500.0);
+    const Entity shot =
+        spawnDurableShot(a, {1000, 1000}, {1000, 0}, 25.0, 500.0, player, player, 100.0);
+
+    a.step(0.0);
+    CHECK_NEAR(a.health(mob), 475.0, 1e-9);
+
+    // Stand in for a `damageCooldown` petal by arming the shot's own ledger:
+    // the entry is keyed on the VICTIM, so the shot may still hit anything
+    // else it meets in the meantime.
+    a.world.get<HitCooldowns>(shot).arm(mob, 500.0);
+    a.step(net::kTickMillis);
+    CHECK_NEAR(a.health(mob), 475.0, 1e-9);
+    // The pool is untouched too: a refused hit costs the shot nothing.
+    CHECK_NEAR(a.health(shot), 99.0, 1e-9);
+
+    a.step(500.0);
+    CHECK_NEAR(a.health(mob), 450.0, 1e-9);
+}
+
+TEST(a_shot_is_spent_whole_on_a_flower) {
+    Arena a;
+    const Entity mob = a.mob({500, 1000}, 100.0);
+    const Entity player = a.player({1000, 1000});
+    // A pool that would carry it through a hundred mobs buys it nothing here:
+    // a flower has no body damage to charge with, and a shot that survived
+    // would sit inside a victim who is briefly invulnerable to it.
+    const Entity shot = spawnDurableShot(a, {1000, 1000}, {1000, 0}, 25.0, 500.0, mob,
+                                         NULL_ENTITY, 100.0, Team::Hostiles);
+
+    a.step(0.0);
+    CHECK_NEAR(a.health(player), 75.0, 1e-9);
+    CHECK(a.world.has<Dead>(shot));
+}
+
+TEST(opposing_shots_shoot_each_other_down) {
+    Arena a;
+    const Entity player = a.player({500, 1000});
+    const Entity mob = a.mob({1500, 1000}, 100.0);
+    const Entity outgoing =
+        spawnDurableShot(a, {1000, 1000}, {1000, 0}, 12.0, 500.0, player, player, 10.0);
+    const Entity incoming = spawnDurableShot(a, {1005, 1000}, {-1000, 0}, 4.0, 500.0, mob,
+                                             NULL_ENTITY, 10.0, Team::Hostiles);
+
+    a.step(0.0);
+    // Each charged the other its damage stat: the trade is symmetric, and the
+    // weaker pool is the one that empties.
+    CHECK_NEAR(a.health(outgoing), 6.0, 1e-9);
+    CHECK(a.world.has<Dead>(incoming));
+    CHECK(!a.world.has<Dead>(outgoing));
+}
+
+TEST(shots_from_one_side_pass_through_each_other) {
+    Arena a;
+    const Entity player = a.player({500, 1000});
+    const Entity first =
+        spawnDurableShot(a, {1000, 1000}, {1000, 0}, 12.0, 500.0, player, player, 10.0);
+    const Entity second =
+        spawnDurableShot(a, {1002, 1000}, {1000, 0}, 12.0, 500.0, player, player, 10.0);
+
+    a.step(0.0);
+    CHECK_NEAR(a.health(first), 10.0, 1e-9);
+    CHECK_NEAR(a.health(second), 10.0, 1e-9);
+    CHECK(!a.world.has<Dead>(first));
+    CHECK(!a.world.has<Dead>(second));
+}
+
+TEST(a_shot_shoves_the_mob_it_hits_along_its_own_momentum) {
+    Arena a;
+    const Entity player = a.player({500, 1000});
+    const Entity mob = a.mob({1000, 1000}, 100.0);
+    const Entity shot = spawnShot(a, {980, 1000}, {300, 0}, 25.0, 500.0, player, player);
+    // The push is momentum, so the shot needs a real mass and a real speed.
+    a.world.get<Body>(shot).mass = projectileMass(10.0);
+    a.world.add<Health>(shot, Health{100.0, 100.0});
+    a.world.add<HitCooldowns>(shot, HitCooldowns{});
+
+    // Petal stats come out of the registry, and the placeholder content the
+    // arena loads carries none -- so the riders are skipped and this measures
+    // the push alone. It still needs a petal index to reach them at all.
+    a.world.get<Projectile>(shot).petalConfigIndex = 0;
+
+    const double before = a.world.get<Transform>(mob).position.x;
+    a.step(0.0);
+    const double after = a.world.get<Transform>(mob).position.x;
+    // Pushed AWAY from the shot, along the line between the two bodies.
+    CHECK(after > before);
+    CHECK_NEAR(after - before, projectilePush(projectileMass(10.0), 300.0,
+                                              a.world.get<Body>(mob).mass), 1e-9);
+}
+
+// ---------------------------------------------------------------------------
 // Ground effects
 // ---------------------------------------------------------------------------
 

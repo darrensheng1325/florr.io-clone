@@ -72,8 +72,18 @@ constexpr double kFlowerArtRadius = 25.0;
 /// drawn as a debug circle.
 using ui::kPetalArtSize;
 constexpr double kPetalHitSize = 20.0;
-/// A projectile is drawn from the same petal artwork, at 20 units per size.
+/// A projectile is drawn from the same petal artwork, filling its own body:
+/// diameter is twice the radius the server replicated for it.
+///
+/// It has to come off the wire rather than out of the petal config, because a
+/// shot's size is NOT its petal's. It is scaled by whatever fired it -- a
+/// mob's shot by the shooter's body over kProjectileSizeDivisor, a flower's by
+/// how much the flower has grown -- and the browser build draws mob shots from
+/// exactly that scaled number (`projectile.size * 20`, game-objects.ts). Using
+/// the config's unscaled `size` here drew every mob's ammunition at a stock
+/// flower's calibre, three times the body it actually hits with.
 constexpr double kProjectileArtSize = 20.0;
+constexpr double kProjectileArtPerRadius = 2.0;
 
 /// A ground drop is the same item tile the menus draw, at its design size and
 /// with the shadow behind it. Nothing about it is derived from the drop's
@@ -2120,10 +2130,16 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             break;
 
         case net::EntityKind::Projectile: {
-            // A projectile IS its petal: the same artwork, at 20 units per
-            // size unit, turned to its heading.
+            // A projectile IS its petal: the same artwork, filling the body
+            // the server gave it, turned to its heading.
             const PetalConfig* config = content_ ? &content_->petal(entity.typeIndex) : nullptr;
-            const double diameter = (config ? config->size : 1.0) * kProjectileArtSize * zoom;
+            // The config size is the fallback only: a spawn record always
+            // carries a radius, so this is reached for a projectile whose body
+            // the server declined to state at all.
+            const double artUnits = entity.radius > 0.0
+                                        ? entity.radius * kProjectileArtPerRadius
+                                        : (config ? config->size : 1.0) * kProjectileArtSize;
+            const double diameter = artUnits * zoom;
             if (config && config->id == "gas" && entity.rarity == Rarity::Common) {
                 // Gas is a cloud rather than a petal, and there can be hundreds
                 // of it at once.

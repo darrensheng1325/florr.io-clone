@@ -1132,3 +1132,193 @@ TEST(a_mob_does_not_aggro_through_a_wall) {
     CHECK(sim.totalScans > 0);
     CHECK_EQ(sim.brainOf(mob).target, NULL_ENTITY);
 }
+
+// ---------------------------------------------------------------------------
+// Volleys
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The one shot a volley left in the world, or NULL_ENTITY while the shooter
+/// is still on cooldown.
+Entity firstShot(Sim& sim) {
+    Query<ProjectileTag, Transform, Body, Motion, Projectile> shots(sim.world);
+    Entity found = NULL_ENTITY;
+    shots.each([&](Entity e, ProjectileTag&, Transform&, Body&, Motion&, Projectile&) {
+        if (found == NULL_ENTITY) found = e;
+    });
+    return found;
+}
+
+/// Ticks until the shooter fires, so the test does not depend on the mob's
+/// decision cadence.
+Entity fireAndCatch(Sim& sim, int maxTicks = 200) {
+    for (int i = 0; i < maxTicks; ++i) {
+        sim.tick();
+        const Entity shot = firstShot(sim);
+        if (shot != NULL_ENTITY) return shot;
+    }
+    return NULL_ENTITY;
+}
+
+} // namespace
+
+TEST(a_hornets_missile_inherits_the_hornets_size) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity hornet = sim.spawnMob("hornet", kOrigin);
+    sim.spawnPlayer(kOrigin + Vec2{200, 0});
+
+    const Entity shot = fireAndCatch(sim);
+    CHECK(shot != NULL_ENTITY);
+
+    // A hornet is a size-1.3 mob, so its missiles are 1.3x what a size-1
+    // shooter of the same tier fires -- which is the whole of "a projectile
+    // inherits the size of the entity that spawned it". Derived from the
+    // shooter's BODY here for the same reason the server derives it there: it
+    // is the one number that already carries both the authored size and the
+    // rarity step.
+    const std::uint16_t ammo = content().petalIndex("hornet_missile");
+    const PetalStats stats = content().petalStats(ammo, Rarity::Common);
+    const double ownerScale = sim.world.get<Body>(hornet).radius / kMobBaseRadius;
+    const double expected = std::max(1.0, stats.radius * 0.5 * ownerScale / kProjectileSizeDivisor);
+    CHECK_NEAR(sim.world.get<Body>(shot).radius, expected, 1e-9);
+    CHECK(ownerScale > 1.25);   // the 1.3 is really reaching the shot
+
+    // And it is a body, not a token: a mass on the same area scale a mob's
+    // uses, and the ammunition's own health as the pool that lets it
+    // penetrate.
+    CHECK_NEAR(sim.world.get<Body>(shot).mass, projectileMass(expected), 1e-12);
+    CHECK_NEAR(sim.world.get<Health>(shot).max, stats.health, 1e-9);
+    CHECK(sim.world.has<HitCooldowns>(shot));
+}
+
+TEST(a_bigger_hornet_fires_a_bigger_missile) {
+    CHECK(contentReady());
+    Sim common;
+    common.spawnMob("hornet", kOrigin);
+    common.spawnPlayer(kOrigin + Vec2{200, 0});
+    const Entity small = fireAndCatch(common);
+
+    Sim mythic;
+    mythic.spawnMob("hornet", kOrigin, Rarity::Mythic);
+    mythic.spawnPlayer(kOrigin + Vec2{200, 0});
+    const Entity large = fireAndCatch(mythic);
+
+    CHECK(small != NULL_ENTITY);
+    CHECK(large != NULL_ENTITY);
+    CHECK(mythic.world.get<Body>(large).radius > common.world.get<Body>(small).radius);
+}
+
+TEST(a_volley_carries_the_shooters_own_travel) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity hornet = sim.spawnMob("hornet", kOrigin);
+    sim.spawnPlayer(kOrigin + Vec2{200, 0});
+
+    const Entity shot = fireAndCatch(sim);
+    CHECK(shot != NULL_ENTITY);
+
+    // The launch vector is the gun's plus the shooter's, so the difference
+    // between the two is a clean speed on the shot's own bearing. Measured
+    // rather than asserted against a literal, because the hornet is manoeuvring
+    // and its velocity at the moment it fired is its own business.
+    const Vec2 launched = sim.world.get<Motion>(shot).velocity;
+    const double bearing = sim.world.get<Transform>(shot).angle;
+    const ProjectileSpec& spec = content().mob(content().mobIndex("hornet")).projectile;
+    const Vec2 gun = Vec2::fromAngle(bearing, spec.speed);
+    const Vec2 inherited = launched - gun;
+    // Something was inherited, and it is a mob's speed rather than a second
+    // copy of the gun's.
+    CHECK(inherited.length() > 1e-6);
+    CHECK(inherited.length() < spec.speed);
+}
+
+TEST(a_firing_mob_rocks_back_a_little_and_no_further) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity hornet = sim.spawnMob("hornet", kOrigin);
+    sim.spawnPlayer(kOrigin + Vec2{200, 0});
+
+    // The INTENT phase alone, so the harness never integrates the velocity the
+    // AI asked for. The only thing that can move the shooter across one of
+    // these ticks is the recoil written straight to its position.
+    Vec2 before = sim.positionOf(hornet);
+    Entity shot = NULL_ENTITY;
+    for (int i = 0; i < 200 && shot == NULL_ENTITY; ++i) {
+        before = sim.positionOf(hornet);
+        sim.tickIntent();
+        shot = firstShot(sim);
+    }
+    CHECK(shot != NULL_ENTITY);
+
+    // A nudge, and pointing back down the barrel. The cap is what says this is
+    // not diep.io: whatever the shooter and its ammunition, one volley moves it
+    // a handful of units at most.
+    const Vec2 kick = sim.positionOf(hornet) - before;
+    CHECK(kick.length() > 0.0);
+    CHECK(kick.length() <= kProjectileMaxRecoil + 1e-9);
+    // The player is due east, so the shot went east and the shooter went west.
+    CHECK(kick.x < 0.0);
+}
+
+TEST(a_common_shooters_reach_is_the_number_written_in_the_config) {
+    CHECK(contentReady());
+    Sim sim;
+    sim.spawnMob("hornet", kOrigin);
+    sim.spawnPlayer(kOrigin + Vec2{200, 0});
+
+    const Entity shot = fireAndCatch(sim);
+    CHECK(shot != NULL_ENTITY);
+
+    // The whole point of stating reach in common-tier units: what a designer
+    // writes in mobs.json is what a common shooter's missile actually flies.
+    // Under the reference's flat divisor this was a sixth of it, which is how
+    // the shipped hornet ended up firing 83 units at a target it only aggros
+    // within 300.
+    const ProjectileSpec& spec = content().mob(content().mobIndex("hornet")).projectile;
+    CHECK_NEAR(sim.world.get<Projectile>(shot).remainingDistance, spec.distance, 1e-9);
+}
+
+TEST(a_higher_tier_shooter_reaches_proportionally_further) {
+    CHECK(contentReady());
+    Sim common;
+    common.spawnMob("hornet", kOrigin);
+    common.spawnPlayer(kOrigin + Vec2{200, 0});
+    const Entity near = fireAndCatch(common);
+
+    Sim mythic;
+    mythic.spawnMob("hornet", kOrigin, Rarity::Mythic);
+    mythic.spawnPlayer(kOrigin + Vec2{200, 0});
+    const Entity far = fireAndCatch(mythic);
+
+    CHECK(near != NULL_ENTITY);
+    CHECK(far != NULL_ENTITY);
+
+    // On the body-size ladder, not the flat divisor: mythic over common.
+    const double expected = kMobSizeScale[rarityIndex(Rarity::Mythic)] / kMobSizeScale[0];
+    const double ratio = mythic.world.get<Projectile>(far).remainingDistance /
+                         common.world.get<Projectile>(near).remainingDistance;
+    CHECK_NEAR(ratio, expected, 1e-9);
+}
+
+TEST(a_shooter_can_always_reach_what_it_has_aggroed) {
+    CHECK(contentReady());
+    // The bug the rescale was really about. A mob that opens fire on something
+    // it cannot possibly hit is a mob whose volley is decoration, so every
+    // shooting mob's authored reach must cover the range it acquires targets
+    // at -- checked against the shipped content rather than one mob.
+    for (std::size_t i = 0; i < content().mobCount(); ++i) {
+        const auto index = static_cast<std::uint16_t>(i);
+        const MobConfig& config = content().mob(index);
+        if (!config.projectile.present) continue;
+        const MobStats stats = content().mobStats(index, Rarity::Common);
+        const double reach = config.projectile.distance *
+                             kMobSizeScale[0] / kProjectileReachReferenceScale;
+        if (reach < stats.aggroRange) {
+            std::printf("  %s reaches %.1f but aggros at %.1f\n", config.id.c_str(), reach,
+                        stats.aggroRange);
+        }
+        CHECK(reach >= stats.aggroRange);
+    }
+}

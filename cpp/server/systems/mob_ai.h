@@ -207,9 +207,24 @@ inline constexpr double kDefaultVolleyCooldownMillis = 2000.0;
 /// Shot speed for a projectile block that omits one, units per second.
 inline constexpr double kDefaultProjectileSpeed = 200.0;
 
-/// The shooter's rarity scales both the shot's reach and its size, on the two
-/// different divisors the reference uses.
-inline constexpr double kProjectileDistanceDivisor = 9.0;
+/// The tier a mob's authored projectile `distance` is stated AGAINST.
+///
+/// Reach is `distance * SIZE_SCALING[tier] / this`, so with common's own scale
+/// here the number in mobs.json is literally the reach a COMMON shooter gets,
+/// and every higher tier reaches proportionally further up the same body-size
+/// ladder its missiles grow on.
+///
+/// The reference divides by a flat 9 instead, which is 1/6 at common and 4.8x
+/// at apex -- a 29x spread that made `distance` mean nothing you could reason
+/// about. It also made the shipped hornet unable to shoot: 500 authored came
+/// out as 83 units of reach against a 300-unit aggro range, so it fired
+/// missiles that expired well before the flower it had locked onto. Only the
+/// units changed here; every authored number was rescaled to match, so no
+/// mob's actual reach moved.
+inline constexpr double kProjectileReachReferenceScale = kMobSizeScale[0];
+
+/// The shooter's rarity also scales the shot's SIZE, on its own divisor --
+/// reach and size deliberately grow at different rates.
 inline constexpr double kProjectileSizeDivisor = 3.0;
 
 // -- pets --------------------------------------------------------------------
@@ -463,9 +478,14 @@ private:
     /// damage is one ledger.
     void collectChain(World& world, Entity self, std::vector<Entity>& out) const;
     void stampAttack(World& world, Entity self, MobAi& ai, double nowMillis, const Drive& drive);
+    /// `shooterVelocity` is the velocity the shooter is about to travel at,
+    /// not the one it is still carrying. The wild-mob path computes its
+    /// `desired` vector and only writes it to Motion after this returns, so
+    /// reading Motion here would inherit the PREVIOUS tick's travel -- and on
+    /// the tick a mob acquires a target and fires, that is zero.
     void fireVolley(World& world, Entity shooter, const MobType& type, MobAi& ai,
-                    const Drive& drive, Vec2 from, double aimAngle, double nowMillis,
-                    CommandBuffer& commands);
+                    const Drive& drive, Vec2 from, double aimAngle, Vec2 shooterVelocity,
+                    double nowMillis, CommandBuffer& commands);
 
     // -- pets ---------------------------------------------------------------
 

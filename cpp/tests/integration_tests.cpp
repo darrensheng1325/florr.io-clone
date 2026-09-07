@@ -4,6 +4,7 @@
 #include "client/interpolation.h"
 #include "server/db.h"
 #include "server/game_server.h"
+#include "server/systems/mob_ai.h"
 #include "server_harness.h"
 #include "shared/game/config.h"
 
@@ -566,4 +567,73 @@ TEST(logging_out_ends_the_session_at_both_ends) {
     CHECK_EQ(static_cast<int>(client.authStatus), static_cast<int>(net::AuthStatus::Ok));
     CHECK_EQ(client.profile().username, std::string("grace"));
     CHECK(client.sessionToken() != token);
+}
+
+TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
+    Harness h("volley");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "hornetwatch", "password9"));
+    client.joinGame(2600, 2600);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    // Where the flower actually stands, so the hornet can be put in its face.
+    World& world = h.server.world();
+    Query<PlayerTag, Transform> flowers(world);
+    Vec2 at{0, 0};
+    bool found = false;
+    flowers.each([&](Entity, PlayerTag&, Transform& transform) {
+        if (!found) { at = transform.position; found = true; }
+    });
+    CHECK(found);
+
+    // A hornet built the way the spawner builds one -- the shipping AI, the
+    // shipping content -- close enough that it has a target immediately.
+    const std::uint16_t hornetIndex = content().mobIndex("hornet");
+    const MobStats stats = content().mobStats(hornetIndex, Rarity::Common);
+    const Entity hornet = world.create();
+    world.add<MobTag>(hornet);
+    world.add<Transform>(hornet, Transform{at + Vec2{160, 0}, 0.0});
+    world.add<Motion>(hornet);
+    world.add<Body>(hornet, Body{stats.radius, stats.mass});
+    world.add<Health>(hornet, Health{stats.health, stats.health, 0, 0});
+    world.add<MobType>(hornet, MobType{hornetIndex, Rarity::Common, 1.0});
+    world.add<Faction>(hornet, Faction{Team::Hostiles, false});
+    world.add<ContactDamage>(hornet, ContactDamage{stats.damage, kMobHitIntervalMillis});
+    MobAi brain;
+    brain.kind = stats.ai;
+    brain.anchor = at + Vec2{160, 0};
+    brain.aggroRange = stats.aggroRange;
+    world.add<MobAi>(hornet, brain);
+
+    // What the wire should carry, worked out from the same two inputs the
+    // server has: the ammunition's body and the SHOOTER's, which is where the
+    // hornet's 1.3 size enters.
+    const std::uint16_t ammo = content().petalIndex("hornet_missile");
+    const PetalStats ammoStats = content().petalStats(ammo, Rarity::Common);
+    const double ownerScale = stats.radius / kMobBaseRadius;
+    const double expected =
+        std::max(1.0, ammoStats.radius * 0.5 * ownerScale / kProjectileSizeDivisor);
+
+    double seenRadius = -1.0;
+    std::uint16_t seenType = 0xFFFF;
+    const bool sawShot = h.stepUntil({&client}, [&] {
+        for (const auto& entry : client.view().entities()) {
+            if (entry.second.kind != net::EntityKind::Projectile) continue;
+            seenRadius = entry.second.radius;
+            seenType = entry.second.typeIndex;
+            return true;
+        }
+        return false;
+    }, 600);
+    CHECK(sawShot);
+
+    // The client draws a shot at twice this, so a radius that arrived wrong is
+    // artwork drawn at the wrong calibre. Tolerance is the f32 the wire uses.
+    CHECK_NEAR(seenRadius, expected, 1e-3);
+    CHECK_EQ(seenType, ammo);
+    // And it really is smaller than the ammunition petal's own body: a shot is
+    // half its petal, then the shooter's scale over the divisor.
+    CHECK(seenRadius < ammoStats.radius);
 }

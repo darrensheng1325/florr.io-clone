@@ -96,6 +96,12 @@ struct VolleyShot {
     double radius = 0;
     double distance = 0;
     double damage = 0;
+    /// The pool that makes the shot penetrate rather than being eaten by the
+    /// first thing it touches.
+    double health = kProjectileDefaultHealth;
+    /// The shooter's own velocity at the moment of firing, added to the launch
+    /// vector. A mob strafing across a flower leads its own volley.
+    Vec2 inherited;
     Entity owner = NULL_ENTITY;
     Entity creditTo = NULL_ENTITY;
     Faction faction;
@@ -114,9 +120,15 @@ void spawnShot(World& world, const VolleyShot& shot) {
     const Entity e = world.create();
     world.add<ProjectileTag>(e);
     world.add<Transform>(e, Transform{shot.from, shot.angle});
-    world.add<Motion>(e, Motion{Vec2::fromAngle(shot.angle, shot.speed)});
-    world.add<Body>(e, Body{shot.radius, 1.0});
+    world.add<Motion>(e, Motion{Vec2::fromAngle(shot.angle, shot.speed) + shot.inherited});
+    // Mass is area on the same scale a mob's body uses, so a bigger shooter's
+    // bigger shot shoves proportionally harder instead of only looking heavier.
+    world.add<Body>(e, Body{shot.radius, projectileMass(shot.radius)});
     world.add<Faction>(e, shot.faction);
+    world.add<Health>(e, Health{shot.health, shot.health});
+    // Added at spawn, never mid-flight: arming this during the hit loop would
+    // relocate the shot out from under it.
+    world.add<HitCooldowns>(e, HitCooldowns{});
 
     Projectile projectile;
     projectile.owner = shot.owner;
@@ -468,8 +480,8 @@ void MobAiSystem::stampAttack(World& world, Entity self, MobAi& ai, double nowMi
 }
 
 void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, MobAi& ai,
-                             const Drive& drive, Vec2 from, double aimAngle, double nowMillis,
-                             CommandBuffer& commands) {
+                             const Drive& drive, Vec2 from, double aimAngle,
+                             Vec2 shooterVelocity, double nowMillis, CommandBuffer& commands) {
     const ContentRegistry& registry = content();
     const ProjectileSpec& spec = registry.mob(type.configIndex).projectile;
     if (!spec.present || spec.ammoPetalIndex == kInvalidIndex) return;
@@ -487,18 +499,39 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
     const double scaling = kMobSizeScale[tier];
 
     const double speed = spec.speed > 0.0 ? spec.speed : kDefaultProjectileSpeed;
-    const double reach = spec.distance * scaling / kProjectileDistanceDivisor;
+    // Stated in COMMON-TIER units: `distance` IS the reach a common shooter
+    // gets, and a higher tier reaches further in proportion to its body.
+    // Deliberately the tier scale and not the shooter's own body (which the
+    // SIZE below uses): two same-tier mobs of different authored sizes shoot
+    // equally far, they just fire different-calibre shots.
+    const double reach = spec.distance * scaling / kProjectileReachReferenceScale;
     if (!(reach > 0.0) || !(speed > 0.0)) return;
+
+    // How much bigger than a stock body this shooter is. It carries BOTH the
+    // rarity step and the mob's own authored `size`, which is the difference
+    // from the bare tier scale it replaces: a hornet is a size-1.3 mob, and
+    // its missiles are now 1.3x an ordinary shooter's rather than identical to
+    // them. For a size-1 mob this is exactly kMobSizeScale[tier] and nothing
+    // about its volley moves.
+    const Body* shooterBody = world.tryGet<Body>(shooter);
+    const double ownerScale = shooterBody != nullptr && kMobBaseRadius > 0.0
+                                  ? std::max(0.05, shooterBody->radius / kMobBaseRadius)
+                                  : scaling;
 
     VolleyShot shot;
     shot.from = from;
     shot.speed = speed;
     // The shot is half the ammunition petal's body, then scaled by the
-    // shooter's tier on its own divisor -- reach and size grow at different
+    // SHOOTER's body on its own divisor -- reach and size grow at different
     // rates with rarity.
-    shot.radius = std::max(1.0, ammo.radius * 0.5 * scaling / kProjectileSizeDivisor);
+    shot.radius = std::max(1.0, ammo.radius * 0.5 * ownerScale / kProjectileSizeDivisor);
     shot.distance = reach;
     shot.damage = ammo.damage;
+    // Graded at the shooter's tier alongside the damage, so an apex hornet's
+    // missiles punch through what a common hornet's are stopped by.
+    shot.health = ammo.breakable && ammo.health > 0.0 ? ammo.health : kProjectileDefaultHealth;
+    // The shooter's own travel, carried into the volley.
+    shot.inherited = shooterVelocity;
     shot.owner = shooter;
     // A pet's shot is fired by the pet and answerable to the player, so a kill
     // it lands credits the flower that summoned it.
@@ -527,6 +560,29 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
         shot.identified = static_cast<bool>(allocateNetId);
         shot.netId = shot.identified ? allocateNetId() : 0;
         commands.defer([shot](World& deferred) { spawnShot(deferred, shot); });
+    }
+
+    // Recoil. The whole volley's momentum, repaid to the shooter at a small
+    // fraction and capped low: this game's kick is a rock backwards on the
+    // shot, not diep.io's reverse thruster, and it is the reason a firing mob
+    // reads as firing at all when its missile is off-screen.
+    //
+    // Written straight to the position and not to Knockback, because moveMobs
+    // deliberately never drains that component (see the note there). FLOWERS
+    // get none of this at all: their movement is eased from the wire with no
+    // prediction, so a server-side kick arrives as a rubber-band rather than
+    // as recoil.
+    if (Transform* transform = world.tryGet<Transform>(shooter)) {
+        // Re-fetched rather than reusing shooterBody: the defers above only
+        // queue work, but a component pointer held across anything that could
+        // touch the world is the bug this file is one archetype away from.
+        const Body* body = world.tryGet<Body>(shooter);
+        const double mass = body != nullptr && body->mass > 1e-6 ? body->mass : 1.0;
+        const double kick = std::min(
+            kProjectileMaxRecoil,
+            kProjectileRecoilScale * count *
+                projectilePush(projectileMass(shot.radius), speed, mass));
+        if (kick > 0.0) transform->position -= Vec2::fromAngle(aimAngle, kick);
     }
 }
 
@@ -816,8 +872,8 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
 
     desired = gap > 0.0 ? toTarget * (chaseSpeed / gap) : Vec2{0, 0};
     if (drive.shoots) {
-        fireVolley(world, self, type, ai, drive, transform.position, toTarget.angle(), nowMillis,
-                   commands);
+        fireVolley(world, self, type, ai, drive, transform.position, toTarget.angle(), desired,
+                   nowMillis, commands);
     }
     return true;
 }
@@ -1119,7 +1175,8 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
     if (attacks && drive.shoots && speed > 0.0 && ai.target != NULL_ENTITY) {
         if (const Transform* prey = world.tryGet<Transform>(ai.target)) {
             fireVolley(world, self, type, ai, drive, transform.position,
-                       (prey->position - transform.position).angle(), nowMillis, commands);
+                       (prey->position - transform.position).angle(), motion.velocity, nowMillis,
+                       commands);
         }
     }
 

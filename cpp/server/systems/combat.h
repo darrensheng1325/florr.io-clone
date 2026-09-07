@@ -143,6 +143,15 @@ public:
     /// `setMobKnockback()` rather than accumulating momentum.
     void applyKnockback(World& world, Entity victim, Vec2 offset, double strength);
 
+    /// The momentum a shot transfers into a MOB it hits, committed straight to
+    /// the victim's position.
+    ///
+    /// Flowers are excluded: applyKnockback already moves them and movement
+    /// drains it. Mobs are the ones that need this, because a mob's Knockback
+    /// component is written but never read back into a position.
+    void pushFromImpact(World& world, Entity victim, Vec2 offset, double shotMass,
+                        double shotSpeed);
+
     /// A mob holds one poison stack per poisoning PLAYER and every one of them
     /// ticks, so two flowers biting the same boss deal both their rates and
     /// each is credited its own share. A refresh from a source that already
@@ -249,6 +258,22 @@ private:
         Vec2 position;
         double radius = 0;
         double travelled = 0;
+        /// Momentum, for the shove a hit delivers and the recoil it repays.
+        double mass = 1;
+        double speed = 0;
+    };
+
+    /// One body a shot is overlapping this tick, resolved BEFORE any damage is
+    /// dealt.
+    ///
+    /// A penetrating shot hits several bodies in one pass, and applyDamage()
+    /// can mark any of them Dead -- which relocates its row and invalidates
+    /// every Transform/Body pointer the broadphase handed out. Copying the two
+    /// numbers each impact needs is what lets the hit loop run to the end.
+    struct ShotImpact {
+        Entity victim = NULL_ENTITY;
+        Vec2 offset;
+        double distanceSquared = 0;
     };
 
     struct PoisonTick {
@@ -304,6 +329,7 @@ private:
     std::vector<AuraSource> auras_;
     std::vector<FieldSource> fields_;
     std::vector<ShotSource> shots_;
+    std::vector<ShotImpact> impacts_;
     std::vector<PoisonTick> poison_;
     std::vector<PoisonTick> spongeTicks_;
     std::vector<Entity> candidates_;

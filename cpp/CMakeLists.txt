@@ -191,23 +191,46 @@ flix_stage_font(Ubuntu-Bold.ttf
 
 # The src data stays the single source of truth; stage it beside the binaries
 # so both programs find one content directory.
-add_custom_target(flix_data ALL
+#
+# Modelled as a custom COMMAND with real outputs rather than a custom TARGET
+# that always runs, because the web link has to be able to DEPEND on the
+# staged files. See FLIX_DATA_STAGED's use under EMSCRIPTEN below: the wasm
+# embeds this directory at link time, and a target-level dependency only
+# ORDERS the two, it does not make the linked wasm out of date when a data
+# file changes. That is how an edited mobs.json could be staged correctly and
+# still never reach the shipped build -- the link was skipped as up to date and
+# the wasm kept the copy it was born with.
+set(FLIX_DATA_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/mobs.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/petals.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/mob_drops.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/map_bundle.ts
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/land.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/desert.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ocean.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hel.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ant_hell.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/sewers.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/jungle.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/mob_xp.json)
+
+set(FLIX_DATA_STAGED)
+foreach(source IN LISTS FLIX_DATA_SOURCES)
+  get_filename_component(name "${source}" NAME)
+  list(APPEND FLIX_DATA_STAGED ${FLIX_DATA_DIR}/${name})
+endforeach()
+
+# A plain `copy`, not `copy_if_different`: the outputs must come out strictly
+# newer than the inputs, or every build would see them as still out of date and
+# relink the wasm for nothing. The DEPENDS list is what keeps this from running
+# when no data changed.
+add_custom_command(
+  OUTPUT ${FLIX_DATA_STAGED}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${FLIX_DATA_DIR}
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/mobs.json
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/petals.json
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/mob_drops.json
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/map_bundle.ts
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/land.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/desert.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/ocean.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/hel.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/ant_hell.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/sewers.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/../src/jungle.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/mob_xp.json
-          ${FLIX_DATA_DIR}/
+  COMMAND ${CMAKE_COMMAND} -E copy ${FLIX_DATA_SOURCES} ${FLIX_DATA_DIR}/
+  DEPENDS ${FLIX_DATA_SOURCES}
   COMMENT "Staging game content")
+add_custom_target(flix_data ALL DEPENDS ${FLIX_DATA_STAGED})
 add_dependencies(flowrix_client flix_data)
 add_dependencies(flowrix_server flix_data)
 
@@ -221,6 +244,15 @@ if(EMSCRIPTEN)
   # .data next to it can; and the server build has no page to run a preload
   # from at all. The whole set is ~1MB, which is smaller than the wasm.
   set(FLIX_EMBED_DATA "--embed-file" "${FLIX_DATA_DIR}@data")
+
+  # The embed happens at LINK time, so the linked output is stale the moment a
+  # staged data file is newer than it. Without this, editing mobs.json or
+  # petals.json changes nothing you can see: the staging succeeds, the link is
+  # skipped because no object file moved, and the wasm keeps the data it was
+  # linked with. Naming the staged files as link dependencies is what makes a
+  # data-only edit force a relink.
+  set_property(TARGET flowrix_client APPEND PROPERTY LINK_DEPENDS ${FLIX_DATA_STAGED})
+  set_property(TARGET flowrix_server APPEND PROPERTY LINK_DEPENDS ${FLIX_DATA_STAGED})
 
   # Shared by both web targets. Memory grows because game state and transient
   # command data are not fixed-size; browser rendering itself stays in the

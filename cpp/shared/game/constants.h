@@ -360,6 +360,83 @@ inline constexpr double kMobSeparationPushHeadroom = 3.0;
 /// mass, deliberately independent of the firing petal's own knockback stat.
 inline constexpr double kMobKnockbackForce = 20.0;
 
+// -- projectiles as bodies (the arras.io model) ------------------------------
+//
+// A shot is not a hitscan token that vanishes into the first thing it touches.
+// It is a small body with its own mass, its own health pool and its own
+// momentum, and every rule below follows from that:
+//
+//   * it PENETRATES -- a hit costs it the victim's body damage, and it only
+//     dies once that pool is spent, so a fat shot punches through a line of
+//     weak mobs and a thin one is eaten by the first thing it meets;
+//   * it can be SHOT DOWN -- two shots from opposing sides trade body damage
+//     the same way, which is the whole of the bullet-vs-bullet rule;
+//   * it carries the shooter's MOMENTUM, so a volley fired while running is
+//     thrown forward and one fired backwards is left behind;
+//   * it SHOVES what it hits by transferring that momentum, and the shooter
+//     pays a little of it back as recoil.
+//
+// The one deliberate departure: a shot that lands on a FLOWER is spent whole.
+// Flowers have no body damage to charge a shot with, and post-hit
+// invulnerability means a surviving shot would sit inside the victim doing
+// nothing until its range ran out.
+
+/// Health a shot is born with when its ammunition declares no pool at all --
+/// an unbreakable petal. One means "consumed by the first thing it hits",
+/// which is what such a shot did before it had a health pool.
+inline constexpr double kProjectileDefaultHealth = 1.0;
+
+/// What a hit costs a shot when the victim deals no body damage of its own.
+inline constexpr double kProjectileDefaultBodyDamage = 1.0;
+
+/// Momentum (mass x speed) to displacement, before the victim's mass divides
+/// it. Chosen so a stock size-1 shot at 300 u/s lands within a few units of
+/// the flat kMobKnockbackForce it replaces: the shove stays where it has
+/// always been for ordinary ammunition, and only grows when the shot itself
+/// does.
+inline constexpr double kProjectilePushPerMomentum = 0.27;
+
+/// Ceiling on that shove. A heavy shot from an apex is still a push, not a
+/// teleport, and this is what stops one landing on a common mob from firing it
+/// clean off the screen.
+inline constexpr double kProjectileMaxPush = 40.0;
+
+/// Recoil as a fraction of the reaction a shot's momentum actually implies,
+/// and its own ceiling.
+///
+/// One is the honest equal-and-opposite figure, and it is deliberately left
+/// there: because a shot's mass and its shooter's both go as size squared, the
+/// two cancel and the kick comes out at the same couple of units at EVERY
+/// tier. That is what makes this a nudge rather than diep.io's reverse
+/// thruster -- an apex rocks back exactly as far as a common, which is a twitch
+/// on a body that size. Turn this down, not the cap, if it ever reads as too
+/// much.
+///
+/// It is also MOBS ONLY: a flower's movement is eased straight from the wire
+/// with no prediction, so kicking one here would read as rubber-banding rather
+/// than as recoil.
+inline constexpr double kProjectileRecoilScale = 1.0;
+inline constexpr double kProjectileMaxRecoil = 4.0;
+
+/// A shot's mass, on the same area scale a mob's body uses (`scaledSize^2`,
+/// where scaledSize is the radius in kMobBaseRadius units). Sharing the scale
+/// is what lets one momentum figure push a mob and a shot alike, and it is
+/// what makes an inherited-size shot hit proportionally harder rather than
+/// merely looking bigger.
+inline double projectileMass(double radius) {
+    const double scaled = radius / kMobBaseRadius;
+    return std::max(1e-3, scaled * scaled);
+}
+
+/// Momentum shove, already divided by the victim's mass and capped.
+inline double projectilePush(double shotMass, double shotSpeed, double victimMass) {
+    if (!(shotMass > 0.0) || !(shotSpeed > 0.0)) return 0.0;
+    const double mass = victimMass > 1e-6 ? victimMass : 1.0;
+    const double push = kProjectilePushPerMomentum * shotMass * shotSpeed / mass;
+    if (!std::isfinite(push) || push <= 0.0) return 0.0;
+    return std::min(push, kProjectileMaxPush);
+}
+
 /// A centipede is a head plus this many trailing body mobs. The count is a
 /// constant in the reference rather than a per-mob config field.
 inline constexpr int kCentipedeSegmentCount = 9;
