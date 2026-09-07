@@ -198,11 +198,12 @@ private:
 
     /// One loot drop: the shadow backdrop, the rarity plate, the petal and the
     /// item's name, all in world units. `rotation`, `scale` and `alpha` are
-    /// the spawn/pickup/despawn animation's, and are the identity for a drop
-    /// that is just lying there. No frame clock: the reference bakes a drop's
-    /// petal once, so loot on the ground does not animate.
+    /// the spawn/pickup/despawn animation's; a drop that is just lying there
+    /// still carries its resting tilt, seeded on its net id, and the shared
+    /// idle pulse `timeSeconds` drives. The petal artwork itself stays frozen
+    /// at frame zero, as the reference bakes it: only the plate breathes.
     void drawDrop(Canvas&, const Camera&, Vec2 at, std::uint16_t typeIndex, Rarity,
-                  double rotation, double scale, double alpha) const;
+                  double rotation, double scale, double alpha, double timeSeconds) const;
 
     /// Everything one mob body needs that does not come from its config. The
     /// death animation replays a mob the snapshot has already dropped, so this

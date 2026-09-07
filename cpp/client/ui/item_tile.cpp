@@ -23,9 +23,9 @@ constexpr double kFaceSide = 50.0;
 
 /// The drop's backdrop, from gardn's render_drop: 3 units proud of the plate
 /// on every side, at a quarter black.
-constexpr double kShadowSide = 66.0;
+constexpr double kShadowSide = 68.0;
 constexpr double kShadowRadius = 4.0;
-constexpr double kShadowAlpha = 0.25;
+constexpr double kShadowAlpha = 0.15;
 
 constexpr double kNameSize = 12.0;
 constexpr double kNameBaseline = 20.0;

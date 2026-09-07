@@ -85,6 +85,27 @@ constexpr double kDropSpawnSpread = 20.0;
 /// Flies to whoever took it, shrinking and fading; or spins out where it lay.
 constexpr double kDropPickupSeconds = 0.15;
 constexpr double kDropDespawnSeconds = 0.3;
+/// Loot never settles perfectly square: each drop rests tilted by up to this
+/// many degrees either way. Seeded on the net id rather than rolled, so the
+/// tilt is the same every frame, survives the drop leaving and re-entering
+/// view, and is shared by the spawn, pickup and despawn animations.
+constexpr double kDropRestTiltDegrees = 10.0;
+/// Loot breathes where it lies: the reference scales it by 1 +- 3% off a sine
+/// on the frame clock in milliseconds, i.e. 10 rad/s, and shares one phase
+/// across every drop rather than giving each its own.
+constexpr double kDropPulseRate = 10.0;
+constexpr double kDropPulseAmount = 0.03;
+
+double dropRestRotation(std::uint32_t netId) {
+    // A cheap integer hash: consecutive net ids must not land on neighbouring
+    // angles, or a burst of loot from one mob settles in a visible fan.
+    std::uint32_t h = netId * 2654435761u;
+    h ^= h >> 15;
+    h *= 2246822519u;
+    h ^= h >> 13;
+    const double unit = static_cast<double>(h % 2001u) / 2000.0;  // 0..1
+    return (unit - 0.5) * 2.0 * kDropRestTiltDegrees * kPi / 180.0;
+}
 
 /// The high rarities shimmer. Rolled per drawn frame, per petal and per drop,
 /// exactly as the browser build rolls it.
@@ -2001,18 +2022,20 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
 
         case net::EntityKind::Drop: {
             // A drop lands with a flourish: it slides in from a random offset
-            // and unwinds a random spin over 400 ms, easing out.
+            // and unwinds a random spin over 400 ms, easing out, settling on
+            // its own slight tilt rather than perfectly square.
             Vec2 where = at;
-            double rotation = 0;
+            double rotation = dropRestRotation(entity.netId);
             const auto spawn = dropSpawns_.find(entity.netId);
             if (spawn != dropSpawns_.end()) {
                 const double t = clamp(spawn->second.ageSeconds / kDropSpawnSeconds, 0.0, 1.0);
                 const double eased = 1.0 - (1.0 - t) * (1.0 - t);
                 const double offset = spawn->second.distance * (1.0 - eased);
                 where += Vec2::fromAngle(spawn->second.angle, offset);
-                rotation = spawn->second.rotation * (1.0 - eased);
+                rotation += spawn->second.rotation * (1.0 - eased);
             }
-            drawDrop(canvas, camera, where, entity.typeIndex, entity.rarity, rotation, 1.0, 1.0);
+            drawDrop(canvas, camera, where, entity.typeIndex, entity.rarity, rotation, 1.0, 1.0,
+                     timeSeconds);
             break;
         }
 
@@ -2079,7 +2102,10 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
 
 void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
                              std::uint16_t typeIndex, Rarity rarity, double rotation,
-                             double scale, double alpha) const {
+                             double scale, double alpha, double timeSeconds) const {
+    // The pulse rides on top of whatever the animations asked for, so a drop
+    // flying to its taker or spinning out keeps breathing as it goes.
+    scale *= 1.0 + std::sin(timeSeconds * kDropPulseRate) * kDropPulseAmount;
     const double zoom = camera.zoom();
     if (scale <= 0.0 || alpha <= 0.0 || kDropBackdropSide * zoom * scale <= 1.0) return;
     if (!sprites_) return;
@@ -2250,7 +2276,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                                                                 : kDropDespawnSeconds),
                                        0.0, 1.0);
                 Vec2 where = drop.position;
-                double rotation = 0;
+                double rotation = dropRestRotation(drop.netId);
                 double scale = 1.0;
                 double alpha = 1.0;
                 if (taken) {
@@ -2267,14 +2293,14 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                     scale = 1.0 - eased * 0.7;
                     alpha = 1.0 - eased * 0.5;
                 } else {
-                    rotation = t * kTau;
+                    rotation += t * kTau;
                     alpha = 1.0 - t;
                     scale = 1.0 - t * 0.3;
                 }
                 if (!onScreen(where, kDropBackdropSide)) continue;
                 ++timing_.itemCount;
                 drawDrop(canvas, camera, where, drop.typeIndex, drop.rarity, rotation, scale,
-                         alpha);
+                         alpha, timeSeconds);
             }
         }
 
