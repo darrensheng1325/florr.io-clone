@@ -42,9 +42,9 @@ inline constexpr std::array<std::uint32_t, kRarityCount> kRarityColors = {
     0x861FDEu,  // epic       purple
     0xDE1F1Fu,  // legendary  red
     0x1FDBDEu,  // mythic     cyan
-    0xDE1F65u,  // ultra      pink
-    0x2BFFA4u,  // super      mint
-    0xFFFFFFu,  // unique     white
+    0xFF2B75u,  // ultra      pink
+    0x2BFFA3u,  // super      mint
+    0xEEEEEEu,  // unique     white
     0xFF00FFu,  // apex       magenta
 };
 
