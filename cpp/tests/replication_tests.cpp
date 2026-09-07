@@ -3,6 +3,7 @@
 #include "client/interpolation.h"
 #include "client/world_view.h"
 #include "server/replication.h"
+#include "server/systems/petals.h"
 #include "shared/game/components.h"
 
 #include <string>
@@ -636,4 +637,154 @@ TEST(a_petal_with_no_owner_on_screen_still_interpolates) {
     view.interpolate(1000, 1.0 / 60.0);
     CHECK(view.entities().at(7).position.x > 0.0);
     CHECK(view.entities().at(7).position.x < 100.0);
+}
+
+TEST(snapshot_reports_the_viewers_reloading_slots) {
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[0] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    loadout.slots[2] = LoadoutSlot{0, Rarity::Common, 3200.0, true};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+
+    // What is LEFT of the reload, not when it ends: the bar counts down from
+    // it on its own clock between snapshots.
+    CHECK_NEAR(client.self().slotReloadRemainingMillis[2], 1200.0, 1.0);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[0], 0.0);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[1], 0.0);
+
+    // The frame clock carries it forward, so the wedge sweeps at display rate
+    // rather than in twenty steps a second.
+    client.interpolate(2000, 0.2);
+    CHECK_NEAR(client.self().slotReloadRemainingMillis[2], 1000.0, 1.0);
+}
+
+TEST(a_slot_that_finished_reloading_drops_off_the_wire) {
+    // Streamed state, not a one-shot event: the wedge clears because the slot
+    // stops being reported, so a client that missed a frame is not left with a
+    // petal that sweeps forever.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[2] = LoadoutSlot{0, Rarity::Common, 3200.0, true};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK(client.self().slotReloadRemainingMillis[2] > 0.0);
+
+    LoadoutSlot& slot = f.world.get<Loadout>(f.viewer).slots[2];
+    slot.broken = false;
+    slot.reloadReadyAtMillis = 0;
+    f.tick(client, 2, 3300);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[2], 0.0);
+}
+
+TEST(an_untouched_loadout_costs_the_snapshot_one_byte) {
+    // The list leads with a count so the overwhelmingly common case -- nothing
+    // broken and nothing hurt -- is a single zero rather than an entry per slot.
+    Fixture f;
+    WorldView client;
+    const std::size_t bare = f.tick(client, 1, 1000);
+
+    Fixture g;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 2000.0, true};
+    g.world.add<Loadout>(g.viewer, loadout);
+    WorldView other;
+    const std::size_t withOne = g.tick(other, 1, 1000);
+
+    CHECK_EQ(withOne - bare, std::size_t(4));
+}
+
+TEST(a_clump_reports_a_reload_while_any_grain_is_missing) {
+    // Sand, light and dahlia break one grain at a time, so `LoadoutSlot::broken`
+    // -- which only goes up once the LAST one is gone -- is the wrong signal for
+    // the bar. One missing grain is a reload the wedge should be sweeping.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[3] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    PetalSlotState::Slot& clump = slotState.slots[3];
+    clump.independent = true;
+    clump.populated = true;
+    // Four grains: two out, two still orbiting.
+    clump.instanceReadyAtMillis = {2600.0, 0.0, 2200.0, 0.0};
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+
+    // Sized by the grain that comes back LAST. The soonest would finish the
+    // sweep with a grain still missing and then snap it backwards.
+    CHECK_NEAR(client.self().slotReloadRemainingMillis[3], 600.0, 1.0);
+}
+
+TEST(a_whole_clump_back_on_the_field_clears_the_wedge) {
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[3] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    PetalSlotState::Slot& clump = slotState.slots[3];
+    clump.independent = true;
+    clump.populated = true;
+    clump.instanceReadyAtMillis = {2600.0, 0.0, 2200.0, 0.0};
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK(client.self().slotReloadRemainingMillis[3] > 0.0);
+
+    // Respawning a grain zeroes its entry, which is what ends the sweep.
+    for (double& ready : f.world.get<PetalSlotState>(f.viewer).slots[3].instanceReadyAtMillis) {
+        ready = 0.0;
+    }
+    f.tick(client, 2, 2700);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[3], 0.0);
+}
+
+TEST(a_hurt_slot_reaches_the_client_without_being_broken) {
+    // Damage and reload travel in one entry, so a petal that is merely hurt is
+    // reported even though nothing about it is on cooldown.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    slotState.slots[1].healthFraction = 0.4;
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+
+    // A byte of ratio, so a step of 1/255 is the most it can be out.
+    CHECK_NEAR(client.self().slotHealthFraction[1], 0.4, 1.0 / 255.0);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[1], 0.0);
+    // Everything else reads as untouched rather than as empty.
+    CHECK_EQ(client.self().slotHealthFraction[0], 1.0);
+}
+
+TEST(a_healed_slot_stops_being_reported_and_reads_full_again) {
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    slotState.slots[1].healthFraction = 0.4;
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK(client.self().slotHealthFraction[1] < 1.0);
+
+    f.world.get<PetalSlotState>(f.viewer).slots[1].healthFraction = 1.0;
+    f.tick(client, 2, 2050);
+    CHECK_EQ(client.self().slotHealthFraction[1], 1.0);
 }

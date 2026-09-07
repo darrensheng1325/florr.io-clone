@@ -57,6 +57,22 @@ bool WorldView::applySnapshot(ByteReader& reader) {
     const int level = reader.u16();
     const int stars = static_cast<int>(reader.u32());
 
+    // The viewer's own reloading and damaged slots, in wire order with the rest
+    // of the self block. A slot that has reloaded or is back at full health is
+    // simply absent from the list, which is what keeps a missed frame from
+    // stranding the bar's wedge or its drained tile.
+    std::array<double, kLoadoutActiveSlots> slotReload{};
+    std::array<double, kLoadoutActiveSlots> slotHealth = fullSlotHealth();
+    const std::uint8_t reportCount = reader.u8();
+    for (std::uint8_t i = 0; i < reportCount && i < net::kMaxReportedSlots; ++i) {
+        const std::uint8_t slot = reader.u8();
+        const double remaining = reader.u16();
+        const double health = reader.unitByte();
+        if (slot >= kLoadoutActiveSlots) continue;
+        slotReload[slot] = remaining;
+        slotHealth[slot] = health;
+    }
+
     // Snapshots are ordered by TCP, but a reconnect can replay an older tick.
     // Applying it would rewind every entity by a frame.
     if (tick_ != 0 && tick <= tick_) return true;
@@ -187,6 +203,8 @@ bool WorldView::applySnapshot(ByteReader& reader) {
     self_.level = level;
     self_.stars = stars;
     self_.acknowledgedInput = acknowledged;
+    self_.slotReloadRemainingMillis = slotReload;
+    self_.slotHealthFraction = slotHealth;
 
     for (Spawn& s : spawns) {
         RemoteEntity e;
@@ -324,6 +342,13 @@ void easeToward(Vec2& position, Vec2 target, double t, bool cut) {
 void WorldView::interpolate(double nowMillis, double dtSeconds) {
     const double t = easeAmount(easeRatePerSecond, dtSeconds);
     const double renderMillis = nowMillis - interpolationDelayMillis;
+
+    // Reload runs on the frame clock between snapshots. Twenty corrections a
+    // second are enough to keep it honest and nowhere near enough to sweep a
+    // wedge that turns through five revolutions smoothly.
+    for (double& remaining : self_.slotReloadRemainingMillis) {
+        remaining = std::max(0.0, remaining - dtSeconds * 1000.0);
+    }
 
     // Reapplied per frame rather than once when the command runs: the server
     // resends the real flags with every snapshot, and an override written once

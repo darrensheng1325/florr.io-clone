@@ -899,6 +899,42 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
     if (released) pressedSlot_ = -1;
 }
 
+namespace {
+
+/// How far through its reload the flower's slot `index` is: 0 the moment it
+/// broke, 1 once it is back. The wedge is drawn from this, so a slot that is
+/// not reloading has to read as 1 rather than as 0.
+///
+/// The server streams what is LEFT of a reload and not how long the whole one
+/// was, because the total is already here: both sides size a reload from the
+/// same petal config.
+double slotReloadProgress(const NetClient& net, int index) {
+    if (index < 0 || index >= kLoadoutActiveSlots) return 1.0;
+    const double remaining = net.view().self().slotReloadRemainingMillis[
+        static_cast<std::size_t>(index)];
+    if (remaining <= 0.0) return 1.0;
+    const Profile& profile = net.profile();
+    const auto at = static_cast<std::size_t>(index);
+    if (at >= profile.loadout.size() || profile.loadout[at].empty()) return 1.0;
+    const PetalStats stats = content().petalStats(profile.loadout[at].petalIndex,
+                                                  profile.loadout[at].rarity);
+    const double total = stats.reloadMillis > 0.0 ? stats.reloadMillis : kDefaultPetalReloadMillis;
+    // A remaining that outruns the total is a slot whose petal has just been
+    // swapped for a slower one: clamped, it sweeps from the start rather than
+    // showing an inverted wedge for a frame.
+    return std::clamp(1.0 - remaining / total, 0.0, 1.0);
+}
+
+/// How much of the flower's slot `index` is still standing, for the tile fill.
+/// A slot the server has said nothing about -- a storage row, or the frames
+/// before the first snapshot -- reads as untouched.
+double slotHealthFraction(const NetClient& net, int index) {
+    if (index < 0 || index >= kLoadoutActiveSlots) return 1.0;
+    return net.view().self().slotHealthFraction[static_cast<std::size_t>(index)];
+}
+
+}  // namespace
+
 void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                                 const SpriteCache& sprites, double timeSeconds) {
     const Profile& profile = net.profile();
@@ -1044,6 +1080,8 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         tile.petalIndex = profile.loadout[at].petalIndex;
         tile.rarity = profile.loadout[at].rarity;
         tile.timeSeconds = timeSeconds;
+        tile.reload = slotReloadProgress(net, i);
+        tile.health = slotHealthFraction(net, i);
         drawItemTile(canvas, sprites, layout.slots[at], tile);
     }
     canvas.restore();

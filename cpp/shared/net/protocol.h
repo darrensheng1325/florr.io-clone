@@ -21,7 +21,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 14;
+inline constexpr std::uint16_t kProtocolVersion = 15;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -252,6 +252,20 @@ struct InputFrame {
 // ---------------------------------------------------------------------------
 // Snapshots
 // ---------------------------------------------------------------------------
+
+/// How many of the viewer's own slots a snapshot can report on.
+///
+/// The block is written as
+/// `u8 count, { u8 slot, u16 reloadRemainingMillis, u8 healthFraction }*`
+/// rather than a fixed entry per slot, because a bar of untouched petals is by
+/// far the common case and costs one byte that way. A slot appears when it is
+/// reloading, when it is damaged, or both -- the two travel together because a
+/// clump does both at once, having lost a grain while the rest orbit on.
+///
+/// It is STREAMED STATE, not one-shot break and damage events: a dropped event
+/// would leave the wedge stuck on a slot that reloaded long ago, or the tile
+/// drained on a petal back at full health, and the client has no way to notice.
+inline constexpr std::uint8_t kMaxReportedSlots = 10;
 
 /// What a networked entity is, which decides how the client draws it.
 enum class EntityKind : std::uint8_t {

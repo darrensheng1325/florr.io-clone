@@ -107,9 +107,14 @@ struct ItemTile {
     std::string badge;
 
     /// gardn's cooldown wedge, swept as the petal reloads. 1.0 draws nothing.
-    /// Nothing feeds this yet -- the client is not told per-slot cooldowns --
-    /// but the sweep belongs to the tile, not to whoever eventually wires it.
+    /// The owner's own bar is the only surface the server tells about a reload;
+    /// everywhere else leaves this alone and gets no sweep.
     double reload = 1.0;
+
+    /// How much of the petal is still standing, 1.0 for untouched. The face
+    /// drains from the top as it falls, until a dead slot is nothing but the
+    /// plate colour. Like `reload`, only the owner's bar is told.
+    double health = 1.0;
 
     bool hovered = false;
     bool selected = false;

@@ -60,6 +60,12 @@ struct PetalSlotState {
         std::uint16_t configIndex = kNoPetal;
         Rarity rarity = Rarity::Common;
 
+        /// How much of the slot is still standing, 1.0 for untouched. Derived
+        /// each tick from whichever of the two health models the slot uses, so
+        /// that the one place that has to tell them apart is the pass that
+        /// already does. The loadout bar drains its tile by it.
+        double healthFraction = 1.0;
+
         /// When cluster member i comes back, or 0 when it is already out.
         /// Sized to the petal's count; meaningful only while `independent`.
         std::vector<double> instanceReadyAtMillis;

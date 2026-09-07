@@ -6,6 +6,7 @@
 // rendering. A flat record per entity is the honest shape for that, and it
 // keeps the draw loop free of component lookups.
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -13,6 +14,7 @@
 
 #include "client/interpolation.h"
 #include "shared/core/types.h"
+#include "shared/game/constants.h"
 #include "shared/game/rarity.h"
 #include "shared/net/bytebuffer.h"
 #include "shared/net/protocol.h"
@@ -116,6 +118,15 @@ struct ViewEvent {
     std::uint8_t flag = 0;
 };
 
+/// Every slot untouched, which is what a bar with no snapshot behind it yet
+/// has to draw as: a zeroed array would open the game on ten dead-looking
+/// tiles.
+inline std::array<double, kLoadoutActiveSlots> fullSlotHealth() {
+    std::array<double, kLoadoutActiveSlots> full{};
+    full.fill(1.0);
+    return full;
+}
+
 /// The authoritative state of the player's own flower, straight from the
 /// snapshot and never interpolated -- prediction owns its position.
 struct SelfState {
@@ -128,6 +139,21 @@ struct SelfState {
     int level = 1;
     int stars = 0;
     std::uint32_t acknowledgedInput = 0;
+
+    /// How much of each orbiting slot's reload is still to run, in
+    /// milliseconds; 0 for a slot that is ready or empty. The loadout bar
+    /// sweeps its wedge with it.
+    ///
+    /// The snapshot rewrites this outright, and `interpolate` counts it down
+    /// between snapshots -- twenty of those a second is a visibly stepped
+    /// sweep on its own, and the wedge turns through five whole turns.
+    std::array<double, kLoadoutActiveSlots> slotReloadRemainingMillis{};
+
+    /// How much of each orbiting slot's petal is still standing, 1.0 for
+    /// untouched. The bar drains its tile by it. Unlike the reload it does not
+    /// run on the frame clock: a petal loses health in the discrete steps
+    /// something hits it in, and there is nothing between them to animate.
+    std::array<double, kLoadoutActiveSlots> slotHealthFraction = fullSlotHealth();
 };
 
 class WorldView {

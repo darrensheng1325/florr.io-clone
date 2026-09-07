@@ -218,9 +218,17 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
                      static_cast<float>(kPlateSide), static_cast<float>(kPlateSide),
                      static_cast<float>(kPlateRadius));
     canvas.fill();
-    setFill(canvas, base);
-    canvas.fillRect(static_cast<float>(-kFaceSide * 0.5), static_cast<float>(-kFaceSide * 0.5),
-                    static_cast<float>(kFaceSide), static_cast<float>(kFaceSide));
+    // The face drains downward as the petal loses health, uncovering the plate
+    // that is already under it -- so a full tile is the flat rarity square it
+    // has always been, and a dead one is the plate's darker shade all through.
+    const double standing = filled ? std::clamp(tile.health, 0.0, 1.0) : 1.0;
+    if (standing > 0.0) {
+        const double faceHeight = kFaceSide * standing;
+        setFill(canvas, base);
+        canvas.fillRect(static_cast<float>(-kFaceSide * 0.5),
+                        static_cast<float>(kFaceSide * 0.5 - faceHeight),
+                        static_cast<float>(kFaceSide), static_cast<float>(faceHeight));
+    }
 
     if (tile.hovered) {
         setFill(canvas, kPaper, kHoverAlpha);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "server/systems/petals.h"
 #include "shared/game/constants.h"
 
 namespace flix {
@@ -174,6 +175,68 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         out.f64(0);
         out.u16(1);
         out.u32(0);
+    }
+
+    // Which of the viewer's own slots are reloading or hurt, and by how much.
+    // Only the owner's own bar draws the wedge and the drained tile, so this
+    // rides the self block rather than the player's replicated visuals.
+    //
+    // Streamed rather than evented on purpose: a break event that a client
+    // missed would leave its wedge sweeping forever, or its tile drained on a
+    // petal long since back at full health.
+    static_assert(net::kMaxReportedSlots == kLoadoutActiveSlots,
+                  "the wire caps the slot list at the number of orbiting slots");
+    const Loadout* viewerLoadout = world.tryGet<Loadout>(viewer);
+    const PetalSlotState* viewerSlots = world.tryGet<PetalSlotState>(viewer);
+
+    struct SlotReport {
+        double reloadRemaining = 0;
+        double health = 1.0;
+    };
+    const auto report = [&](int i, SlotReport& out) {
+        if (viewerLoadout == nullptr) return false;
+        const auto index = static_cast<std::size_t>(i);
+        const LoadoutSlot& slot = viewerLoadout->slots[index];
+        if (slot.empty()) return false;
+        const PetalSlotState::Slot* live =
+            viewerSlots != nullptr ? &viewerSlots->slots[index] : nullptr;
+
+        // A clump -- sand, light, dahlia -- loses and reloads its grains one at
+        // a time, and `slot.broken` only goes up once the LAST one is gone. The
+        // bar reports the missing grain instead: the wedge runs while any
+        // instance is out.
+        //
+        // Sized by the instance that returns LAST, not the first: taking the
+        // soonest would complete the sweep while grains are still missing and
+        // then snap it backwards to the next one's remainder.
+        if (live != nullptr && live->independent) {
+            for (const double readyAt : live->instanceReadyAtMillis) {
+                out.reloadRemaining = std::max(out.reloadRemaining, readyAt - frame.nowMillis);
+            }
+        } else if (slot.broken) {
+            out.reloadRemaining = slot.reloadReadyAtMillis - frame.nowMillis;
+        }
+        out.reloadRemaining = std::max(0.0, out.reloadRemaining);
+        if (live != nullptr) out.health = live->healthFraction;
+
+        return out.reloadRemaining > 0.0 || out.health < 1.0;
+    };
+    // Counted before it is written: the count leads the list, and ten slots is
+    // cheaper to walk twice than a patch-back is to add to the writer.
+    std::uint8_t reportCount = 0;
+    for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+        SlotReport slotReport;
+        if (report(i, slotReport)) ++reportCount;
+    }
+    out.u8(reportCount);
+    for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+        SlotReport slotReport;
+        if (!report(i, slotReport)) continue;
+        out.u8(static_cast<std::uint8_t>(i));
+        // A reload past a minute is one the bar cannot show meaningfully
+        // anyway; clamping keeps the field two bytes.
+        out.u16(static_cast<std::uint16_t>(std::min(slotReport.reloadRemaining, 65535.0)));
+        out.unitByte(slotReport.health);
     }
 
     // --- spawns and updates ----------------------------------------------

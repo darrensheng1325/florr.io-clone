@@ -3,7 +3,7 @@
         "name": "Basic",
         "damage": 10,
         "health": 10,
-        "size": 2,
+        "size": 1,
         "cooldown": 1200,
         "description": "A simple petal that provides basic protection",
         "color": "#90EE90",

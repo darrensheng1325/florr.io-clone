@@ -201,6 +201,15 @@ struct Rig {
         return const_cast<World&>(world).get<Loadout>(player).slots[static_cast<std::size_t>(index)];
     }
 
+    /// What the loadout bar drains its tile by: how much of the slot is still
+    /// standing, whichever of the two health models it runs on.
+    double slotHealth(int index) const {
+        return const_cast<World&>(world)
+            .get<PetalSlotState>(player)
+            .slots[static_cast<std::size_t>(index)]
+            .healthFraction;
+    }
+
     const PetalRing& ring() const { return const_cast<World&>(world).get<PetalRing>(player); }
     const PlayerModifiers& modifiers() const {
         return const_cast<World&>(world).get<PlayerModifiers>(player);
@@ -1115,3 +1124,62 @@ TEST(two_players_keep_separate_rings) {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// The fraction the loadout bar drains its tile by
+// ---------------------------------------------------------------------------
+
+TEST(a_hurt_petal_reports_a_part_full_slot) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "basic");
+    rig.settleEquips();
+    CHECK_NEAR(rig.slotHealth(0), 1.0, 1e-9);
+
+    rig.damage(rig.petals(0).front(), 4.0);
+    rig.tick();
+    CHECK_NEAR(rig.slotHealth(0), 0.6, 1e-9);
+
+    // A broken slot is empty, not merely low: the tile drains all the way to
+    // the plate colour and refills when the reload hands the pool back.
+    rig.damage(rig.petals(0).front(), 6.0);
+    rig.tick();
+    CHECK(rig.slot(0).broken);
+    CHECK_NEAR(rig.slotHealth(0), 0.0, 1e-9);
+
+    CHECK(rig.tickUntil([&] { return !rig.slot(0).broken; }));
+    CHECK_NEAR(rig.slotHealth(0), 1.0, 1e-9);
+}
+
+TEST(a_clump_reports_the_share_of_its_grains_still_standing) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "sandy");
+    rig.tick();
+    CHECK_EQ(rig.petals(0).size(), std::size_t(4));
+    CHECK_NEAR(rig.slotHealth(0), 1.0, 1e-9);
+
+    // A grain off the field counts as none of its own health rather than as
+    // absent, so three whole grains of four is a tile three quarters full --
+    // which is the only reading that makes a half-broken clump legible.
+    rig.damage(rig.petalWithSub(0, 0), 12.0);
+    rig.tick();
+    CHECK_EQ(rig.petals(0).size(), std::size_t(3));
+    CHECK_NEAR(rig.slotHealth(0), 0.75, 1e-9);
+
+    // Damage on a surviving grain is its own share of the same total.
+    rig.damage(rig.petalWithSub(0, 1), 6.0);
+    rig.tick();
+    CHECK_NEAR(rig.slotHealth(0), 0.625, 1e-9);
+}
+
+TEST(an_unbreakable_petal_never_drains_its_tile) {
+    if (!contentLoaded()) return;
+    // Rock has no health at all. Reading a pool it does not own would leave its
+    // tile permanently empty.
+    Rig rig;
+    rig.equip(0, "rock");
+    rig.settleEquips();
+    rig.tick(20);
+    CHECK_NEAR(rig.slotHealth(0), 1.0, 1e-9);
+}

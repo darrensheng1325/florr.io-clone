@@ -213,6 +213,27 @@ double instanceHealth(World& world, Entity petal) {
     return health ? health->current : 0.0;
 }
 
+/// How much of a slot is still standing, for the loadout bar's tile fill.
+///
+/// Two different quantities wear the same name here. A shared pool is ONE
+/// health bar the whole cluster mirrors, so it is read straight off the pool; a
+/// clump is `count` separate ones, and a grain that is off the field counts as
+/// zero rather than as absent -- three grains of four is a tile three quarters
+/// full, which is also what makes a partly broken clump legible at a glance.
+double slotHealthFraction(World& world, const PetalSlotState::Slot& state,
+                          const PetalStats& stats, int count,
+                          const std::vector<Entity>& live) {
+    if (!stats.breakable || count <= 0) return 1.0;
+    if (!state.independent) {
+        if (state.poolMax <= 0.0) return 1.0;
+        return clamp(state.poolHealth / state.poolMax, 0.0, 1.0);
+    }
+    if (stats.health <= 0.0) return 1.0;
+    double standing = 0;
+    for (const Entity petal : live) standing += std::max(0.0, instanceHealth(world, petal));
+    return clamp(standing / (stats.health * count), 0.0, 1.0);
+}
+
 void healPlayer(World& world, Entity player, double amount) {
     if (amount <= 0.0) return;
     Health* health = world.tryGet<Health>(player);
@@ -654,6 +675,10 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                 }
             }
         }
+
+        // Last, so it reads the pool this tick's damage has already been folded
+        // into and the instances this tick's respawns have already put back.
+        slotState.healthFraction = slotHealthFraction(world, slotState, stats, count, live);
     }
 
     // Instances destroyed above are still named by the loadout's list. Dropping

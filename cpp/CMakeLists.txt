@@ -315,7 +315,7 @@ if(EMSCRIPTEN)
     "-sWASMFS"
     "-flto"
     "-msimd128"
-    "-sEVAL_CTORS=1"
+    "-sEVAL_CTORS=0"
     "-fno-rtti -fno-exceptions"
     ${FLIX_WEB_CLIENT_OPT}
     ${FLIX_EMBED_DATA}
@@ -348,7 +348,7 @@ if(EMSCRIPTEN)
     "-sFORCE_FILESYSTEM=1"
     "-flto"
     "-msimd128"
-    "-sEVAL_CTORS=1"
+    "-sEVAL_CTORS=0"
     "-lnodefs.js"
     "-sEXPORTED_RUNTIME_METHODS=['FS']"
     ${FLIX_EMBED_DATA})
