@@ -53,22 +53,47 @@ void usage(const char* program) {
 #ifdef __EMSCRIPTEN__
 /// Mounts the real directory holding `databasePath` over the same path in the
 /// virtual filesystem, so the accounts file the server reads and writes is an
-/// ordinary file on disk. Called before start(), which loads it.
-void mountDatabaseDirectory(const std::string& databasePath) {
-    const std::size_t slash = databasePath.find_last_of('/');
-    const std::string directory = slash == std::string::npos ? "." : databasePath.substr(0, slash);
-    EM_ASM({
-        const path = UTF8ToString($0);
+/// ordinary file on disk. Called before start(), which loads it. Rewrites
+/// `databasePath` to the absolute path it resolved to.
+///
+/// The resolving is the point. Node`s working directory and the emscripten
+/// filesystem`s are not the same place: the latter is always `/`, so a
+/// relative --db -- and the default is the bare `inventory.json` that
+/// `pm2 start server.js` gets -- names a file in memory that has nothing to do
+/// with the one on disk of the same name. The server then loads no accounts,
+/// saves to nowhere, and says nothing about either, which is how a database
+/// comes to look wiped while sitting intact beside the process that is
+/// ignoring it.
+bool mountDatabaseDirectory(std::string& databasePath, std::string& errorOut) {
+    // The caller owns the buffer, as in net/web_channel.cpp: a path or a
+    // failure message, and neither is worth exporting malloc for.
+    char answer[1024] = {0};
+    const int failed = EM_ASM_INT({
+        const path = require("path");
+        const fs = require("fs");
+        const file = path.resolve(UTF8ToString($0));
+        const directory = path.dirname(file);
         try {
-            FS.mkdirTree(path);
-            FS.mount(NODEFS, { root: path }, path);
+            // The directory, not the file: --db may name one that does not
+            // exist yet, which is an ordinary first run.
+            fs.mkdirSync(directory, { recursive: true });
+            FS.mkdirTree(directory);
+            FS.mount(NODEFS, { root: directory }, directory);
         } catch (e) {
-            // Already mounted, or a path Node cannot reach. Either way the
-            // server still runs; it just cannot persist, and the database
-            // layer says so itself when the write fails.
-            console.warn('[db] could not mount ' + path + ' from disk: ' + e);
+            stringToUTF8(directory + ": " + e, $1, $2);
+            return 1;
         }
-    }, directory.c_str());
+        stringToUTF8(file, $1, $2);
+        return 0;
+    }, databasePath.c_str(), answer, static_cast<int>(sizeof answer));
+
+    if (failed) {
+        errorOut = "the database directory cannot be reached from the host "
+                   "filesystem (" + std::string(answer) + ")";
+        return false;
+    }
+    databasePath = answer;
+    return true;
 }
 #endif
 
@@ -107,12 +132,18 @@ int main(int argc, char** argv) {
     // The database is neither: it has to survive a restart, so the one
     // directory it lives in is the real filesystem, mounted at the path the
     // config already names. Everything else stays in MEMFS.
-    mountDatabaseDirectory(config.databasePath);
+    std::string error;
+    // Fatal, where it used to be a warning. Every account on this server is in
+    // that one file; starting without it would serve an empty world and then
+    // persist nothing, and both halves of that are silent.
+    if (!mountDatabaseDirectory(config.databasePath, error)) {
+        std::fprintf(stderr, "could not start: %s\n", error.c_str());
+        return 1;
+    }
 
     // Leaked deliberately: main() returns as soon as the timer is armed and
     // the server has to outlive it. Node exiting is this process's exit.
     auto* server = new flix::GameServer();
-    std::string error;
     if (!server->start(config, error)) {
         std::fprintf(stderr, "could not start: %s\n", error.c_str());
         return 1;
