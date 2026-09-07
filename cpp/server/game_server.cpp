@@ -612,24 +612,27 @@ void GameServer::reapDead(double nowMillis) {
     for (const Entity e : doomed) {
         const bool isPlayer = world_.has<PlayerTag>(e);
         Session* session = isPlayer ? sessionForEntity(e) : nullptr;
+        // A bot has no session, so the roster is what tells a bot's body apart
+        // from a flower whose connection simply went away.
+        Bot* bot = isPlayer && session == nullptr ? botForEntity(e) : nullptr;
 
         // A player's corpse KEEPS its Dead tag, which is what puts the dead
         // face and the dead state on the wire and what makes every system step
         // over the body. That means this loop meets the same corpse on every
         // later tick, so everything below has to happen exactly once.
         if (isPlayer) {
-            if (session == nullptr) {
-                // Nobody is watching through this body -- a bot, or a flower
-                // whose connection went away. It leaves no corpse and no death
-                // notice, and its ring goes with it: a petal outliving its
-                // owner orbits a point in space forever.
+            if (session == nullptr && bot == nullptr) {
+                // Nobody is watching through this body and nothing owns it. It
+                // leaves no corpse and no death notice, and its ring goes with
+                // it: a petal outliving its owner orbits a point in space
+                // forever.
                 if (const Loadout* loadout = world_.tryGet<Loadout>(e)) {
                     for (const Entity petal : loadout->spawned) commands_.destroy(petal);
                 }
                 commands_.destroy(e);
                 continue;
             }
-            if (session->deathReported) continue;
+            if (session != nullptr ? session->deathReported : bot->deathAnnounced) continue;
         }
 
         if (world_.has<NetId>(e)) {
@@ -638,15 +641,24 @@ void GameServer::reapDead(double nowMillis) {
         }
 
         if (isPlayer) {
-            session->deathReported = true;
-            persistPlayer(*session);
-            if (net::Connection* connection = listener_.find(session->connection)) {
-                ByteWriter w;
-                w.u8(static_cast<std::uint8_t>(net::ServerMessage::Died));
-                w.str(killerLabel(world_, world_.get<Dead>(e).killer));
-                w.u32(0);
-                w.u32(tick_);
-                connection->send(w);
+            if (session != nullptr) {
+                session->deathReported = true;
+                persistPlayer(*session);
+                if (net::Connection* connection = listener_.find(session->connection)) {
+                    ByteWriter w;
+                    w.u8(static_cast<std::uint8_t>(net::ServerMessage::Died));
+                    w.str(killerLabel(world_, world_.get<Dead>(e).killer));
+                    w.u32(0);
+                    w.u32(tick_);
+                    connection->send(w);
+                }
+            } else {
+                // A bot leaves a corpse too, which is not tidiness: bots carry
+                // yggdrasil for each other and actively path to each other's
+                // bodies, and a body destroyed on the tick it died is one
+                // nothing can ever revive. maintainBots owns the replacement
+                // and takes this body away when it builds the new one.
+                bot->deathAnnounced = true;
             }
             if (Health* health = world_.tryGet<Health>(e)) {
                 health->current = 0;
@@ -1206,6 +1218,40 @@ void GameServer::handleInput(Session& session, ByteReader& reader) {
     }
 }
 
+namespace {
+
+/// True when a chat line names a raid tier as a bare word.
+///
+/// The reference tests `/\b(super|unique)\b/i`, and the word boundary is the
+/// whole point: "supercell" is not a raid call, and neither is a name that
+/// happens to contain the letters. Ultra is deliberately absent -- bots treat
+/// an ultra as a mob to fight, not as a rally point.
+bool mentionsRaidTier(const std::string& text) {
+    static const char* const kWords[] = {"super", "unique"};
+    const auto wordChar = [](unsigned char c) {
+        return std::isalnum(c) != 0 || c == '_';
+    };
+    for (const char* word : kWords) {
+        const std::size_t length = std::char_traits<char>::length(word);
+        for (std::size_t at = 0; at + length <= text.size(); ++at) {
+            bool match = true;
+            for (std::size_t i = 0; i < length && match; ++i) {
+                match = std::tolower(static_cast<unsigned char>(text[at + i])) == word[i];
+            }
+            if (!match) continue;
+            if (at > 0 && wordChar(static_cast<unsigned char>(text[at - 1]))) continue;
+            if (at + length < text.size() &&
+                wordChar(static_cast<unsigned char>(text[at + length]))) {
+                continue;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 void GameServer::handleChat(Session& session, net::Connection& connection, ByteReader& reader) {
     const std::string raw = reader.str();
     if (!reader.ok() || !session.authenticated()) return;
@@ -1245,6 +1291,12 @@ void GameServer::handleChat(Session& session, net::Connection& connection, ByteR
     }
 
     broadcastChat(net::ChatChannel::Global, session.username, text);
+
+    // Somebody saying "super" or "unique" rallies every bot onto the best boss
+    // in the world, exactly as the reference's chat handler does. Only those
+    // two words: an ultra is a high-tier mob to fight, never a raid to call.
+    // No-ops when no qualifying boss exists.
+    if (mentionsRaidTier(text)) triggerBotRaid(clockMillis_);
 }
 
 void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
@@ -2911,415 +2963,11 @@ void GameServer::handlePing(net::Connection& connection, ByteReader& reader) {
 // places that need an account (banking a kill, a pickup, a persist) already
 // walk the session table and simply find nothing.
 //
-// What is ported: the population loop -- target, jitter, burst cap, idle
-// retirement -- and the name-seeded level and loadout, so a bot called "m28"
-// is the same build every time it appears, exactly as over there. What is NOT
-// ported is the rest of botManager's 3700 lines: squads, boss raids, group
-// clustering, A* pathing, powder swapping, personas and the stuck-detector.
-// The controller below is the shape of its normal mode -- orbit a target at
-// petal reach, run when badly hurt, wander around an anchor otherwise -- not
-// its full decision tree.
+// What lives here is the POPULATION: the target, the jitter, the burst cap,
+// idle retirement, and the name-seeded level and loadout. What a bot DOES --
+// the whole of src/server/botManager.ts's decision tree -- is
+// server/bot_ai.cpp.
 
-namespace {
-
-/// Total flowers the world aims to hold, bots plus humans.
-constexpr int kTargetTotalPlayers = 23;
-/// How often the population is reconsidered.
-constexpr double kBotMaintainMillis = 1500.0;
-/// Bots created per maintenance pass. A deficit is filled over several passes
-/// rather than in one burst, which is what makes a restart look like players
-/// arriving instead of a crowd appearing.
-constexpr int kBotSpawnBurstCap = 4;
-/// Bots outlive an empty server by this long, so a quick reconnect does not
-/// land in a world that was emptied the moment the last player left.
-constexpr double kBotIdleTimeoutMillis = 45000.0;
-
-/// The target wanders by +-1 on a slow clock so the population drifts instead
-/// of sitting on an exact number.
-constexpr int kBotJitterMin = -3;
-constexpr int kBotJitterMax = 2;
-constexpr double kBotJitterStepChance = 0.35;
-constexpr double kBotJitterIntervalMillis = 25000.0;
-
-/// A dead bot's body is replaced after this long. Instant replacement reads as
-/// a flower that never died.
-constexpr double kBotRespawnDelayMillis = 3000.0;
-
-/// How far a bot will chase, by the tier of what it is chasing. A boss is
-/// worth crossing the map for; an ordinary mob is not.
-constexpr double kBotBossAggroRange = 4000.0;
-constexpr double kBotHighTierAggroRange = 900.0;
-constexpr double kBotAggroRange = 500.0;
-
-/// Below this fraction of its health a bot breaks off and runs.
-constexpr double kBotFleeHealthRatio = 0.22;
-/// Padding on the standoff ring, so position jitter still lands hits.
-constexpr double kBotStandoffBuffer = 18.0;
-/// How sharply the orbit controller corrects toward the standoff ring. Larger
-/// is gentler; the correction passes smoothly through zero at the ring, which
-/// is what stops a bot flipping between closing and backing off every tick.
-constexpr double kBotOrbitRadialGain = 90.0;
-
-/// The bot stays inside this of its anchor, and drops whatever it is doing to
-/// walk back past the second one.
-constexpr double kBotTetherRadius = 1400.0;
-constexpr double kBotTetherReturnRadius = 2200.0;
-
-
-} // namespace
-
-void GameServer::maintainBots(double nowMillis) {
-    // A human in the world resets the idle clock. Past the grace period with
-    // nobody online the bots are retired: there is nobody to see them, and the
-    // tick gate above has already stopped simulating anyway.
-    if (playerCount() > 0) {
-        lastHumanSeenMillis_ = nowMillis;
-    } else if (nowMillis - lastHumanSeenMillis_ >= kBotIdleTimeoutMillis) {
-        for (Bot& bot : bots_) destroyBot(bot);
-        bots_.clear();
-        return;
-    }
-
-    if (nowMillis < nextBotMaintainMillis_) return;
-    nextBotMaintainMillis_ = nowMillis + kBotMaintainMillis;
-
-    // Retire the bodies the world has already taken away -- a bot killed by a
-    // mob is reaped like any other flower -- and hand the survivors a new one
-    // once their respawn delay is up.
-    for (Bot& bot : bots_) {
-        if (bot.entity != NULL_ENTITY && !world_.isAlive(bot.entity)) {
-            bot.entity = NULL_ENTITY;
-            if (bot.respawnAtMillis <= 0) bot.respawnAtMillis = nowMillis + kBotRespawnDelayMillis;
-        }
-        if (bot.entity == NULL_ENTITY && bot.respawnAtMillis > 0 &&
-            nowMillis >= bot.respawnAtMillis) {
-            // Somewhere else entirely, as the reference respawns them: the
-            // ground it died on is exactly the ground that killed it.
-            bot.anchor = pickBotSpawn();
-            bot.entity = createBotBody(bot.name, bot.anchor);
-            bot.wanderTarget = bot.anchor;
-            bot.nextWanderMillis = 0;
-            bot.respawnAtMillis = 0;
-        }
-    }
-
-    // Drift the target by +-1 on a slow clock, bounded, so the population
-    // wanders instead of sitting on an exact number -- and slowly enough that
-    // the drift does not read as bots blinking in and out.
-    if (nowMillis >= nextBotJitterMillis_) {
-        nextBotJitterMillis_ = nowMillis + kBotJitterIntervalMillis;
-        if (rng_.chance(kBotJitterStepChance)) {
-            botCountJitter_ += rng_.chance(0.5) ? -1 : 1;
-            botCountJitter_ = std::max(kBotJitterMin, std::min(kBotJitterMax, botCountJitter_));
-        }
-    }
-
-    const int humans = static_cast<int>(playerCount());
-    // An override from `/admin set_bot_count` is an exact target, not a
-    // correction to the formula: an operator asking for twelve bots wants
-    // twelve, not twelve minus however many people are online.
-    const int desired =
-        botCountOverride_ >= 0
-            ? std::min(kMaxBots, botCountOverride_)
-            : std::min(kMaxBots, std::max(0, kTargetTotalPlayers - humans + botCountJitter_));
-    const int current = static_cast<int>(bots_.size());
-
-    if (current < desired) {
-        const int wanted = std::min(desired - current, kBotSpawnBurstCap);
-        for (int i = 0; i < wanted; ++i) {
-            Bot bot;
-            bot.name = kBotNames[rng_.below(static_cast<std::uint32_t>(std::size(kBotNames)))];
-            bot.anchor = pickBotSpawn();
-            bot.wanderTarget = bot.anchor;
-            bot.entity = createBotBody(bot.name, bot.anchor);
-            bots_.push_back(std::move(bot));
-        }
-    } else if (current > desired) {
-        // Cull the bots FARTHEST from any human first. Taking whichever came
-        // first out of the list routinely takes one standing next to a player,
-        // which simply vanishes in front of them.
-        std::vector<std::size_t> order(bots_.size());
-        for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
-        std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-            return cullScore(bots_[a]) > cullScore(bots_[b]);
-        });
-        const std::size_t excess = static_cast<std::size_t>(current - desired);
-        std::vector<bool> doomed(bots_.size(), false);
-        for (std::size_t i = 0; i < excess && i < order.size(); ++i) doomed[order[i]] = true;
-        std::vector<Bot> kept;
-        kept.reserve(bots_.size() - excess);
-        for (std::size_t i = 0; i < bots_.size(); ++i) {
-            if (doomed[i]) destroyBot(bots_[i]);
-            else kept.push_back(std::move(bots_[i]));
-        }
-        bots_ = std::move(kept);
-    }
-}
-
-double GameServer::cullScore(const Bot& bot) const {
-    // Higher culls sooner. A body the world has already taken, or one nobody
-    // is anywhere near, goes before one a player is standing next to.
-    if (bot.entity == NULL_ENTITY || !world_.isAlive(bot.entity)) {
-        return std::numeric_limits<double>::max();
-    }
-    const Transform* transform = world_.tryGet<Transform>(bot.entity);
-    if (transform == nullptr) return std::numeric_limits<double>::max();
-
-    double nearest = std::numeric_limits<double>::max();
-    for (const auto& entry : sessions_) {
-        const Session& session = entry.second;
-        if (!session.playing()) continue;
-        const Transform* other = world_.tryGet<Transform>(session.entity);
-        if (other == nullptr) continue;
-        nearest = std::min(nearest, distanceSq(other->position, transform->position));
-    }
-    // Nobody watching anyone: the order does not matter.
-    return nearest == std::numeric_limits<double>::max() ? 0.0 : nearest;
-}
-
-Vec2 GameServer::pickBotSpawn() {
-    std::vector<MobDisc> blockers;
-    collectSpawnBlockers(blockers);
-
-    // Spread over the whole map rather than piling into the beginner ground:
-    // the reference samples the spawn anchors, and a population that all lives
-    // in one corner is not the world the player is meant to walk into.
-    const std::vector<std::string>& biomes = mapData_.spawnableBiomes();
-    if (!biomes.empty()) {
-        Vec2 spawn;
-        const std::string& biome = biomes[rng_.below(static_cast<std::uint32_t>(biomes.size()))];
-        if (mapData_.spawnInBiome(biome, rng_, *terrain_, spawn, &blockers)) return spawn;
-    }
-    return mapData_.defaultSpawn(rng_, *terrain_, &blockers);
-}
-
-Entity GameServer::createBotBody(const std::string& name, Vec2 spawn) {
-    // Level and loadout are derived from the NAME, not from the spawn, so a
-    // bot called "m28" is the same flower every time it appears. The rolls
-    // come from server/bot_identity.h, which is also what the admin console's
-    // /level-from-string and /loadout-from-string answer out of -- one roll,
-    // so the console cannot describe a bot the world would not build.
-    const BotIdentity identity = botIdentityForName(name, kLoadoutActiveSlots, kMaxLevel);
-    const int level = identity.level;
-
-    const Entity entity = world_.create();
-    world_.add<PlayerTag>(entity);
-    world_.add<Transform>(entity, Transform{spawn, 0.0});
-    world_.add<Motion>(entity);
-    world_.add<Knockback>(entity);
-    world_.add<Faction>(entity, Faction{Team::Players, false});
-    world_.add<PlayerInput>(entity);
-    world_.add<PlayerLocation>(entity);
-    world_.add<PlayerModifiers>(entity);
-    world_.add<PlayerVisuals>(entity);
-    world_.add<PlayerSkillTree>(entity);
-    world_.add<Loadout>(entity);
-    world_.add<PetalRing>(entity);
-    world_.add<ContactDamage>(entity, ContactDamage{bodyDamageForLevel(level), 0.0});
-    world_.add<HitCooldowns>(entity);
-    world_.add<Afflictions>(entity);
-    world_.add<ShieldState>(entity);
-    // No userId: a bot owns no account, so every path that banks progress --
-    // kills, stars, pickups, the periodic persist -- walks the session table,
-    // finds nothing, and skips it without needing to know what a bot is.
-    world_.add<PlayerAccount>(entity, PlayerAccount{std::string(), name, 0, false});
-
-    PlayerProgress progress;
-    progress.level = level;
-    for (int l = 1; l < level; ++l) progress.totalXp += xpForNextLevel(l);
-    world_.add<PlayerProgress>(entity, progress);
-
-    Body body;
-    body.radius = playerRadiusForLevel(level);
-    body.mass = 1.0;
-    world_.add<Body>(entity, body);
-
-    Health health;
-    health.max = maxHealthForLevel(level);
-    health.current = health.max;
-    health.invulnerableUntilMillis = monotonicMillis() + kRespawnInvulnerabilitySeconds * 1000.0;
-    world_.add<Health>(entity, health);
-
-    // All ten active slots, matching a real player's maximum: a bot with five
-    // petals reads as a beginner whatever its level says.
-    Loadout& loadout = world_.get<Loadout>(entity);
-    for (std::size_t i = 0; i < identity.slots.size(); ++i) {
-        const BotIdentity::Slot& slot = identity.slots[i];
-        if (slot.petalIndex == kInvalidIndex) continue;
-        loadout.slots[i].configIndex = slot.petalIndex;
-        loadout.slots[i].rarity = slot.rarity;
-    }
-
-    world_.add<NetId>(entity, NetId{netIds_.next()});
-    Replicated replicated;
-    replicated.kind = net::EntityKind::Player;
-    world_.add<Replicated>(entity, replicated);
-    return entity;
-}
-
-void GameServer::destroyBot(Bot& bot) {
-    if (bot.entity == NULL_ENTITY) return;
-    // Before the body goes: a squad holding a destroyed entity would rank a
-    // corpse for loot, and the line its squadmates get needs its nameplate.
-    removeBotFromSquad(bot.entity);
-    if (world_.isAlive(bot.entity)) {
-        // The ring belongs to the body, not to the name, so it goes with it.
-        if (const Loadout* loadout = world_.tryGet<Loadout>(bot.entity)) {
-            for (const Entity petal : loadout->spawned) commands_.destroy(petal);
-        }
-        commands_.destroy(bot.entity);
-    }
-    bot.entity = NULL_ENTITY;
-}
-
-void GameServer::stepBots(double nowMillis) {
-    if (bots_.empty()) return;
-
-    // Bosses are worth crossing the map for, so they are collected once for the
-    // whole pass rather than asked of the broadphase at four thousand units per
-    // bot. There are a handful of them in the world at any time; every other
-    // mob is found in the ordinary cell query below.
-    botBosses_.clear();
-    Query<MobTag, MobType, Transform> bosses{world_};
-    bosses.each([&](Entity e, MobTag&, MobType& type, Transform&) {
-        if (type.rarity >= Rarity::Super && !world_.has<Dead>(e) && !world_.has<Pet>(e)) {
-            botBosses_.push_back(e);
-        }
-    });
-
-    for (Bot& bot : bots_) {
-        if (bot.entity == NULL_ENTITY || !world_.isAlive(bot.entity)) continue;
-        Transform* transform = world_.tryGet<Transform>(bot.entity);
-        PlayerInput* input = world_.tryGet<PlayerInput>(bot.entity);
-        if (transform == nullptr || input == nullptr) continue;
-
-        // A corpse holds still and waits to be replaced. maintainBots owns the
-        // replacement; this only has to stop driving it.
-        if (world_.has<Dead>(bot.entity)) {
-            input->current.moveStrength = 0;
-            input->current.flags = 0;
-            if (bot.respawnAtMillis <= 0) bot.respawnAtMillis = nowMillis + kBotRespawnDelayMillis;
-            continue;
-        }
-
-        const Vec2 at = transform->position;
-        const double ringRadius = world_.tryGet<PetalRing>(bot.entity)
-                                      ? world_.get<PetalRing>(bot.entity).radius
-                                      : kPetalOrbitRestRadius;
-        const double bodyRadius = world_.tryGet<Body>(bot.entity)
-                                      ? world_.get<Body>(bot.entity).radius
-                                      : kPlayerBaseRadius;
-
-        // --- pick something to fight -------------------------------------
-        //
-        // Nearest wins within the range its OWN tier justifies, so a boss pulls
-        // a bot in from across the map and a bee does not pull it out of its
-        // neighbourhood.
-        Entity target = NULL_ENTITY;
-        double targetDistSq = 0;
-        double targetRadius = 0;
-        const auto consider = [&](Entity candidate) {
-            if (!world_.isAlive(candidate) || world_.has<Dead>(candidate)) return;
-            if (!world_.has<MobTag>(candidate) || world_.has<Pet>(candidate)) return;
-            const MobType* type = world_.tryGet<MobType>(candidate);
-            const Transform* other = world_.tryGet<Transform>(candidate);
-            if (type == nullptr || other == nullptr) return;
-
-            double range = kBotAggroRange;
-            if (type->rarity >= Rarity::Super) range = kBotBossAggroRange;
-            else if (type->rarity >= Rarity::Epic) range = kBotHighTierAggroRange;
-
-            const double distSq = distanceSq(other->position, at);
-            if (distSq > range * range) return;
-            if (target != NULL_ENTITY && distSq >= targetDistSq) return;
-            target = candidate;
-            targetDistSq = distSq;
-            targetRadius = world_.tryGet<Body>(candidate) ? world_.get<Body>(candidate).radius : 0.0;
-        };
-
-        botCandidates_.clear();
-        grid_.query(at, kBotHighTierAggroRange, botCandidates_);
-        for (const Entity candidate : botCandidates_) consider(candidate);
-        for (const Entity boss : botBosses_) consider(boss);
-
-        // --- decide ------------------------------------------------------
-        Vec2 heading{0, 0};
-        double strength = 0;
-        bool attacking = false;
-
-        const Health* health = world_.tryGet<Health>(bot.entity);
-        const double healthRatio =
-            health != nullptr && health->max > 0 ? health->current / health->max : 1.0;
-        const double anchorDistSq = distanceSq(bot.anchor, at);
-
-        if (anchorDistSq > kBotTetherReturnRadius * kBotTetherReturnRadius) {
-            // Too far from home: drop whatever it was doing and walk back.
-            heading = bot.anchor - at;
-            strength = 1.0;
-        } else if (target != NULL_ENTITY && healthRatio < kBotFleeHealthRatio) {
-            // Break away at an angle rather than straight back: a dead-straight
-            // retreat line from a chasing mob is a bot tell.
-            const Vec2 away = at - world_.get<Transform>(target).position;
-            const double d = std::max(1e-6, away.length());
-            heading = {away.x / d - (away.y / d) * 0.35, away.y / d + (away.x / d) * 0.35};
-            strength = 1.0;
-        } else if (target != NULL_ENTITY) {
-            const Vec2 toward = world_.get<Transform>(target).position - at;
-            const double d = std::max(1e-6, toward.length());
-            const Vec2 dir{toward.x / d, toward.y / d};
-
-            // Stand where the petals reach and the body does not: the ring's
-            // far edge just touching the mob's edge, less a buffer so position
-            // jitter still lands hits, and never inside the mob's own circle.
-            const double reach = ringRadius * kPetalOrbitAttackExtension;
-            const double danger = bodyRadius + targetRadius + 6.0;
-            const double standoff =
-                std::max(danger + 8.0, reach - kBotStandoffBuffer + targetRadius - 10.0);
-
-            // A continuous orbit controller, not a ladder of distance bands: the
-            // radial correction is proportional to how far off the ring the bot
-            // is and passes smoothly through zero at the ring itself, so there
-            // is nothing for it to flip between when its distance wobbles.
-            const double error = d - standoff;
-            const double radial = clamp(error / kBotOrbitRadialGain, -1.0, 1.0);
-            const double tangential = 1.0 - 0.55 * std::min(1.0, std::fabs(radial));
-            heading = {dir.x * radial - dir.y * tangential, dir.y * radial + dir.x * tangential};
-            strength = d > standoff + 80.0 ? 0.95 : 0.28 + 0.45 * std::min(1.0, std::fabs(error) / 110.0);
-            attacking = true;
-        } else {
-            // Nothing to fight: wander around the anchor, re-picking every few
-            // seconds so the flower reads as looking around rather than
-            // marching between waypoints.
-            if (nowMillis > bot.nextWanderMillis ||
-                distanceSq(bot.wanderTarget, at) < 60.0 * 60.0) {
-                bot.nextWanderMillis = nowMillis + 3000.0 + rng_.unit() * 4000.0;
-                const double angle = rng_.angle();
-                const double distance = 200.0 + rng_.unit() * (kBotTetherRadius - 300.0);
-                const Vec2 pick = bot.anchor + Vec2::fromAngle(angle, distance);
-                bot.wanderTarget = {clamp(pick.x, kWorldBoundaryThreshold, kWorldSize - kWorldBoundaryThreshold),
-                                    clamp(pick.y, kWorldBoundaryThreshold, kWorldSize - kWorldBoundaryThreshold)};
-            }
-            heading = bot.wanderTarget - at;
-            strength = 0.6;
-        }
-
-        const double length = heading.length();
-        if (length < 1e-6) {
-            input->current.moveStrength = 0;
-        } else {
-            input->current.moveAngle = std::atan2(heading.y, heading.x);
-            input->current.moveStrength = clamp(strength, 0.0, 1.0);
-        }
-        // Petals point at what the bot is fighting, or the way it is walking.
-        input->current.aimAngle =
-            target != NULL_ENTITY
-                ? std::atan2(world_.get<Transform>(target).position.y - at.y,
-                             world_.get<Transform>(target).position.x - at.x)
-                : input->current.moveAngle;
-        input->current.flags = attacking ? static_cast<std::uint8_t>(net::InputAttack) : 0;
-        input->aimDirection = Vec2::fromAngle(input->current.aimAngle);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Player lifecycle

@@ -775,7 +775,12 @@ void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera) const {
 
             const SvgDocument* art = sprites_ ? sprites_->sectionGround(section) : nullptr;
             canvas.save();
-            clipWorldRect(canvas, camera, visiblePart);
+            // The clip is only ever doing something at the edge of the map: a
+            // tile the world rect does not cut is drawn wholly inside its own
+            // box either way, and building a full coverage mask for it was
+            // most of what this loop spent on clipping.
+            const bool cropped = visiblePart.w < tile.w || visiblePart.h < tile.h;
+            if (cropped) clipWorldRect(canvas, camera, visiblePart);
             if (art) {
                 const Vec2 at = camera.worldToScreen({tile.x, tile.y});
                 art->renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),

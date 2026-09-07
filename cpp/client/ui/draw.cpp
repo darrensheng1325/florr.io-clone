@@ -1,6 +1,9 @@
 #include "client/ui/draw.h"
 
 #include "client/ui/text.h"
+#ifndef __EMSCRIPTEN__
+#include "client/ui/text_cache.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -119,27 +122,16 @@ void paintRun(Canvas& canvas, const std::string& s, double penX, double baseline
     };
     if (fillFirst) { fillPass(); strokePass(); } else { strokePass(); fillPass(); }
 #else
-    Path2D glyphs;
-    appendGlyphs(glyphs, s, penX, baseline, style.size, style.bold);
-    if (glyphs.empty()) return;
-
-    const auto strokePass = [&] {
-        if (strokeWidth <= 0) return;
-        canvas.save();
-        canvas.setLineJoin(style.roundJoin ? "round" : "miter");
-        canvas.setLineCap("butt");
-        canvas.setLineWidth(static_cast<float>(strokeWidth));
-        setStroke(canvas, style.stroke, strokeAlpha);
-        canvas.stroke(glyphs);
-        canvas.restore();
-    };
-    const auto fillPass = [&] {
-        setFill(canvas, style.fill, fillAlpha);
-        canvas.fill(glyphs, "nonzero");
-    };
-    // Stroke first, then fill. The other order eats the glyph with its own
-    // outline, which is what every hand-rolled attempt at this gets wrong.
-    if (fillFirst) { fillPass(); strokePass(); } else { strokePass(); fillPass(); }
+    // The raster cache is the native build's answer to the glyph cache the
+    // comment on this function's declaration describes. It takes the run when
+    // it can and says so; everything it turns down -- a rotated transform, an
+    // extreme size -- goes the long way, which is the same code it bakes with.
+    if (paintRunCached(canvas, s, penX, baseline, style, strokeWidth, strokeAlpha, fillAlpha,
+                       fillFirst)) {
+        return;
+    }
+    paintRunDirect(canvas, s, penX, baseline, style, strokeWidth, strokeAlpha, fillAlpha,
+                   fillFirst);
 #endif
 }
 

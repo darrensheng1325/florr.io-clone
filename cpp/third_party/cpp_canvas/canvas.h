@@ -115,6 +115,26 @@ public:
     void setShadow(Color color, float blur, float offsetX = 0, float offsetY = 0);
     void setFont(const std::string& font); void setTextAlign(const std::string& align); void setTextBaseline(const std::string& baseline); void setDirection(const std::string& direction);
     void setImageSmoothingEnabled(bool enabled); void setImageSmoothingQuality(const std::string& quality);
+#ifndef __EMSCRIPTEN__
+    // The current transform, [a b c d e f], mapping user space to device
+    // pixels. Native only, and deliberately so: it exists for callers that
+    // cache RASTERIZED output, which have to know what one user unit is worth
+    // in pixels before they can bake anything at the right size. The browser
+    // build keeps its own glyph cache and needs no such thing.
+    std::array<float, 6> currentTransform() const;
+    // Source-over of tightly-packed 8-bit RGBA onto whole DEVICE pixels, one
+    // texel to one pixel. It honours the clip and globalAlpha but deliberately
+    // not the transform: the caller has already worked out which pixels these
+    // are, which is the only way a blit is cheaper than redrawing the artwork.
+    //
+    // drawImage is the general form and stays the general form -- it
+    // inverse-maps and filters every pixel so that a rotated or rescaled image
+    // still looks like one. Asking it to copy a bitmap onto its own pixels
+    // costs several times what rasterising the artwork would have, which is
+    // what makes this the narrow one worth having.
+    void blitDevice(const std::uint8_t* rgba, int imageWidth, int imageHeight, int deviceX,
+                    int deviceY);
+#endif
 
     void clear(Color color = Color{255, 255, 255}); void clearRect(float x, float y, float width, float height);
     void fillRect(float x, float y, float width, float height); void strokeRect(float x, float y, float width, float height);
@@ -204,6 +224,7 @@ private:
     void blendPixel(int x, int y, Color color); void paint(int x, int y, Color color, float coverage);
     float clipAt(int x, int y) const;
     std::pair<float,float> mapPoint(float x, float y) const;
+    void drawBounds(int& x0, int& y0, int& x1, int& y1) const;
     void fillDevice(const Path2D& path, bool evenOdd, Color color);
     void strokeDevice(const Path2D& path);
     void glyphs(const std::string& text, float x, float y, float maxWidth, Color color);

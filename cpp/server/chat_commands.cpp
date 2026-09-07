@@ -1038,7 +1038,9 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
     if (verb == "set_bot_count") {
         if (words.size() >= 2 && lowerCase(words[1]) == "default") {
             botCountOverride_ = -1;
-            out("Bot count override cleared (using default formula).");
+            nextBotMaintainMillis_ = 0;
+            out("Bot count override cleared (using default formula, was " +
+                plural(static_cast<int>(bots_.size()), "bot", "bots") + ").");
             return;
         }
         int requested = 0;
@@ -1051,13 +1053,24 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         }
         // Over the cap CLAMPS and applies. The browser build reported the
         // clamp and then returned without applying anything, so
-        // `set_bot_count 100` said it had capped at 50 and did nothing at all.
+        // `set_bot_count 100` said it had capped and did nothing at all.
         const int applied = std::min(requested, kMaxBots);
         botCountOverride_ = applied;
-        out(applied == requested
-                ? "Bot count target set to " + std::to_string(applied) + "."
-                : "Bot count target set to " + std::to_string(applied) + " (requested " +
-                      std::to_string(requested) + ", capped at " + std::to_string(kMaxBots) + ").");
+        // Due on the very next tick rather than up to a maintain interval
+        // later: an operator watching the count should see it move now.
+        nextBotMaintainMillis_ = 0;
+        std::string reply = "Bot count target set to " + std::to_string(applied);
+        if (applied != requested) {
+            reply += " (requested " + std::to_string(requested) + ", capped at " +
+                     std::to_string(kMaxBots) + ")";
+        }
+        // What the world held when the command ran, so the operator can see
+        // the change rather than only being told what was asked for. Phrased
+        // as the PREVIOUS count: the population is corrected on the next tick,
+        // so quoting it as "currently" would name a number that is already
+        // wrong by the time the line is read.
+        reply += " (was " + plural(static_cast<int>(bots_.size()), "bot", "bots") + ").";
+        out(reply);
         return;
     }
 

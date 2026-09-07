@@ -20,6 +20,7 @@ dist_bench/
 
 cpp/build/
 cpp/build-web/
+cpp/build-rel/
 
 # Auto-generated localhost development certificate (src/server/devCert.ts).
 # The server regenerates it whenever it expires; never commit the key.

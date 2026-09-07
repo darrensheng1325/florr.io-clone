@@ -138,6 +138,18 @@ public:
     bool spawnInBiome(const std::string& biomeName, Rng&, const Terrain&, Vec2& out,
                       const std::vector<MobDisc>* mobs = nullptr) const;
 
+    /// Picks a point inside ONE element the caller has already chosen.
+    ///
+    /// The two spawn pickers above each own a policy -- beginner ground first,
+    /// or a named biome -- and the bot population has a third: it samples the
+    /// whole set a player could legitimately appear in (every common zone and
+    /// every safe biome) uniformly, so bots turn up spread over the map rather
+    /// than stacked in the corner a fresh account starts in. That is a
+    /// different policy over the same placement test, so the test is exposed
+    /// rather than a third policy being added here.
+    bool spawnInElement(const MapElement&, Rng&, const Terrain&, Vec2& out,
+                        const std::vector<MobDisc>* mobs = nullptr) const;
+
     /// The biomes spawnInBiome() would actually accept, in map order. This is
     /// the SERVER's list: a destination it can honour without dropping the
     /// arrival somewhere lethal.

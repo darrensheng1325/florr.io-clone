@@ -139,7 +139,7 @@ constexpr ChatCommand kChatCommands[] = {
     {"/admin list-players", "List online players", true},
     {"/admin list-sockets", "List connected sockets", true},
     {"/admin set_max_enemies", "Set max enemy count", true},
-    {"/admin set_bot_count", "Set bot count (0-50, or \"default\")", true},
+    {"/admin set_bot_count", "Set bot count (0-100, or \"default\")", true},
     {"/admin spawn_special_mobs", "Spawn special mobs", true},
     {"/admin spawn", "Spawn a mob: /admin spawn <mob> <rarity> [x y] [amount] [stack]", true},
     {"/admin killall", "Kill all wild mobs (pets left intact)", true},
@@ -824,8 +824,11 @@ bool App::step() {
     frame(dt);
     // Measured around frame() and not off `dt`: dt includes the sleep that
     // frameDelay just took, so it reports the cap rather than the cost.
-    frameTimeAccum_ += (window_.timeSeconds() - timeSeconds_) * 1000.0;
+    const double frameMillis = (window_.timeSeconds() - timeSeconds_) * 1000.0;
+    frameTimeAccum_ += frameMillis;
     ++frameTimeSamples_;
+    runFrameAccum_ += frameMillis;
+    ++runFrameSamples_;
     const WorldRenderer::SectionTiming& section = renderer_.sectionTiming();
     sectionMobs_.accumMillis += section.mobsMillis;
     sectionItems_.accumMillis += section.itemsMillis;
@@ -843,6 +846,13 @@ bool App::step() {
         if (!config_.screenshotPath.empty()) {
             window_.canvas().savePPM(config_.screenshotPath);
             std::fprintf(stderr, "wrote %s\n", config_.screenshotPath.c_str());
+        }
+        // The cost of the work, with the 60Hz sleep excluded -- see
+        // runFrameAccum_. This is the number to compare between two builds.
+        if (runFrameSamples_ > 0) {
+            const double avg = runFrameAccum_ / runFrameSamples_;
+            std::fprintf(stderr, "frames=%d avg=%.2fms/frame (%.1f fps uncapped)\n",
+                         runFrameSamples_, avg, avg > 0 ? 1000.0 / avg : 0.0);
         }
         running_ = false;
     }

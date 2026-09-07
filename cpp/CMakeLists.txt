@@ -68,6 +68,12 @@ target_compile_options(cpp_canvas PRIVATE -w)   # third-party: not ours to lint
 # artifact does not link Emscripten's SDL/WebGL compatibility layer at all.
 if(NOT EMSCRIPTEN)
   target_link_libraries(cpp_canvas PUBLIC PkgConfig::SDL2)
+  # The software rasterizer splits a large fill across scanline bands on a
+  # small thread pool. Only the native build has that code at all -- the web
+  # build draws through the browser's own context -- so the dependency is
+  # attached on the same terms SDL is.
+  find_package(Threads REQUIRED)
+  target_link_libraries(cpp_canvas PUBLIC Threads::Threads)
 endif()
 
 # --- shared: engine core linked by both binaries -----------------------------
@@ -90,6 +96,7 @@ target_include_directories(flix_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(flix_server STATIC
   server/game_server.cpp
   server/account_limits.cpp
+  server/bot_ai.cpp
   server/auto_update.cpp
   server/chat_commands.cpp
   server/replication.cpp
@@ -116,6 +123,7 @@ add_library(flix_client STATIC
   client/world_view.cpp
   client/ui/draw.cpp
   client/ui/text.cpp
+  client/ui/text_cache.cpp
   client/ui/markup.cpp
   client/ui/menu_style.cpp
   client/ui/menu_widgets.cpp
@@ -313,11 +321,17 @@ if(EMSCRIPTEN)
 endif()
 
 # --- tools -------------------------------------------------------------------
-# Native only: one writes a PPM from a headless rasterizer, the other runs the
+# Native only: two write a PPM from a headless rasterizer, the other runs the
 # server's own systems.
 if(NOT EMSCRIPTEN)
 add_executable(svg_smoke tools/svg_smoke.cpp)
 target_link_libraries(svg_smoke PRIVATE flix_shared cpp_canvas)
+
+# The rasterizer's fingerprint. Build it either side of a canvas.cpp change and
+# diff the two PPMs: the coverage maths is not what any of those changes are
+# for, so a correct one moves no bytes at all. See the file's own header.
+add_executable(raster_parity tools/raster_parity.cpp)
+target_link_libraries(raster_parity PRIVATE cpp_canvas)
 
 add_executable(behavior_oracle tools/behavior_oracle.cpp)
 target_link_libraries(behavior_oracle PRIVATE flix_server)

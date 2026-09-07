@@ -377,6 +377,11 @@ Vec2 MapData::defaultSpawn(Rng& rng, const Terrain& terrain,
     return terrain.findOpenSpawn(rng, {kWorldHalf, kWorldHalf}, 600.0);
 }
 
+bool MapData::spawnInElement(const MapElement& element, Rng& rng, const Terrain& terrain,
+                             Vec2& out, const std::vector<MobDisc>* mobs) const {
+    return findOpenPoint(element.bounds, rng, terrain, out, mobs);
+}
+
 bool MapData::spawnInBiome(const std::string& biomeName, Rng& rng, const Terrain& terrain,
                            Vec2& out, const std::vector<MobDisc>* mobs) const {
     std::vector<const MapElement*> areas;

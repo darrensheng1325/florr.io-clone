@@ -295,6 +295,15 @@ private:
     double frameTimeAccum_ = 0;
     int frameTimeSamples_ = 0;
 
+    /// The same measurement over the WHOLE run rather than the last second,
+    /// which is what a --frames run reports on its way out. The rolling pair
+    /// above is reset every second for the on-screen readout, so it cannot
+    /// answer "was that build faster than this one" -- and the wall clock
+    /// cannot either, because frameDelay caps the loop at 60Hz and hides every
+    /// win below 16ms a frame.
+    double runFrameAccum_ = 0;
+    int runFrameSamples_ = 0;
+
     /// Per-layer render cost, averaged over the last whole second with that
     /// second's worst frame beside it. Both halves are wanted: the average is
     /// the steady cost, and the peak is the one-frame spike that a raw

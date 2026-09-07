@@ -12,6 +12,11 @@
 #ifndef __EMSCRIPTEN__
 #include "font.h"
 #include <SDL.h>
+#include <atomic>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
+#include <thread>
 static const Font* uiFont(unsigned char family);
 #endif
 
@@ -216,7 +221,13 @@ void flatten(const Path2D& path, const Matrix& m, float scale, Poly& out) {
     if (open) out.finish(false);
 }
 
-bool polyBounds(const Poly& p, int width, int height, int& x0, int& y0, int& x1, int& y1) {
+// The pixel box a polygon can touch, intersected with the box the caller is
+// allowed to write. That second box is the CLIP's, not just the surface's:
+// scan converting a shape and then discarding it a pixel at a time against the
+// clip is work with no output, and a full-screen fill under a small clip is
+// exactly the shape this loop takes. SkDraw narrows the same way before it
+// hands anything to SkScan.
+bool polyBounds(const Poly& p, int cx0, int cy0, int cx1, int cy1, int& x0, int& y0, int& x1, int& y1) {
     if (p.pts.empty()) return false;
     float lo=1e30f, hi=-1e30f, top=1e30f, bottom=-1e30f;
     for (size_t i=0;i<p.pts.size();i+=2) {
@@ -225,8 +236,8 @@ bool polyBounds(const Poly& p, int width, int height, int& x0, int& y0, int& x1,
         lo=std::min(lo,x); hi=std::max(hi,x); top=std::min(top,y); bottom=std::max(bottom,y);
     }
     if (hi<lo) return false;
-    x0=std::max(0,static_cast<int>(std::floor(lo))); x1=std::min(width,static_cast<int>(std::ceil(hi))+1);
-    y0=std::max(0,static_cast<int>(std::floor(top))); y1=std::min(height,static_cast<int>(std::ceil(bottom))+1);
+    x0=std::max(cx0,static_cast<int>(std::floor(lo))); x1=std::min(cx1,static_cast<int>(std::ceil(hi))+1);
+    y0=std::max(cy0,static_cast<int>(std::floor(top))); y1=std::min(cy1,static_cast<int>(std::ceil(bottom))+1);
     return x0<x1 && y0<y1;
 }
 
@@ -300,11 +311,157 @@ inline void sortCrossings(Cross* xs, size_t n, int bx0, int width,
     insertionSortByX(xs,n);
 }
 
-template <class Emit>
-void scanFill(const Poly& poly, bool evenOdd, int width, int height, Emit emit) {
-    static std::vector<Edge> edges, byRow, active; static std::vector<int> rowStart, cursor;
-    static std::vector<float> acc, run; static std::vector<Cross> xs, sorted; static std::vector<int> hist;
-    int bx0,by0,bx1,by1; if (!polyBounds(poly,width,height,bx0,by0,bx1,by1)) return;
+// --- scanline bands ---------------------------------------------------------
+// A large fill is split across threads by SCANLINE BAND. Every emit callback in
+// this file writes to storage indexed by [y*stride + x] and reads nothing that
+// another band writes, so two bands can never touch the same pixel: the split
+// is exact rather than an approximation, and the result is bit-identical to the
+// sequential walk. Coverage for a row depends only on that row's crossings, so
+// a band needs no state from the band above it beyond the edges still open at
+// its first scanline, which it rebuilds itself.
+//
+// Only BIG paths are split. Measured over a frame of the game, ~740 fills a
+// frame carry 14M bbox pixels, but 83% of that area is in the ~36 fills bigger
+// than 256x256 -- and the thousands of small ones (glyphs, HUD boxes) are a
+// twelfth of the pixels, where waking a thread costs more than the fill.
+struct FillScratch {
+    std::vector<Edge> active;
+    std::vector<float> acc, run;
+    std::vector<int> hist;
+    std::vector<Cross> xs, sorted;
+};
+
+// Threads are created once and kept. A fill this size happens dozens of times a
+// frame, and std::thread's construction alone costs more than one band's work.
+class BandPool {
+public:
+    static BandPool& instance() { static BandPool pool; return pool; }
+    int maxBands() const { return bands_; }
+    FillScratch& scratch(int band) { return scratch_[static_cast<std::size_t>(band)]; }
+
+    // Runs job(0) on the calling thread and job(1..bands-1) on the workers,
+    // returning once every band is done. Not reentrant, and does not need to
+    // be: nothing inside a fill starts another one.
+    void run(int bands, const std::function<void(int)>& job) {
+        if (bands <= 1) { job(0); return; }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            job_ = &job;
+            bandCount_ = bands;
+            next_.store(1, std::memory_order_relaxed);
+            remaining_.store(bands - 1, std::memory_order_relaxed);
+            ++generation_;
+        }
+        wake_.notify_all();
+        job(0);
+        std::unique_lock<std::mutex> lock(mutex_);
+        // BOTH conditions, and the second is not redundant: a worker decrements
+        // remaining_ when its band is done but is still inside the claim loop
+        // for a moment afterwards. Returning on remaining_ alone let the NEXT
+        // fill reset next_ under that worker, which then claimed a band from a
+        // job whose std::function had already been destroyed with the frame
+        // that made it -- a dangling call, and a crash a few seconds into a
+        // scene busy enough to thread two fills back to back.
+        idle_.wait(lock, [this] {
+            return remaining_.load(std::memory_order_acquire) == 0 && inLoop_ == 0;
+        });
+        // Nothing may call through this again until run() publishes a new one.
+        job_ = nullptr;
+    }
+
+private:
+    BandPool() {
+        const unsigned hardware = std::thread::hardware_concurrency();
+        // Capped: past a handful of bands the fill is memory-bound and the
+        // extra threads only add wake-up latency to every call.
+        bands_ = static_cast<int>(std::min(hardware ? hardware : 1u, 8u));
+        if (bands_ < 1) bands_ = 1;
+        scratch_.resize(static_cast<std::size_t>(bands_));
+        for (int i = 1; i < bands_; ++i) workers_.emplace_back([this] { loop(); });
+    }
+    ~BandPool() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+            ++generation_;
+        }
+        wake_.notify_all();
+        for (std::thread& worker : workers_) if (worker.joinable()) worker.join();
+    }
+
+    void loop() {
+        std::uint64_t seen = 0;
+        std::unique_lock<std::mutex> lock(mutex_);
+        for (;;) {
+            wake_.wait(lock, [this, seen] { return stop_ || generation_ != seen; });
+            if (stop_) return;
+            seen = generation_;
+            const std::function<void(int)>* const job = job_;
+            const int bands = bandCount_;
+            // Woke after the fill it was meant for had already finished. There
+            // is nothing to run and, more to the point, nothing valid to run.
+            if (!job) continue;
+
+            // Counted while the lock is held, so run() cannot observe zero
+            // bands outstanding and start reusing next_ while this worker is
+            // still claiming from it.
+            ++inLoop_;
+            lock.unlock();
+            // Claimed rather than assigned, so a worker that woke late does not
+            // leave its band unrun -- whoever is free takes the next one.
+            for (;;) {
+                const int band = next_.fetch_add(1, std::memory_order_relaxed);
+                if (band >= bands) break;
+                (*job)(band);
+                remaining_.fetch_sub(1, std::memory_order_acq_rel);
+            }
+            lock.lock();
+            --inLoop_;
+            // Taking the lock above is also what publishes this band's pixels
+            // to the thread waiting in run().
+            idle_.notify_all();
+        }
+    }
+
+    std::vector<std::thread> workers_;
+    std::vector<FillScratch> scratch_;
+    std::mutex mutex_;
+    std::condition_variable wake_, idle_;
+    const std::function<void(int)>* job_ = nullptr;
+    std::atomic<int> next_{0}, remaining_{0};
+    std::uint64_t generation_ = 0;
+    int bands_ = 1, bandCount_ = 0;
+    // Workers currently inside the claim loop, which is not the same as bands
+    // outstanding -- see run().
+    int inLoop_ = 0;
+    bool stop_ = false;
+};
+
+// Below these a fill stays on the calling thread. Rows, because a band thinner
+// than this rebuilds more open edges than it rasterises; area, because a tall
+// thin sliver is not worth waking anyone for.
+constexpr int kMinBandRows = 32;
+constexpr long long kMinThreadedArea = 1 << 15;
+
+// Coverage comes out of the walk below in two shapes, and they are worth
+// telling apart. A shape's EDGE gives partial coverage, one pixel at a time --
+// that is `emit`. Its INTERIOR gives coverage of exactly 1 over a run of
+// pixels, and feeding that through a per-pixel callback throws the run away:
+// the caller ends up re-deriving a constant colour and re-blending it for
+// every pixel of a flat fill, which is most of the pixels in a frame of this
+// game (ground tiles, walls, panels). `emitSpan(x0, x1, y)` hands the run over
+// whole instead, so the caller can memset it -- which is the split Skia draws
+// between SkBlitter::blitH and blitAntiH, and the reason its solid fills cost
+// what a memcpy costs.
+//
+// emitSpan(x0, x1, y) MUST be exactly equivalent to emit(x, y, 1.0f) for every
+// x in [x0, x1).
+template <class Emit, class EmitSpan>
+void scanFill(const Poly& poly, bool evenOdd, int cx0, int cy0, int cx1, int cy1, Emit emit,
+              EmitSpan emitSpan) {
+    // Shared by every band and built once, on the calling thread.
+    static std::vector<Edge> edges, byRow; static std::vector<int> rowStart, cursor;
+    int bx0,by0,bx1,by1; if (!polyBounds(poly,cx0,cy0,cx1,cy1,bx0,by0,bx1,by1)) return;
     edges.clear();
     int first=0;
     for (size_t c=0;c<poly.ends.size();++c) {
@@ -345,73 +502,109 @@ void scanFill(const Poly& poly, bool evenOdd, int width, int height, Emit emit) 
     for (const Edge& e : edges) { const int r=firstRow(e); if (r>=0) byRow[static_cast<size_t>(cursor[static_cast<size_t>(r)]++)]=e; }
 
     const size_t span_count=static_cast<size_t>(bx1-bx0);
-    acc.assign(span_count,0.f);
-    run.assign(span_count,0.f);
-    hist.assign(span_count,0);
-    active.clear();
     const float weight=1.f/kSub;
-    for (int y=by0;y<by1;++y) {
-        const float top=static_cast<float>(y);
-        // Retire the edges this scanline has passed, in place and in order:
-        // what survives is what remove_if used to leave behind.
-        size_t keep=0;
-        for (size_t i=0;i<active.size();++i) if (active[i].yhi>top) active[keep++]=active[i];
-        active.resize(keep);
-        for (int k=rowStart[static_cast<size_t>(y-by0)];k<rowStart[static_cast<size_t>(y-by0)+1];++k)
-            active.push_back(byRow[static_cast<size_t>(k)]);
-        if (active.empty()) continue;
-        int lo=bx1, hi=bx0-1;      // the x range any span touched, so the pass below walks only that
-        const auto span=[&](float a,float b){
-            a=std::max(a,static_cast<float>(bx0)); b=std::min(b,static_cast<float>(bx1));
-            if (b<=a) return;
-            int ia=static_cast<int>(std::floor(a)), ib=static_cast<int>(std::floor(b));
-            ia=std::clamp(ia,bx0,bx1-1); ib=std::clamp(ib,bx0,bx1-1);
-            if (ia==ib) acc[static_cast<size_t>(ia-bx0)]+=(b-a)*weight;
-            else {
-                // The whole-pixel interior used to be one write per pixel,
-                // which is what made a full-screen rect five passes over the
-                // width. Two difference-array entries carry it instead, summed
-                // by the running total in the emit pass below.
-                acc[static_cast<size_t>(ia-bx0)]+=(ia+1-a)*weight;
-                run[static_cast<size_t>(ia+1-bx0)]+=weight;
-                run[static_cast<size_t>(ib-bx0)]-=weight;
-                acc[static_cast<size_t>(ib-bx0)]+=(b-ib)*weight;
+
+    // One band unless the path is big enough to pay for the hand-off.
+    BandPool& pool=BandPool::instance();
+    const long long area=static_cast<long long>(rows)*static_cast<long long>(bx1-bx0);
+    int bandCount=1;
+    if (area>=kMinThreadedArea && rows>=2*kMinBandRows)
+        bandCount=std::max(1,std::min(pool.maxBands(),rows/kMinBandRows));
+
+    const auto runBand=[&](int band){
+        FillScratch& sc=pool.scratch(band);
+        std::vector<Edge>& active=sc.active;
+        std::vector<float>& acc=sc.acc; std::vector<float>& run=sc.run;
+        std::vector<int>& hist=sc.hist;
+        std::vector<Cross>& xs=sc.xs; std::vector<Cross>& sorted=sc.sorted;
+        const int ys=by0+static_cast<int>((static_cast<long long>(rows)*band)/bandCount);
+        const int ye=by0+static_cast<int>((static_cast<long long>(rows)*(band+1))/bandCount);
+        if (ys>=ye) return;
+        acc.assign(span_count,0.f);
+        run.assign(span_count,0.f);
+        hist.assign(span_count,0);
+        active.clear();
+        // What this band inherits: edges opened on a row above it and not yet
+        // retired at its first scanline. Walked in bucket order, which is the
+        // order the sequential fill holds them in -- it appends in that order
+        // and retires in place -- so the active list is identical either way.
+        for (int r=0;r<ys-by0;++r)
+            for (int k=rowStart[static_cast<size_t>(r)];k<rowStart[static_cast<size_t>(r)+1];++k)
+                if (byRow[static_cast<size_t>(k)].yhi>static_cast<float>(ys))
+                    active.push_back(byRow[static_cast<size_t>(k)]);
+        for (int y=ys;y<ye;++y) {
+            const float top=static_cast<float>(y);
+            // Retire the edges this scanline has passed, in place and in order:
+            // what survives is what remove_if used to leave behind.
+            size_t keep=0;
+            for (size_t i=0;i<active.size();++i) if (active[i].yhi>top) active[keep++]=active[i];
+            active.resize(keep);
+            for (int k=rowStart[static_cast<size_t>(y-by0)];k<rowStart[static_cast<size_t>(y-by0)+1];++k)
+                active.push_back(byRow[static_cast<size_t>(k)]);
+            if (active.empty()) continue;
+            int lo=bx1, hi=bx0-1;      // the x range any span touched, so the pass below walks only that
+            const auto span=[&](float a,float b){
+                a=std::max(a,static_cast<float>(bx0)); b=std::min(b,static_cast<float>(bx1));
+                if (b<=a) return;
+                int ia=static_cast<int>(std::floor(a)), ib=static_cast<int>(std::floor(b));
+                ia=std::clamp(ia,bx0,bx1-1); ib=std::clamp(ib,bx0,bx1-1);
+                if (ia==ib) acc[static_cast<size_t>(ia-bx0)]+=(b-a)*weight;
+                else {
+                    // The whole-pixel interior used to be one write per pixel,
+                    // which is what made a full-screen rect five passes over the
+                    // width. Two difference-array entries carry it instead, summed
+                    // by the running total in the emit pass below.
+                    acc[static_cast<size_t>(ia-bx0)]+=(ia+1-a)*weight;
+                    run[static_cast<size_t>(ia+1-bx0)]+=weight;
+                    run[static_cast<size_t>(ib-bx0)]-=weight;
+                    acc[static_cast<size_t>(ib-bx0)]+=(b-ib)*weight;
+                }
+                if (ia<lo) lo=ia;
+                if (ib>hi) hi=ib;
+            };
+            if (xs.size()<active.size()) xs.resize(active.size());
+            Cross* const cross=xs.data();
+            for (int s=0;s<kSub;++s) {
+                const float sy=y+(s+0.5f)/kSub;
+                // Branchless on purpose: whether a given edge reaches this
+                // subsample line is data the predictor cannot learn, and a
+                // mispredict costs more than the crossing does. Every slot is
+                // written and the cursor only advances for the ones that count,
+                // which is safe because `xs` is sized for the whole active list.
+                size_t nx=0;
+                for (const Edge& ed : active) {
+                    cross[nx].x=ed.x0+(sy-ed.y0)*ed.slope;
+                    cross[nx].dir=ed.dir;
+                    nx += (sy>=ed.ylo && sy<ed.yhi) ? 1u : 0u;
+                }
+                if (nx<2) continue;
+                sortCrossings(cross,nx,bx0,bx1-bx0,hist,sorted);
+                float winding=0; int crossings=0;
+                for (size_t i=0;i+1<nx;++i) {
+                    winding+=cross[i].dir; ++crossings;
+                    if (evenOdd ? (crossings&1) : (winding!=0)) span(cross[i].x, cross[i+1].x);
+                }
             }
-            if (ia<lo) lo=ia;
-            if (ib>hi) hi=ib;
-        };
-        if (xs.size()<active.size()) xs.resize(active.size());
-        Cross* const cross=xs.data();
-        for (int s=0;s<kSub;++s) {
-            const float sy=y+(s+0.5f)/kSub;
-            // Branchless on purpose: whether a given edge reaches this
-            // subsample line is data the predictor cannot learn, and a
-            // mispredict costs more than the crossing does. Every slot is
-            // written and the cursor only advances for the ones that count,
-            // which is safe because `xs` is sized for the whole active list.
-            size_t nx=0;
-            for (const Edge& ed : active) {
-                cross[nx].x=ed.x0+(sy-ed.y0)*ed.slope;
-                cross[nx].dir=ed.dir;
-                nx += (sy>=ed.ylo && sy<ed.yhi) ? 1u : 0u;
+            if (lo>hi) continue;
+            float carry=0;
+            // The interior is saturated rather than merely large: the run
+            // array takes one `weight` per subsample line and there are kSub
+            // of them, so a wholly covered pixel accumulates to 1 (a hair over
+            // it, in float, which is what the old min() was trimming).
+            int runStart=-1;
+            for (int x=lo;x<=hi;++x) {
+                const size_t k=static_cast<size_t>(x-bx0);
+                carry+=run[k]; run[k]=0;
+                const float a=acc[k]+carry; acc[k]=0;
+                if (a>=1.f) { if (runStart<0) runStart=x; continue; }
+                if (runStart>=0) { emitSpan(runStart,x,y); runStart=-1; }
+                if (a>0.002f) emit(x,y,a);
             }
-            if (nx<2) continue;
-            sortCrossings(cross,nx,bx0,bx1-bx0,hist,sorted);
-            float winding=0; int crossings=0;
-            for (size_t i=0;i+1<nx;++i) {
-                winding+=cross[i].dir; ++crossings;
-                if (evenOdd ? (crossings&1) : (winding!=0)) span(cross[i].x, cross[i+1].x);
-            }
+            if (runStart>=0) emitSpan(runStart,hi+1,y);
         }
-        if (lo>hi) continue;
-        float carry=0;
-        for (int x=lo;x<=hi;++x) {
-            const size_t k=static_cast<size_t>(x-bx0);
-            carry+=run[k]; run[k]=0;
-            const float a=acc[k]+carry; acc[k]=0;
-            if (a>0.002f) emit(x,y,std::min(1.f,a));
-        }
-    }
+
+    };
+    if (bandCount>1) pool.run(bandCount,runBand); else runBand(0);
 }
 
 // Source-over onto one pixel, split so the two cases that carry a frame stay
@@ -825,6 +1018,31 @@ void Canvas::resetTransform() {
   state_.matrix={1,0,0,1,0,0};
 #endif
 }
+#ifndef __EMSCRIPTEN__
+std::array<float,6> Canvas::currentTransform() const { return state_.matrix; }
+void Canvas::blitDevice(const std::uint8_t* rgba,int iw,int ih,int dx,int dy) {
+  if (!rgba || iw<=0 || ih<=0 || state_.alpha<=0) return;
+  const int x0=std::max(0,dx), x1=std::min(width_,dx+iw);
+  const int y0=std::max(0,dy), y1=std::min(height_,dy+ih);
+  if (x0>=x1||y0>=y1) return;
+  const bool clipped=state_.clip!=nullptr;
+  const float alpha=state_.alpha;
+  for (int y=y0;y<y1;++y) {
+    const std::uint8_t* src=rgba+(static_cast<std::size_t>(y-dy)*iw+(x0-dx))*4;
+    Color* dst=pixels_.data()+static_cast<std::size_t>(y)*width_+x0;
+    for (int x=x0;x<x1;++x,src+=4,++dst) {
+      // Fully transparent is the common case over a run's bounding box -- a
+      // glyph covers a fraction of the box it is baked into -- so it is the
+      // first thing tested and the cheapest thing to skip.
+      if (src[3]==0) continue;
+      float a=src[3]*(1.f/255.f)*alpha;
+      if (clipped) a*=clipAt(x,y);
+      if (a<=0.f) continue;
+      blend(*dst,Color{src[0],src[1],src[2],255},a);
+    }
+  }
+}
+#endif
 // The css() string is only ever read by the browser context, so building it on
 // the native path was one heap allocation per colour change per frame.
 void Canvas::setFillStyle(Color c){fill_=c;
@@ -928,11 +1146,24 @@ void Canvas::clearRect(float a,float b,float c,float d) {
 #ifndef __EMSCRIPTEN__
   Path2D box; box.rect(a,b,c,d);
   flatten(box, state_.matrix, matrixScale(state_.matrix), gFlat);
-  scanFill(gFlat,false,width_,height_,[&](int x,int y,float cov){
+  int cx0,cy0,cx1,cy1; drawBounds(cx0,cy0,cx1,cy1);
+  const bool clippedClear=state_.clip!=nullptr;
+  scanFill(gFlat,false,cx0,cy0,cx1,cy1,[&](int x,int y,float cov){
     const float keep=1.f-cov*clipAt(x,y);
     Color& p=pixels_[static_cast<size_t>(y)*width_+x];
     p.a=static_cast<std::uint8_t>(std::lround(p.a*keep));
     if (p.a==0) p=Color{0,0,0,0};
+  }, [&](int x0,int x1,int y){
+    Color* const row=pixels_.data()+static_cast<size_t>(y)*width_;
+    // keep == 0 for the whole run, and a pixel whose alpha reaches zero is
+    // cleared outright -- the same two lines the per-pixel form ends on.
+    if (!clippedClear) { std::fill(row+x0,row+x1,Color{0,0,0,0}); return; }
+    for (int x=x0;x<x1;++x) {
+      const float keep=1.f-clipAt(x,y);
+      Color& p=row[x];
+      p.a=static_cast<std::uint8_t>(std::lround(p.a*keep));
+      if (p.a==0) p=Color{0,0,0,0};
+    }
   });
 #endif
 }
@@ -1042,8 +1273,10 @@ void Canvas::clip(const Path2D&p,const std::string&s) {
   flatten(p, state_.matrix, matrixScale(state_.matrix), gFlat);
   auto mask=std::make_shared<ClipMask>();
   int x0,y0,x1,y1;
-  if (!polyBounds(gFlat,width_,height_,x0,y0,x1,y1)) { mask->x0=mask->y0=mask->x1=mask->y1=0; state_.clip=mask; return; }
-  if (const ClipMask* old=state_.clip.get()) { x0=std::max(x0,old->x0); y0=std::max(y0,old->y0); x1=std::min(x1,old->x1); y1=std::min(y1,old->y1); }
+  // Narrowed by the clip already in force: a nested clip can only ever shrink
+  // the region, so the outer one bounds the rasterisation of the inner.
+  int cx0,cy0,cx1,cy1; drawBounds(cx0,cy0,cx1,cy1);
+  if (!polyBounds(gFlat,cx0,cy0,cx1,cy1,x0,y0,x1,y1)) { mask->x0=mask->y0=mask->x1=mask->y1=0; state_.clip=mask; return; }
   if (x1<=x0||y1<=y0) { mask->x0=mask->y0=mask->x1=mask->y1=0; state_.clip=mask; return; }
   mask->x0=x0; mask->y0=y0; mask->x1=x1; mask->y1=y1;
   mask->alpha.assign(static_cast<size_t>(x1-x0)*(y1-y0),0);
@@ -1051,12 +1284,18 @@ void Canvas::clip(const Path2D&p,const std::string&s) {
   std::uint8_t* const cells=mask->alpha.data();
   const int maskStride=x1-x0;
   const bool nested=state_.clip!=nullptr;
-  scanFill(gFlat,evenOdd,width_,height_,[&](int x,int y,float cov){
-    if (x<x0||x>=x1||y<y0||y>=y1) return;
+  scanFill(gFlat,evenOdd,x0,y0,x1,y1,[&](int x,int y,float cov){
     // scanFill only emits coverage in (0,1], so the clamp is only needed
     // once an outer mask has been multiplied in.
     const float v=nested ? std::clamp(cov*clipAt(x,y),0.f,1.f) : cov;
     cells[static_cast<size_t>(y-y0)*maskStride+(x-x0)]=static_cast<std::uint8_t>(std::lround(v*255));
+  }, [&](int sx0,int sx1,int y){
+    std::uint8_t* const row=cells+static_cast<size_t>(y-y0)*maskStride-x0;
+    // Unnested, the interior of a clip is simply opaque -- which is what most
+    // clips in this client are, being one rectangle over nothing.
+    if (!nested) { std::memset(row+sx0,255,static_cast<size_t>(sx1-sx0)); return; }
+    for (int x=sx0;x<sx1;++x)
+      row[x]=static_cast<std::uint8_t>(std::lround(std::clamp(clipAt(x,y),0.f,1.f)*255));
   });
   state_.clip=mask;
 #endif
@@ -1270,6 +1509,15 @@ bool Canvas::showWindow(const std::string& title, const std::function<void(Canva
 }
 #ifndef __EMSCRIPTEN__
 std::pair<float,float> Canvas::mapPoint(float x,float y) const { const auto& m=state_.matrix; return {m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5]}; }
+// The box any draw on this canvas may write: the surface, narrowed by the clip
+// if there is one. Empty when the clip has already excluded everything.
+void Canvas::drawBounds(int& x0,int& y0,int& x1,int& y1) const {
+  x0=0; y0=0; x1=width_; y1=height_;
+  if (const ClipMask* c=state_.clip.get()) {
+    x0=std::max(x0,c->x0); y0=std::max(y0,c->y0);
+    x1=std::min(x1,c->x1); y1=std::min(y1,c->y1);
+  }
+}
 float Canvas::clipAt(int x,int y) const {
   const ClipMask* c=state_.clip.get(); if (!c) return 1.f;
   if (x<c->x0||x>=c->x1||y<c->y0||y>=c->y1) return 0.f;
@@ -1313,9 +1561,22 @@ void Canvas::fillDevice(const Path2D& path, bool evenOdd, Color color) {
   const int stride=width_;
   const float alpha=state_.alpha;
   const bool clipped=state_.clip!=nullptr;
-  scanFill(gFlat, evenOdd, width_, height_, [&](int x,int y,float cov){
+  int cx0,cy0,cx1,cy1; drawBounds(cx0,cy0,cx1,cy1);
+  // textCoverage(1,..) is 1 whichever ramp applies, so an interior run's source
+  // alpha is just the global alpha -- hoisted out of the run entirely.
+  const float solid=alpha;
+  const bool memsettable = !clipped && solid>=1.f && color.a==255;
+  const Color opaque{color.r,color.g,color.b,255};
+  scanFill(gFlat, evenOdd, cx0,cy0,cx1,cy1, [&](int x,int y,float cov){
     const float a=textCoverage(cov,glyph)*alpha;
     blend(surface[static_cast<size_t>(y)*stride+x], color, clipped ? a*clipAt(x,y) : a);
+  }, [&](int x0,int x1,int y){
+    Color* const row=surface+static_cast<size_t>(y)*stride;
+    // An opaque colour at full coverage IS the destination -- blend's own
+    // sa>=1 case writes exactly this -- so the run is a store, not a blend.
+    if (memsettable) { std::fill(row+x0,row+x1,opaque); return; }
+    if (!clipped) { for (int x=x0;x<x1;++x) blend(row[x],color,solid); return; }
+    for (int x=x0;x<x1;++x) blend(row[x],color,solid*clipAt(x,y));
   });
 }
 void Canvas::strokeDevice(const Path2D& path) {
@@ -1345,9 +1606,17 @@ void Canvas::strokeDevice(const Path2D& path) {
   const int stride=width_;
   const float alpha=state_.alpha;
   const bool clipped=state_.clip!=nullptr;
-  scanFill(gDevice, false, width_, height_, [&](int x,int y,float cov){
+  int cx0,cy0,cx1,cy1; drawBounds(cx0,cy0,cx1,cy1);
+  const bool memsettable = !clipped && alpha>=1.f && color.a==255;
+  const Color opaque{color.r,color.g,color.b,255};
+  scanFill(gDevice, false, cx0,cy0,cx1,cy1, [&](int x,int y,float cov){
     const float a=cov*alpha;
     blend(surface[static_cast<size_t>(y)*stride+x], color, clipped ? a*clipAt(x,y) : a);
+  }, [&](int x0,int x1,int y){
+    Color* const row=surface+static_cast<size_t>(y)*stride;
+    if (memsettable) { std::fill(row+x0,row+x1,opaque); return; }
+    if (!clipped) { for (int x=x0;x<x1;++x) blend(row[x],color,alpha); return; }
+    for (int x=x0;x<x1;++x) blend(row[x],color,alpha*clipAt(x,y));
   });
 }
 // The system face for each generic family, loaded once on first use. A missing

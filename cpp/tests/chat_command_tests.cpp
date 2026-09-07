@@ -398,17 +398,20 @@ TEST(set_bot_count_clamps_and_applies) {
     CHECK(loginAs(h, client, "boss", "password7"));
 
     // The browser build reported the clamp and then returned WITHOUT applying
-    // anything, so `set_bot_count 100` said it had capped at 50 and did
-    // nothing. Both halves are asserted: the wording, and that it applied.
-    CHECK(say(h, client, "/admin set_bot_count 100"));
+    // anything, so a count over the cap said it had capped and did nothing.
+    // Both halves are asserted: the wording, and that it applied. The number
+    // is derived from the cap rather than written out, so raising the ceiling
+    // does not silently turn this into a test of the un-clamped path.
+    CHECK(say(h, client, "/admin set_bot_count " + std::to_string(kMaxBots + 50)));
     CHECK(sawText(client, "capped at " + std::to_string(kMaxBots)));
 
     CHECK(say(h, client, "/admin set_bot_count default"));
     CHECK(sawText(client, "override cleared"));
 
-    // A double space is not an error worth a diagnostic.
+    // A double space is not an error worth a diagnostic. The reply carries the
+    // previous population after the target, so this matches the target alone.
     CHECK(say(h, client, "/admin set_bot_count  4"));
-    CHECK(sawText(client, "Bot count target set to 4."));
+    CHECK(sawText(client, "Bot count target set to 4 (was "));
 }
 
 TEST(generate_code_mints_a_redeemable_code) {
