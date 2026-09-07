@@ -37,6 +37,9 @@ struct EffectParticle {
     double lifeSeconds = 0;
     double maxLifeSeconds = 1;
     double size = 1;
+    /// Radians the grain is turned by. Only the square grains show it; a disc
+    /// looks the same at every angle, so theirs stays zero.
+    double rotation = 0;
     std::uint32_t color = 0xFFFFFFu;
 };
 
@@ -47,6 +50,10 @@ struct Effect {
     /// body of its own -- only its particles are drawn.
     enum class Kind : std::uint8_t { DamageNumber, Explosion, Sparkle };
     Kind kind = Kind::DamageNumber;
+    /// Sparkle only: a drop's grains are hard-cornered squares, a petal's are
+    /// discs. Kept per effect rather than per particle because one burst is
+    /// all of one shape.
+    bool squareParticles = false;
     Vec2 position;
     Vec2 drift;
     double value = 0;
@@ -84,6 +91,10 @@ struct DyingDrop {
     /// Only meaningful in the live table: cleared every frame so a drop that
     /// stopped being sent can be told apart from one that is still there.
     bool seenThisFrame = false;
+    /// Only meaningful in the live table: fractional grains owed by the
+    /// shimmer's steady emission rate, carried between frames so the rate does
+    /// not depend on how long a frame happened to be.
+    double sparkleCredit = 0;
 };
 
 /// A mob the server has already destroyed, kept alive locally for the 200 ms
@@ -289,6 +300,14 @@ private:
     const Terrain* terrain_ = nullptr;
     const MapData* map_ = nullptr;
     std::vector<Effect> effects_;
+
+    /// The drop shimmer, kept apart from the effect pool. It emits a steady
+    /// trickle rather than periodic bursts, so its grains have no shared
+    /// birth, no shared death, and nothing to group them by: one flat pool of
+    /// independent particles is what that is. Putting them in `effects_` would
+    /// also starve it -- a single drop keeps roughly a hundred grains alive,
+    /// and the pool holds 256 effects for the whole screen.
+    std::vector<EffectParticle> dropSparkles_;
 
     /// The drops on screen, by net id, and what each was last seen holding. A
     /// removal arrives as an absence rather than an event, so the outgoing

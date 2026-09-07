@@ -113,10 +113,79 @@ constexpr double kSparkleChance = 0.1;
 constexpr int kSparkleCount = 8;
 constexpr double kSparkleLifeSeconds = 3.0;
 /// A drop throws a shorter, faster burst of the same particles when it lands.
-constexpr int kDropBurstCount = 10;
+constexpr int kDropBurstCount = 7;
 constexpr double kDropBurstLifeSeconds = 0.7;
-/// Both bursts are the rarity colour blended halfway to white.
+/// A petal's shimmer is the rarity colour blended halfway to white. A drop's
+/// is the rarity colour itself -- only its alpha moves, so the grains read as
+/// the drop's own rarity rather than as a wash of white.
 constexpr double kSparkleWhiten = 0.5;
+constexpr double kDropSparkleWhiten = 0.0;
+/// A drop's grains are five times a petal's and vary widely in size, so it
+/// throws far fewer of them: at this scale a petal's count would read as a
+/// solid slab rather than as a scatter. Base plus a spread of twice the base
+/// puts the mean at 5x the petal grain with a 3:1 spread between the smallest
+/// and the largest.
+///
+/// Grains per second a drop emits, as a steady trickle. The shimmer used to
+/// roll a 10%-per-frame chance to throw six at once -- six emissions a second,
+/// six grains each -- so 36 a second is that same density arriving evenly
+/// instead of in clumps.
+constexpr double kDropSparkleRate = 36.0;
+constexpr double kDropSparkleSpeed = 1.2;
+constexpr double kDropSparkleSpeedSpread = 1.2;
+constexpr double kDropSparkleLifeMs = 2000.0;
+constexpr double kDropSparkleLifeSpreadMs = 1000.0;
+/// A drop keeps roughly rate x life grains alive, so a screen of them is
+/// bounded here rather than by the effect pool it no longer shares.
+constexpr std::size_t kMaxDropSparkles = 512;
+constexpr double kDropSparkleSize = 5.0;
+constexpr double kDropSparkleSizeSpread = 10.0;
+constexpr double kDropBurstSize = 7.5;
+constexpr double kDropBurstSizeSpread = 15.0;
+
+/// What tells a drop's shimmer apart from a petal's. A petal's grains keep the
+/// browser build's spoked emission -- evenly spaced angles with a little
+/// jitter -- because that is what the shipped build looks like. A drop's
+/// scatter instead: with only a handful in flight at a time, evenly spaced
+/// angles read as spokes rather than as a burst, so each grain picks its own
+/// direction and its own facing.
+struct SparkleStyle {
+    double whiten = 0;
+    bool square = false;
+    bool scatter = false;
+};
+constexpr SparkleStyle kPetalSparkleStyle{kSparkleWhiten, false, false};
+constexpr SparkleStyle kDropSparkleStyle{kDropSparkleWhiten, true, true};
+/// A grain never paints solid: the shimmer sits over the body it came off.
+constexpr double kSparkleAlpha = 0.6;
+
+/// One shimmer grain, wherever it is pooled. It shrinks and fades on its own
+/// clock rather than on any effect's, and a square one is walked as a
+/// four-point path rather than pushed through the transform stack -- at this
+/// size a grain is four lineTo calls, and a save/rotate/restore per grain
+/// costs the rasterizer more than the square itself does.
+void drawSparkleGrain(Canvas& canvas, const Camera& camera, const EffectParticle& p, bool square) {
+    const double left = p.lifeSeconds / p.maxLifeSeconds;
+    if (left <= 0) return;
+    const Vec2 at = camera.worldToScreen(p.position);
+    const double r = p.size * left * camera.zoom();
+    ui::setFill(canvas, p.color, left * kSparkleAlpha);
+    if (!square) {
+        canvas.fillCircle(static_cast<float>(at.x), static_cast<float>(at.y),
+                          static_cast<float>(r));
+        return;
+    }
+    // Hard corners, no radius, turned to its own facing.
+    const double c = std::cos(p.rotation) * r;
+    const double s = std::sin(p.rotation) * r;
+    canvas.beginPath();
+    canvas.moveTo(static_cast<float>(at.x - c + s), static_cast<float>(at.y - s - c));
+    canvas.lineTo(static_cast<float>(at.x + c + s), static_cast<float>(at.y + s - c));
+    canvas.lineTo(static_cast<float>(at.x + c - s), static_cast<float>(at.y + s + c));
+    canvas.lineTo(static_cast<float>(at.x - c - s), static_cast<float>(at.y - s + c));
+    canvas.closePath();
+    canvas.fill();
+}
 
 /// A poison tick is purple and stands 14 units to the right of the body, so a
 /// petal hit landing in the same tick cannot stack on top of it.
@@ -489,7 +558,8 @@ void WorldRenderer::ingestEvents(WorldView& view) {
     // debris is.
     const auto pushSparkle = [this](Vec2 at, Rarity rarity, int count, double speedBase,
                                     double speedSpread, double lifeBase, double lifeSpread,
-                                    double sizeBase, double sizeSpread, double lifetime) {
+                                    double sizeBase, double sizeSpread, double lifetime,
+                                    SparkleStyle style) {
         // Half the pool, not all of it. The browser build keeps its shimmer in
         // a separate array from its damage numbers; sharing one here without a
         // reservation lets a loadout of ultra petals fill the pool and silence
@@ -499,10 +569,12 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         e.kind = Effect::Kind::Sparkle;
         e.position = at;
         e.lifeSeconds = lifetime;
-        const std::uint32_t color = mixWithWhite(rarityColor(rarity), kSparkleWhiten);
+        e.squareParticles = style.square;
+        const std::uint32_t color = mixWithWhite(rarityColor(rarity), style.whiten);
         e.particles.reserve(static_cast<std::size_t>(count));
         for (int i = 0; i < count; ++i) {
-            const double angle = kTau * i / count + randomUnit() * 0.3;
+            const double angle =
+                style.scatter ? randomUnit() * kTau : kTau * i / count + randomUnit() * 0.3;
             const double speed = (speedBase + randomUnit() * speedSpread) * kFramesPerSecond;
             const double life = (lifeBase + randomUnit() * lifeSpread) / 1000.0;
             EffectParticle particle;
@@ -511,10 +583,31 @@ void WorldRenderer::ingestEvents(WorldView& view) {
             particle.velocity = {std::cos(angle) * speed, std::sin(angle) * speed};
             particle.lifeSeconds = particle.maxLifeSeconds = life;
             particle.size = sizeBase + randomUnit() * sizeSpread;
+            particle.rotation = style.square ? randomUnit() * kTau : 0.0;
             particle.color = color;
             e.particles.push_back(particle);
         }
         effects_.push_back(std::move(e));
+    };
+
+    // One grain of a drop's shimmer. Emitted singly and continuously rather
+    // than a burst at a time, so it goes straight into the flat pool with no
+    // effect wrapping it: it shares nothing with the grains around it.
+    const auto pushDropSparkle = [this](Vec2 at, Rarity rarity) {
+        if (dropSparkles_.size() >= kMaxDropSparkles) return;
+        const double angle = randomUnit() * kTau;
+        const double speed =
+            (kDropSparkleSpeed + randomUnit() * kDropSparkleSpeedSpread) * kFramesPerSecond;
+        EffectParticle particle;
+        particle.position = {at.x + (randomUnit() - 0.5) * 4.0,
+                             at.y + (randomUnit() - 0.5) * 4.0};
+        particle.velocity = {std::cos(angle) * speed, std::sin(angle) * speed};
+        particle.lifeSeconds = particle.maxLifeSeconds =
+            (kDropSparkleLifeMs + randomUnit() * kDropSparkleLifeSpreadMs) / 1000.0;
+        particle.size = kDropSparkleSize + randomUnit() * kDropSparkleSizeSpread;
+        particle.rotation = randomUnit() * kTau;
+        particle.color = mixWithWhite(rarityColor(rarity), kDropSparkleStyle.whiten);
+        dropSparkles_.push_back(particle);
     };
 
     for (const ViewEvent& event : view.events()) {
@@ -659,8 +752,9 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         spawn.distance = kDropSpawnNear + randomUnit() * kDropSpawnSpread;
         spawn.rotation = (randomUnit() - 0.5) * kTau;
         dropSpawns_[entity.netId] = spawn;
-        pushSparkle(entity.position, entity.rarity, kDropBurstCount, 1.5, 1.5, 400.0, 200.0,
-                    2.0, 2.0, kDropBurstLifeSeconds);
+        pushSparkle(entity.position, entity.rarity, kDropBurstCount, 3.0, 3.0, 500.0, 250.0,
+                    kDropBurstSize, kDropBurstSizeSpread, kDropBurstLifeSeconds,
+                    kDropSparkleStyle);
     }
     for (auto it = knownDrops_.begin(); it != knownDrops_.end();) {
         if (it->second.seenThisFrame) {
@@ -689,12 +783,27 @@ void WorldRenderer::ingestEvents(WorldView& view) {
     if (chance <= 0.0) return;
     for (const auto& entry : view.entities()) {
         const RemoteEntity& entity = entry.second;
-        const bool shimmers =
-            entity.kind == net::EntityKind::Petal || entity.kind == net::EntityKind::Drop;
-        if (!shimmers || !sparklingRarity(entity.rarity)) continue;
+        if (!sparklingRarity(entity.rarity)) continue;
+
+        if (entity.kind == net::EntityKind::Drop) {
+            // A steady stream, not a roll: the drop is owed a fraction of a
+            // grain per frame and emits whenever that has added up to a whole
+            // one, which keeps the rate the same at 60 Hz and at 144.
+            auto known = knownDrops_.find(entity.netId);
+            if (known == knownDrops_.end()) continue;
+            double& credit = known->second.sparkleCredit;
+            credit += kDropSparkleRate * sinceLast;
+            while (credit >= 1.0) {
+                credit -= 1.0;
+                pushDropSparkle(entity.position, entity.rarity);
+            }
+            continue;
+        }
+
+        if (entity.kind != net::EntityKind::Petal) continue;
         if (randomUnit() >= chance) continue;
-        pushSparkle(entity.position, entity.rarity, kSparkleCount, 0.5, 0.5, 2000.0, 1000.0,
-                    1.0, 2.0, kSparkleLifeSeconds);
+        pushSparkle(entity.position, entity.rarity, kSparkleCount, 0.5, 0.5, 2000.0, 1000.0, 1.0,
+                    2.0, kSparkleLifeSeconds, kPetalSparkleStyle);
     }
 }
 
@@ -710,6 +819,14 @@ void WorldRenderer::update(double dt) {
     effects_.erase(std::remove_if(effects_.begin(), effects_.end(),
                                   [](const Effect& e) { return e.ageSeconds >= e.lifeSeconds; }),
                    effects_.end());
+
+    for (EffectParticle& p : dropSparkles_) {
+        p.position += p.velocity * dt;
+        p.lifeSeconds -= dt;
+    }
+    dropSparkles_.erase(std::remove_if(dropSparkles_.begin(), dropSparkles_.end(),
+                                       [](const EffectParticle& p) { return p.lifeSeconds <= 0; }),
+                        dropSparkles_.end());
 
     for (auto& entry : dropSpawns_) entry.second.ageSeconds += dt;
     for (auto it = dropSpawns_.begin(); it != dropSpawns_.end();) {
@@ -2138,6 +2255,10 @@ void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
 void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
     const double zoom = camera.zoom();
 
+    // The drop shimmer first: it is ground-level glitter and must not sit over
+    // a damage number or an explosion that happens to share its patch.
+    for (const EffectParticle& p : dropSparkles_) drawSparkleGrain(canvas, camera, p, true);
+
     for (const Effect& e : effects_) {
         const double t = clamp(e.ageSeconds / e.lifeSeconds, 0.0, 1.0);
 
@@ -2187,15 +2308,9 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
                 break;
             }
             case Effect::Kind::Sparkle: {
-                // Particles only: the shimmer has no body, and each grain
-                // shrinks and fades on its own clock rather than the effect's.
+                // Particles only: the shimmer has no body of its own.
                 for (const EffectParticle& p : e.particles) {
-                    const double left = p.lifeSeconds / p.maxLifeSeconds;
-                    if (left <= 0) continue;
-                    const Vec2 at = camera.worldToScreen(p.position);
-                    ui::setFill(canvas, p.color, left * 0.6);
-                    canvas.fillCircle(static_cast<float>(at.x), static_cast<float>(at.y),
-                                      static_cast<float>(p.size * left * zoom));
+                    drawSparkleGrain(canvas, camera, p, e.squareParticles);
                 }
                 break;
             }
