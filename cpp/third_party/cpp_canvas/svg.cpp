@@ -1376,6 +1376,7 @@ struct SvgDocument::Scene {
     svgc::Node root;
     std::vector<svgc::Clip> clips;
     bool spills = false;
+    bool animated = false;
 };
 
 namespace svgc {
@@ -1403,9 +1404,25 @@ void drawNode(const Node& n, const std::vector<Clip>& clips, Canvas& canvas, flo
     alpha *= std::min(1.f, std::max(0.f, opacity));
     if (alpha <= 0.002f) return;
 
-    canvas.save();
+    // A node's scope is only ever undoing three things: a transform, a clip,
+    // and a dash. Everything else it touches -- fill, stroke, width, cap, join,
+    // miter -- is written again by the next node that uses it, and the document
+    // as a whole is already inside renderFitted's own save, so nothing leaks
+    // past the picture. A leaf with none of the three therefore needs no scope
+    // at all, and most leaves are exactly that: on the title screen this was
+    // ~240 save/restore pairs a frame, and in the browser each pair is two
+    // calls out of wasm and two pushes of the context's state machine.
+    //
+    // The dash is in the list because it is the one style a node sets
+    // conditionally (`if (!dash.empty())`), so an undashed stroke after a
+    // dashed one does NOT rewrite it. Keeping the scope whenever this node
+    // declares a dash is what contains that, and it composes: a descendant
+    // that declares one keeps its own scope inside this one.
+    const bool clipped = n.clip >= 0 && n.clip < static_cast<int>(clips.size());
+    const bool scoped = transformed || clipped || !n.style.dash.empty();
+    if (scoped) canvas.save();
     if (transformed) canvas.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
-    if (n.clip >= 0 && n.clip < static_cast<int>(clips.size())) {
+    if (clipped) {
         const Clip& clip = clips[n.clip];
         canvas.clip(clip.path, clip.evenOdd ? "evenodd" : "nonzero");
     }
@@ -1482,7 +1499,7 @@ void drawNode(const Node& n, const std::vector<Clip>& clips, Canvas& canvas, flo
         if (n.imageSlice) canvas.restore();
     }
     for (const Node& kid : n.kids) drawNode(kid, clips, canvas, time, alpha);
-    canvas.restore();
+    if (scoped) canvas.restore();
 }
 
 Mat viewportMatrix(float vx, float vy, float vw, float vh, unsigned char align, unsigned char meet,
@@ -1564,6 +1581,16 @@ SvgDocument SvgDocument::fromString(const std::string& source) {
     Box bounds;
     measure(scene.root, kUnit, bounds);
     const float slack = 0.01f * std::max(document.viewW_, document.viewH_);
+    // Asked once, at build time: whether anything under the root animates.
+    // `render` walks the same tree per frame anyway, but callers that want to
+    // cache a rasterisation have to know this before they draw, not after.
+    const auto anyAnim = [](auto&& self, const svgc::Node& n) -> bool {
+        if (!n.anims.empty()) return true;
+        for (const svgc::Node& kid : n.kids) if (self(self, kid)) return true;
+        return false;
+    };
+    scene.animated = anyAnim(anyAnim, scene.root);
+
     scene.spills = bounds.valid() &&
                    (bounds.x0 < document.viewX_ - slack || bounds.y0 < document.viewY_ - slack ||
                     bounds.x1 > document.viewX_ + document.viewW_ + slack || bounds.y1 > document.viewY_ + document.viewH_ + slack);
@@ -1571,6 +1598,8 @@ SvgDocument SvgDocument::fromString(const std::string& source) {
     document.scene_ = std::make_shared<const Scene>(std::move(scene));
     return document;
 }
+
+bool SvgDocument::animated() const { return scene_ && scene_->animated; }
 
 bool SvgDocument::render(Canvas& canvas, float time) const {
     if (!scene_) return false;

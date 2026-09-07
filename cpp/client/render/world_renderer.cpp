@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "client/render/art_cache.h"
 #include "client/ui/draw.h"
 #include "client/ui/item_tile.h"
 #include "shared/game/config.h"
@@ -921,9 +922,13 @@ void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera) const {
             if (cropped) clipWorldRect(canvas, camera, visiblePart);
             if (art) {
                 const Vec2 at = camera.worldToScreen({tile.x, tile.y});
-                art->renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
-                                  static_cast<float>(tile.w * zoom),
-                                  static_cast<float>(tile.h * zoom), 0.0f);
+                // The zoom is already in the box, so the cache sees the size
+                // this is really drawn at and bakes one bitmap per zoom step.
+                if (!drawCachedArt(canvas, *art, at.x, at.y, tile.w * zoom, tile.h * zoom)) {
+                    art->renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
+                                      static_cast<float>(tile.w * zoom),
+                                      static_cast<float>(tile.h * zoom), 0.0f);
+                }
             } else {
                 const Vec2 at = camera.worldToScreen({visiblePart.x, visiblePart.y});
                 ui::setFill(canvas, kBiomeGround[section]);
@@ -1014,9 +1019,11 @@ void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera) const {
             if (art) {
                 canvas.save();
                 clipWorldRect(canvas, camera, bounds);
-                art->renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
-                                  static_cast<float>(bounds.w * zoom),
-                                  static_cast<float>(bounds.h * zoom), 0.0f);
+                if (!drawCachedArt(canvas, *art, at.x, at.y, bounds.w * zoom, bounds.h * zoom)) {
+                    art->renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
+                                      static_cast<float>(bounds.w * zoom),
+                                      static_cast<float>(bounds.h * zoom), 0.0f);
+                }
                 canvas.restore();
             } else {
                 ui::setFill(canvas, kTileColor(tile));

@@ -25,6 +25,15 @@ namespace {
 // label drifts across the screen.
 constexpr int kSubpixel = 4;
 
+// Buckets per radian, and rotations are bucketed the way the pen is. Half a
+// bucket is under 0.0005 rad, which moves the far end of even a 200-pixel run
+// by a tenth of a pixel -- inside the subpixel error the bucketing above
+// already accepts. Bucketing at all is what stops a rotated run keying on a
+// float that never repeats; and an angle that buckets to zero takes the
+// unrotated path unchanged, so every label the client already drew still bakes
+// byte for byte as it did before.
+constexpr double kAngleBuckets = 1024.0;
+
 // Sizes outside this are not worth a bitmap: below it the direct path is
 // already cheap, above it one entry costs more than it saves.
 constexpr double kMinDeviceSize = 5.0;
@@ -45,6 +54,7 @@ struct Key {
     std::string text;
     std::int32_t sizeQ = 0;         // device size, sixteenths of a pixel
     std::int32_t strokeQ = 0;       // device stroke width, sixteenths
+    std::int32_t angleQ = 0;        // rotation, in kAngleBuckets per radian
     std::uint32_t fill = 0, stroke = 0;
     std::int16_t fillAlphaQ = 0, strokeAlphaQ = 0;
     std::uint8_t bucketX = 0, bucketY = 0;
@@ -52,7 +62,7 @@ struct Key {
 
     bool operator==(const Key& other) const {
         return text == other.text && sizeQ == other.sizeQ && strokeQ == other.strokeQ &&
-               fill == other.fill && stroke == other.stroke &&
+               angleQ == other.angleQ && fill == other.fill && stroke == other.stroke &&
                fillAlphaQ == other.fillAlphaQ && strokeAlphaQ == other.strokeAlphaQ &&
                bucketX == other.bucketX && bucketY == other.bucketY && bold == other.bold &&
                roundJoin == other.roundJoin && fillFirst == other.fillFirst;
@@ -67,6 +77,7 @@ struct KeyHash {
         };
         mix(static_cast<std::uint32_t>(k.sizeQ));
         mix(static_cast<std::uint32_t>(k.strokeQ));
+        mix(static_cast<std::uint32_t>(k.angleQ));
         mix(k.fill);
         mix(k.stroke);
         mix(static_cast<std::uint64_t>(static_cast<std::uint16_t>(k.fillAlphaQ)) |
@@ -196,21 +207,31 @@ void paintRunDirect(Canvas& canvas, const std::string& s, double penX, double ba
 bool paintRunCached(Canvas& canvas, const std::string& s, double penX, double baseline,
                     const TextStyle& style, double strokeWidth, double strokeAlpha,
                     double fillAlpha, bool fillFirst) {
-    // Only a uniform scale plus a translation. Under anything else the baked
-    // pixels would have to be resampled, which is both slower and softer than
-    // rasterising the outlines where they are.
+    // A uniform scale, a rotation and a translation -- a similarity, in other
+    // words, which is exactly the family whose ink can be baked once and then
+    // copied whole. `[a c; b d]` is one when a == d and c == -b: that leaves
+    // no shear to smear the outlines and no reflection to flip them, so the
+    // bake can carry the rotation itself and the blit stays a straight copy.
+    // Anything else would have to be resampled, which is both slower and
+    // softer than rasterising the outlines where they are.
     const std::array<float, 6> m = canvas.currentTransform();
-    if (std::abs(m[1]) > 1e-4f || std::abs(m[2]) > 1e-4f) return false;
-    const double scaleX = m[0], scaleY = m[3];
-    if (!(scaleX > 0.0) || !(scaleY > 0.0) || std::abs(scaleX - scaleY) > 1e-4) return false;
-    const double scale = scaleX;
+    const double a = m[0], b = m[1], cc = m[2], d = m[3];
+    if (std::abs(a - d) > 1e-4 || std::abs(b + cc) > 1e-4) return false;
+    const double scale = std::hypot(a, b);
+    if (!(scale > 0.0)) return false;
+    // Bucketed before anything reads it, so the entry a rotated run lands in
+    // is the entry it bakes: two draws a hair apart share one bitmap instead
+    // of racing to overwrite each other's.
+    const std::int32_t angleQ =
+        static_cast<std::int32_t>(std::lround(std::atan2(b, a) * kAngleBuckets));
+    const double angle = static_cast<double>(angleQ) / kAngleBuckets;
 
     const double deviceSize = style.size * scale;
     if (deviceSize < kMinDeviceSize || deviceSize > kMaxDeviceSize) return false;
 
     // The pen in device pixels, snapped to the subpixel grid the bake uses.
-    const double penDeviceX = scaleX * penX + m[4];
-    const double penDeviceY = scaleY * baseline + m[5];
+    const double penDeviceX = a * penX + cc * baseline + m[4];
+    const double penDeviceY = b * penX + d * baseline + m[5];
     const double snappedX = std::round(penDeviceX * kSubpixel) / kSubpixel;
     const double snappedY = std::round(penDeviceY * kSubpixel) / kSubpixel;
     const double originX = std::floor(snappedX), originY = std::floor(snappedY);
@@ -221,6 +242,7 @@ bool paintRunCached(Canvas& canvas, const std::string& s, double penX, double ba
     key.text = s;
     key.sizeQ = quantise16(deviceSize);
     key.strokeQ = quantise16(std::max(0.0, strokeWidth) * scale);
+    key.angleQ = angleQ;
     key.fill = style.fill;
     key.stroke = style.stroke;
     key.fillAlphaQ = quantiseAlpha(fillAlpha);
@@ -247,6 +269,23 @@ bool paintRunCached(Canvas& canvas, const std::string& s, double penX, double ba
         if (measured.empty()) return true;   // nothing to draw, and nothing to fall back to
         double minX = 0, minY = 0, maxX = 0, maxY = 0;
         if (!glyphBounds(measured, minX, minY, maxX, maxY)) return false;
+        if (angleQ != 0) {
+            // The box the ink sits in, turned. Rotating the four corners of an
+            // over-estimate is still an over-estimate, so this crops nothing.
+            const double cs = std::cos(angle), sn = std::sin(angle);
+            const double xs[4] = {minX, maxX, minX, maxX};
+            const double ys[4] = {minY, minY, maxY, maxY};
+            double rMinX = 1e30, rMinY = 1e30, rMaxX = -1e30, rMaxY = -1e30;
+            for (int i = 0; i < 4; ++i) {
+                const double rx = xs[i] * cs - ys[i] * sn;
+                const double ry = xs[i] * sn + ys[i] * cs;
+                rMinX = std::min(rMinX, rx);
+                rMaxX = std::max(rMaxX, rx);
+                rMinY = std::min(rMinY, ry);
+                rMaxY = std::max(rMaxY, ry);
+            }
+            minX = rMinX; maxX = rMaxX; minY = rMinY; maxY = rMaxY;
+        }
 
         // Half the outline reaches outside the glyph, and a miter join reaches
         // further than half; the join limit is what bounds it, so the margin
@@ -264,8 +303,19 @@ bool paintRunCached(Canvas& canvas, const std::string& s, double penX, double ba
         Canvas bake = Canvas::createVirtual(width, height);
         TextStyle baked = style;
         baked.size = bakedSize;
-        paintRunDirect(bake, s, padLeft + subX, padTop + subY, baked, bakedStroke, strokeAlpha,
-                       fillAlpha, fillFirst);
+        if (angleQ != 0) {
+            // Turned about the PEN, which is where the live transform turns it
+            // too: translate to the pen first, and the subpixel part of the pen
+            // goes into the bitmap ahead of the rotation, exactly as it does on
+            // the unrotated path.
+            bake.translate(static_cast<float>(padLeft + subX), static_cast<float>(padTop + subY));
+            bake.rotate(static_cast<float>(angle));
+            paintRunDirect(bake, s, 0.0, 0.0, baked, bakedStroke, strokeAlpha, fillAlpha,
+                           fillFirst);
+        } else {
+            paintRunDirect(bake, s, padLeft + subX, padTop + subY, baked, bakedStroke, strokeAlpha,
+                           fillAlpha, fillFirst);
+        }
 
         Entry entry;
         entry.rgba = bake.getImageData(0, 0, width, height);

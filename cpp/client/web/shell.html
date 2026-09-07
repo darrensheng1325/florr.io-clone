@@ -100,7 +100,7 @@
   const canvas = document.getElementById('canvas');
 
   const host = query.get('host') || location.hostname || '127.0.0.1';
-  const port = query.get('port') || location.port || '4242';
+  const port = query.get('port') || location.port || '3000';
 
   const args = ['--data', 'data', '--host', host, '--port', port];
   for (const name of ['user', 'password']) {

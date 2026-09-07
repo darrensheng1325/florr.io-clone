@@ -58,7 +58,7 @@ double monotonicMillis();
 inline constexpr int kMaxBots = 100;
 
 struct ServerConfig {
-    std::uint16_t port = 4242;
+    std::uint16_t port = 3000;
     std::string dataDir = "data";
     std::string databasePath = "inventory.json";
     std::uint64_t worldSeed = 0x5EED10;

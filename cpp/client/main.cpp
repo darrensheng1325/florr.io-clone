@@ -42,7 +42,7 @@ void usage(const char* program) {
     std::printf(
         "usage: %s [options]\n"
         "  --host <address>   server to connect to (default 127.0.0.1)\n"
-        "  --port <number>    server port (default 4242)\n"
+        "  --port <number>    server port (default 3000)\n"
         "  --data <dir>       directory holding mobs.json and petals.json (default data)\n"
         "  --width <px>       window width (default 1280)\n"
         "  --height <px>      window height (default 720)\n"

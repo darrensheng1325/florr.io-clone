@@ -39,7 +39,7 @@ enum class Screen : std::uint8_t {
 
 struct AppConfig {
     std::string host = "127.0.0.1";
-    std::uint16_t port = 4242;
+    std::uint16_t port = 3000;
     std::string dataDir = "data";
     /// Where the session token and the chosen flower name are remembered
     /// between runs, so a returning player is asked for neither again. Only

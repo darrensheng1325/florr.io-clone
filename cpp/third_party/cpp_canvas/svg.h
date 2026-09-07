@@ -24,6 +24,11 @@ public:
     float viewBoxWidth() const { return viewW_; }
     float viewBoxHeight() const { return viewH_; }
     bool empty() const;
+    /// True when any node in the document carries a SMIL timeline, so its ink
+    /// depends on `timeSeconds`. False means every frame of this document is
+    /// the same picture -- which is what makes rasterising it once and reusing
+    /// the pixels a legal substitution rather than a guess about the data.
+    bool animated() const;
 
     // Draws into the document's own width x height viewport at the origin, with
     // the viewBox mapped onto it exactly as an SVG viewer would.

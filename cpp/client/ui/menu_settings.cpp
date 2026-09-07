@@ -108,7 +108,7 @@ constexpr std::uint32_t kFooterGrey = 0xCCCCCCu;
 /// The address the client dials when nothing overrides it. Duplicated from
 /// AppConfig because the panel has no accessor for the live one; the browser
 /// falls back to window.location.origin for exactly the same reason.
-constexpr const char* kDefaultServerAddress = "127.0.0.1:4242";
+constexpr const char* kDefaultServerAddress = "127.0.0.1:3000";
 
 // --- what the panel can point at --------------------------------------------
 

@@ -91,8 +91,10 @@ EM_JS(int, flix_ch_connect, (const char* hostPtr, int port), {
 
   const openWebSocket = () => {
     const url = origin.replace(/^http/, "ws") + "/ws";
-    const Ctor = typeof WebSocket !== "undefined" ? WebSocket : require("ws");
-    const socket = new Ctor(url, "binary");
+    // The page has always had WebSocket; Node has had it as a global since
+    // 22, which is the floor the deployment already sets for other reasons.
+    // There is deliberately no npm fallback -- see the server half below.
+    const socket = new WebSocket(url, "binary");
     socket.binaryType = "arraybuffer";
     channel.sender = (bytes) => socket.send(bytes);
     channel.bufferedFn = () => socket.bufferedAmount || 0;
@@ -380,39 +382,221 @@ EM_JS(int, flix_ch_listen,
   const http = credentials ? require("https") : require("http");
   const server = credentials ? http.createServer(credentials, onRequest) : http.createServer(onRequest);
 
-  let WebSocketServer;
-  try {
-    ({ WebSocketServer } = require("ws"));
-  } catch (e) {
-    listener.error = "the ws package is required to listen: " + e;
-    net.release(id);
-    return -1;
-  }
+  // --- the WebSocket server --------------------------------------------------
+  // Written out rather than required from npm, because a dependency here is a
+  // dependency no deployed box has. The update ships dist/ and preserves
+  // node_modules -- which is the right call, since node_modules holds native
+  // builds for that host -- so an npm package this file reaches for is missing
+  // on every box until somebody ssh`s in and installs it, and the failure lands
+  // as a server that will not start. RFC 6455`s server half is a sha1 in the
+  // handshake and a header of at most fourteen bytes per frame; owning that is
+  // smaller than living with that failure mode. dist/ now needs nothing
+  // installed beside it at all.
+  //
+  // Deliberately absent: permessage-deflate, which is never negotiated because
+  // no extension is ever echoed -- these payloads are already-packed binary and
+  // compressing them again would cost CPU per tick to save nothing.
 
-  const sockets = new WebSocketServer({
-    server: server,
-    // Echo the subprotocol when one is offered; returning false simply means
-    // no subprotocol, which is a valid answer rather than a refusal.
-    handleProtocols: (protocols) => (protocols.has("binary") ? "binary" : false),
-  });
-  sockets.on("connection", (socket, request) => {
+  // The RFC`s constant. Hashed with the client`s key, it is the whole of the
+  // handshake`s proof that a WebSocket server -- rather than something that
+  // echoes headers -- read the request.
+  const kAcceptGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  // The ceiling on one message, so that a corrupt or hostile length prefix
+  // costs a dropped connection rather than the heap. protocol.h caps an
+  // application frame at 1 MiB and transport.cpp hands the transport at most
+  // 16 KiB at a time, so nothing legitimate comes close.
+  const kMaxMessageBytes = 1 << 20;
+
+  // A frame this side sends: FIN always set, never masked (the RFC forbids a
+  // server masking), and header and payload in one allocation so they leave as
+  // one write -- two would be two segments on a NODELAY socket.
+  const encode = (opcode, payload) => {
+    const length = payload.length;
+    const headerBytes = length < 126 ? 2 : length < 65536 ? 4 : 10;
+    const out = Buffer.allocUnsafe(headerBytes + length);
+    out[0] = 0x80 | opcode;
+    if (length < 126) {
+      out[1] = length;
+    } else if (length < 65536) {
+      out[1] = 126;
+      out.writeUInt16BE(length, 2);
+    } else {
+      out[1] = 127;
+      // The high half of a 64-bit length. Zero for anything this sends, and
+      // kMaxMessageBytes is what keeps that true.
+      out.writeUInt32BE(0, 2);
+      out.writeUInt32BE(length, 6);
+    }
+    out.set(payload, headerBytes);
+    return out;
+  };
+
+  // Every upgraded socket, so that closing the listener closes them too rather
+  // than leaving a process alive on sockets nobody will read again.
+  const open = new Set();
+
+  server.on("upgrade", (request, socket, head) => {
+    const refuse = (status, reason, extra) => {
+      socket.write("HTTP/1.1 " + status + " " + reason + "\r\n" +
+                   (extra || "") + "Connection: close\r\n\r\n");
+      socket.destroy();
+    };
+
+    const headers = request.headers;
+    if (String(headers["upgrade"] || "").toLowerCase() !== "websocket") {
+      return refuse(400, "Bad Request");
+    }
+    // 13 is the only version there has ever been, and the RFC`s answer to any
+    // other is to say so rather than to guess.
+    if (headers["sec-websocket-version"] !== "13") {
+      return refuse(426, "Upgrade Required", "Sec-WebSocket-Version: 13\r\n");
+    }
+    const key = headers["sec-websocket-key"];
+    if (!key) return refuse(400, "Bad Request");
+
+    const response = [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      "Sec-WebSocket-Accept: " +
+          crypto.createHash("sha1").update(key + kAcceptGuid).digest("base64"),
+    ];
+    // Echo the subprotocol when one is offered. Saying nothing means "no
+    // subprotocol", which is a valid answer rather than a refusal.
+    const offered = String(headers["sec-websocket-protocol"] || "")
+                        .split(",").map((name) => name.trim());
+    if (offered.indexOf("binary") >= 0) response.push("Sec-WebSocket-Protocol: binary");
+    socket.write(response.join("\r\n") + "\r\n\r\n");
+    // A tick`s worth of state is a few hundred bytes; waiting 40ms for a
+    // fuller segment is the whole latency budget.
+    socket.setNoDelay(true);
+
     const channel = net.channel();
     channel.kind = "websocket";
-    channel.peer = (request.socket.remoteAddress || "") + ":" + (request.socket.remotePort || 0);
+    channel.peer = (socket.remoteAddress || "") + ":" + (socket.remotePort || 0);
     channel.state = 1;
-    channel.sender = (bytes) => socket.send(bytes, { binary: true });
-    channel.bufferedFn = () => socket.bufferedAmount || 0;
-    channel.closer = () => { try { socket.close(); } catch (e) { } };
-    socket.binaryType = "nodebuffer";
-    socket.on("message", (data) => net.deliver(channel, new Uint8Array(data)));
+    channel.sender = (bytes) => socket.write(encode(0x2, bytes));
+    // What Node is holding and has not handed to the kernel: the same question
+    // bufferedAmount answers in the page, and the backpressure signal
+    // writeAvailable() stops feeding.
+    channel.bufferedFn = () => socket.writableLength || 0;
+    channel.closer = () => { try { socket.end(encode(0x8, Buffer.alloc(0))); } catch (e) { } };
+    open.add(socket);
+
+    // A close this side starts: say why in the frame, then stop reading. The
+    // socket is ended rather than destroyed so the close frame is actually
+    // flushed, and paused so a peer that keeps talking cannot keep this
+    // connection`s buffer growing after it has been given up on.
+    const drop = (reason, code) => {
+      const payload = Buffer.allocUnsafe(2);
+      payload.writeUInt16BE(code, 0);
+      try { socket.pause(); socket.end(encode(0x8, payload)); } catch (e) { }
+      net.fail(channel, reason);
+    };
+
+    // `held` is what has arrived and has not parsed into a whole frame yet.
+    // `fragments` is a message still being delivered across continuation
+    // frames -- which no browser sends, and which the protocol allows.
+    let held = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
+    let fragments = null;
+    let fragmentBytes = 0;
+
+    const consume = (chunk) => {
+      if (channel.state === 2) return;
+      if (chunk && chunk.length) {
+        held = held.length === 0 ? chunk : Buffer.concat([held, chunk]);
+      }
+      for (;;) {
+        if (held.length < 2) return;
+        const first = held[0];
+        const second = held[1];
+        // No extension was negotiated, so a reserved bit means the peer is
+        // speaking something this cannot read.
+        if ((first & 0x70) !== 0) return drop("reserved bits set", 1002);
+        const fin = (first & 0x80) !== 0;
+        const opcode = first & 0x0f;
+        const control = opcode >= 0x8;
+        let length = second & 0x7f;
+        let at = 2;
+        if (length === 126) {
+          if (held.length < 4) return;
+          length = held.readUInt16BE(2);
+          at = 4;
+        } else if (length === 127) {
+          if (held.length < 10) return;
+          // The high half of the 64-bit length: refused rather than read,
+          // since anything in it is orders of magnitude past the cap.
+          if (held.readUInt32BE(2) !== 0) return drop("frame too large", 1009);
+          length = held.readUInt32BE(6);
+          at = 10;
+        }
+        // Three of the RFC`s rules, and the three a corrupt stream breaks
+        // first: a client frame is always masked, a control frame is short and
+        // never fragmented, and nothing may claim more than the cap.
+        if ((second & 0x80) === 0) return drop("client frame is not masked", 1002);
+        if (control && (length > 125 || !fin)) return drop("bad control frame", 1002);
+        if (length > kMaxMessageBytes) return drop("frame too large", 1009);
+        if (held.length < at + 4 + length) return;
+
+        // Unmasked into a buffer of its own. What is left of `held` is a view
+        // onto the same memory the next frame will be read from, so the
+        // payload cannot be one.
+        const mask = held.subarray(at, at + 4);
+        at += 4;
+        const payload = Buffer.allocUnsafe(length);
+        for (let i = 0; i < length; ++i) payload[i] = held[at + i] ^ mask[i & 3];
+        held = held.subarray(at + length);
+
+        if (opcode === 0x8) {                  // close: echo the status back
+          try { socket.end(encode(0x8, payload.subarray(0, 2))); } catch (e) { }
+          net.fail(channel, "peer closed");
+          return;
+        }
+        if (opcode === 0x9) {                  // ping: the pong carries it back
+          try { socket.write(encode(0xa, payload)); } catch (e) { }
+          continue;
+        }
+        if (opcode === 0xa) continue;          // pong, to a ping this never sends
+
+        if (opcode === 0x0) {                  // continuation
+          if (!fragments) return drop("continuation without a start", 1002);
+          fragmentBytes += length;
+          if (fragmentBytes > kMaxMessageBytes) return drop("message too large", 1009);
+          fragments.push(payload);
+          if (fin) {
+            net.deliver(channel, Buffer.concat(fragments, fragmentBytes));
+            fragments = null;
+            fragmentBytes = 0;
+          }
+          continue;
+        }
+        if (opcode !== 0x1 && opcode !== 0x2) return drop("unknown opcode", 1002);
+        if (fragments) return drop("message inside a message", 1002);
+        // Text and binary arrive the same way: transport.cpp`s own length
+        // prefix is what finds message boundaries, not the opcode.
+        if (fin) { net.deliver(channel, payload); continue; }
+        fragments = [payload];
+        fragmentBytes = length;
+      }
+    };
+
+    socket.on("data", (chunk) => {
+      // A throw in here would be an uncaught exception on an event handler,
+      // which takes the whole server down over one peer`s bytes.
+      try { consume(chunk); } catch (e) { drop(e, 1011); }
+    });
     socket.on("error", () => net.fail(channel, "websocket error"));
-    socket.on("close", () => net.fail(channel, "peer closed"));
+    socket.on("close", () => { open.delete(socket); net.fail(channel, "peer closed"); });
+
     listener.pending.push(net.alloc(channel));
+    // The HTTP parser may have read past the handshake into the first frame.
+    if (held.length) { try { consume(null); } catch (e) { drop(e, 1011); } }
   });
 
   server.listen(port);
   listener.closer = () => {
-    try { sockets.close(); } catch (e) { }
+    for (const socket of open) { try { socket.destroy(); } catch (e) { } }
+    open.clear();
     try { server.close(); } catch (e) { }
   };
 

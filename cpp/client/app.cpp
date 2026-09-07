@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "client/interpolation.h"
+#include "client/render/art_cache.h"
 #include "client/ui/draw.h"
 #include "client/ui/markup.h"
 #include "client/ui/text.h"
@@ -1832,10 +1833,15 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
                     x >= canvas.width() || y >= canvas.height()) {
                     continue;
                 }
-                texture->renderFitted(canvas, static_cast<float>(x), static_cast<float>(y),
-                                      static_cast<float>(tileW + 2),
-                                      static_cast<float>(tileH + 2),
-                                      static_cast<float>(time));
+                // Fifteen copies of one static picture a frame: on the web
+                // that is a texture blit, everywhere else it is the artwork
+                // (see art_cache.h for why those are not the same answer).
+                if (!drawCachedArt(canvas, *texture, x, y, tileW + 2, tileH + 2)) {
+                    texture->renderFitted(canvas, static_cast<float>(x), static_cast<float>(y),
+                                          static_cast<float>(tileW + 2),
+                                          static_cast<float>(tileH + 2),
+                                          static_cast<float>(time));
+                }
             }
         }
     } else {

@@ -141,6 +141,7 @@ add_library(flix_client STATIC
   client/ui/menu_changelog.cpp
   client/ui/menu_settings.cpp
   client/ui/tutorial.cpp
+  client/render/art_cache.cpp
   client/render/sprites.cpp
   client/render/world_renderer.cpp
   client/web/reload.cpp
@@ -295,9 +296,10 @@ if(EMSCRIPTEN)
   # differs only in what carries the bytes: net/web_channel.cpp accepts
   # WebSocket and, when a certificate is configured, WebTransport sessions.
   # .js, not .mjs: the emitted module has to be CommonJS, because the transport
-  # reaches for `ws` and Node's `http` with require() from inside EM_JS, and
-  # Node's own resolution finds them by walking up from the emitted file --
-  # which is inside this repository, where they are installed.
+  # reaches for Node's `http`, `crypto` and `fs` with require() from inside
+  # EM_JS. Those are built in, and they are all it reaches for -- the WebSocket
+  # server is written out in net/web_channel.cpp rather than taken from npm --
+  # so what dist/ needs beside it to run is nothing at all.
   target_link_options(flowrix_server PRIVATE
     ${FLIX_WEB_LINK_OPTIONS}
     "-sENVIRONMENT=node"

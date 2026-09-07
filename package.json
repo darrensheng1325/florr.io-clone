@@ -19,7 +19,8 @@
     "dev:server": "ts-node-dev --respawn --transpile-only src/server.ts",
     "start_nobuild": "node dist/server.js --port ${PORT:-3000} --db dist/inventory.json --web-root dist",
     "harness:ecs": "node scripts/ecs-tick-harness.js",
-    "test:behavior": "node scripts/behavior-parity.js"
+    "test:behavior": "node scripts/behavior-parity.js",
+    "test:ws": "node scripts/ws-conformance.js"
   },
   "keywords": [],
   "author": "",
