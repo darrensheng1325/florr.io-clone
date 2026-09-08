@@ -11,6 +11,7 @@
 
 #include "canvas.h"
 
+#include "client/ui/text_input.h"
 #include "client/ui/theme.h"
 #include "shared/core/types.h"
 
@@ -156,9 +157,22 @@ struct TextFieldStyle {
     bool roundJoin = true;
 };
 
+/// Paints a field's selection highlight, under the text and inside `band` --
+/// the field's content rect, which is what clips a scrolled selection to the
+/// box. Draws nothing when there is no selection.
+void selectionHighlight(Canvas&, const TextRun&, const TextSelection&, Rect band,
+                        std::uint32_t colour = kSelection, double alpha = 0.45);
+
+/// The run `textField` paints for these bounds, so a caller can hit-test it
+/// with `indexAtX` and get the same answer the paint gave.
+TextRun textFieldRun(Rect r, const std::string& value, const TextFieldStyle& style = {});
+
+/// `state` carries the caret and the selection. Passing none keeps the field's
+/// old behaviour -- caret at the end, nothing selected -- which is what a
+/// masked field and a read-only one still want.
 void textField(Canvas&, Rect r, const std::string& value, const std::string& placeholder,
                bool focused, bool masked, double timeSeconds,
-               const TextFieldStyle& style = {});
+               const TextFieldStyle& style = {}, const TextFieldState* state = nullptr);
 
 /// True when `point` is inside `r`. Here so every screen hit-tests the same way.
 inline bool hit(Rect r, Vec2 point) { return r.contains(point); }

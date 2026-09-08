@@ -123,9 +123,17 @@ Key fromDomCode(const char* code) {
 // would need a permission prompt mid-game; a paste event needs none.
 EM_JS(void, web_clipboard_init, (), {
   Module.cppCanvasClipboard = '';
+  // Bumped on every paste, never reset. pump() watches it for a change rather
+  // than for a flag it would have to clear, so a paste that lands while the
+  // page is between frames is still delivered to the frame that follows.
+  Module.cppCanvasPasteSeq = 0;
   addEventListener('paste', (event) => {
     Module.cppCanvasClipboard = (event.clipboardData || window.clipboardData).getData('text') || '';
+    Module.cppCanvasPasteSeq = (Module.cppCanvasPasteSeq | 0) + 1;
   });
+});
+EM_JS(int, web_clipboard_paste_seq, (), {
+  return Module.cppCanvasPasteSeq | 0;
 });
 // Into a caller-owned buffer rather than a malloc'd string: _malloc is not
 // exported to JavaScript by default, and needing it would make this file
@@ -181,6 +189,9 @@ struct Window::Impl {
   std::array<bool, kButtonCount> pendingDownEdge{}, pendingUpEdge{};
   float pendingWheel = 0;
   std::string pendingTyped;
+  // The paste counter as of the last frame, and whether it moved since.
+  int pasteSeq = 0;
+  bool pasted = false;
 
   void takePendingEvents() {
     pressed = pendingPressed;
@@ -196,6 +207,14 @@ struct Window::Impl {
     pendingUpEdge.fill(false);
     pendingWheel = 0;
     pendingTyped.clear();
+
+    // A paste is a page event rather than a key: the browser fires it after
+    // the keystroke's own default action, and fires it for the context menu
+    // and the touch keyboard too. Watching the counter is what catches all
+    // three without the page ever reading the clipboard unprompted.
+    const int seq = web_clipboard_paste_seq();
+    pasted = seq != pasteSeq;
+    pasteSeq = seq;
   }
 #else
   SDL_Window* window = nullptr;
@@ -895,9 +914,9 @@ bool Window::altHeld() const { return impl_->alt; }
 std::string Window::clipboardText() const {
 #ifdef __EMSCRIPTEN__
   // What the user last pasted into the page or copied out of it. A page may
-  // not read the system clipboard unprompted, so this is as much as there is;
-  // it is a paste event behind, which is why the game's own fields take
-  // pasted text through typedText() instead.
+  // not read the system clipboard unprompted, so this is as much as there is
+  // -- which is why a field asks `pastedText()` instead: that reports it only
+  // on the frame a paste event actually delivered it.
   // Bounded: a clipboard is whatever the user last copied anywhere, and a
   // chat field has no use for a megabyte of it.
   char buffer[4096] = {0};
@@ -912,6 +931,20 @@ std::string Window::clipboardText() const {
   std::string out(text);
   SDL_free(text);
   return out;
+#endif
+}
+
+std::string Window::pastedText() const {
+#ifdef __EMSCRIPTEN__
+  if (!impl_->pasted) return {};
+  return clipboardText();
+#else
+  // The desktop has no paste event, so the shortcut is the event. Cmd folds
+  // into ctrl through KMOD_GUI above, which is what makes the Mac combination
+  // land here as well.
+  const std::size_t v = static_cast<std::size_t>(Key::V);
+  if (!impl_->ctrl || v >= kKeyCount || !impl_->pressed[v]) return {};
+  return clipboardText();
 #endif
 }
 

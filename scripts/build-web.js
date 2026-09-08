@@ -16,13 +16,20 @@
  *                 the biome SVGs / the fonts embedded inside it
  *   server.js     the server's runtime glue -- what `node dist/server.js` runs
  *   server.wasm   the server, with the same content embedded
+ *   offline.html  the offline build: server AND client in one wasm, embedded
+ *                 in one page with nothing beside it. Opens from disk.
  *
  * bundle.html becomes dist/index.html because that is the name a web root is
  * served at. styles.css and favicon.ico are copied too: the shell references
  * both, and neither is inside the wasm.
  *
  * Usage:
- *   node scripts/build-web.js [client|server|all] [--copy-only]
+ *   node scripts/build-web.js [client|server|offline|all] [--copy-only]
+ *
+ *   `all` is the deployment: client and server. The offline page is asked for
+ *   by name -- it is not something `npm start` serves, and dist/offline.html
+ *   is gitignored so a rebuilt five-megabyte page does not land in every
+ *   commit of the (otherwise committed) dist/.
  *
  *   --copy-only   skip cmake and stage whatever is already in cpp/build-web.
  *                 For machines without emscripten; it will happily copy a
@@ -74,7 +81,16 @@ const TARGETS = {
         ],
         sidecars: [],
     },
+    // Not part of `all`: see the header. One file, nothing referenced.
+    offline: {
+        cmakeTarget: 'flowrix_offline',
+        artifacts: [
+            ['offline.html', 'offline.html'],
+        ],
+        sidecars: [],
+    },
 };
+const DEPLOYMENT = ['client', 'server'];
 
 function fail(message) {
     console.error(`\nbuild-web: ${message}\n`);
@@ -85,9 +101,9 @@ const args = process.argv.slice(2);
 const copyOnly = args.includes('--copy-only');
 const which = args.find((a) => !a.startsWith('-')) || 'all';
 if (which !== 'all' && !TARGETS[which]) {
-    fail(`unknown target '${which}' — expected client, server or all`);
+    fail(`unknown target '${which}' — expected client, server, offline or all`);
 }
-const selected = which === 'all' ? Object.keys(TARGETS) : [which];
+const selected = which === 'all' ? DEPLOYMENT : [which];
 
 const flavour = process.env.FLIX_BUILD || 'release';
 if (flavour !== 'dev' && flavour !== 'release') {

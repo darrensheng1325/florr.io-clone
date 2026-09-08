@@ -25,6 +25,7 @@
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
+#include "client/ui/text_input.h"
 
 namespace flix {
 
@@ -84,6 +85,16 @@ enum class PromptMode : std::uint8_t { None, Create, Invite, Kick };
 /// reference, and both carry a fixed string.
 enum class ConfirmMode : std::uint8_t { None, Leave, Kick };
 
+/// The run the floating prompt paints. It does not scroll: the box holds more
+/// than either of its two length limits.
+TextRun promptRun(Rect box, const std::string& value) {
+    TextRun run;
+    run.text = value;
+    run.originX = box.x + kPromptInset;
+    run.size = kPromptTextSize;
+    return run;
+}
+
 /// The one dialog that can be up, and what it is asking for.
 ///
 /// At file scope for the same reason the drag state below is: there is exactly
@@ -91,8 +102,8 @@ enum class ConfirmMode : std::uint8_t { None, Leave, Kick };
 struct Dialog {
     PromptMode prompt = PromptMode::None;
     std::string typed;
-    std::size_t caret = 0;
-    double caretAnchor = 0;
+    /// Caret, selection and the blink's phase.
+    ui::TextFieldState field;
 
     ConfirmMode confirm = ConfirmMode::None;
     /// Who a kick confirm is about, so the question can name them.
@@ -176,10 +187,6 @@ bool sameName(const std::string& a, const std::string& b) { return lowered(a) ==
 /// A one-second cycle at an even duty, standing in for the native caret of the
 /// <input> the reference floats here. Anchored to the last edit so typing
 /// never blinks the caret out mid-keystroke.
-bool caretVisible(double timeSeconds, double anchor) {
-    return std::fmod(std::max(0.0, timeSeconds - anchor), 1.0) < 0.5;
-}
-
 /// The leader badge. Drawn rather than typed: the reference appends U+2605 to
 /// the row's label and gets it from a fallback face, and Ubuntu -- the only
 /// face this client loads -- would answer with its .notdef box.
@@ -586,6 +593,10 @@ bool GuildPanel::render(MenuContext& ctx) {
         roundPath(canvas, Rect{box.x + 2.0, box.y + 2.0, box.w - 4.0, box.h - 4.0}, 3.0);
         canvas.fill();
 
+        selectionHighlight(canvas, promptRun(box, modal.typed), modal.field.selection,
+                           Rect{box.x + 4.0, box.y + 7.0, box.w - 8.0, box.h - 14.0}, kPaper,
+                           0.32);
+
         TextStyle field;
         field.size = kPromptTextSize;
         field.strokeWidth = 0;
@@ -593,10 +604,9 @@ bool GuildPanel::render(MenuContext& ctx) {
         text(canvas, modal.typed.empty() ? promptPlaceholder(modal.prompt) : modal.typed,
              box.x + kPromptInset, box.y + box.h * 0.5, field);
 
-        if (caretVisible(ctx.timeSeconds, modal.caretAnchor)) {
-            const double caretX =
-                box.x + kPromptInset +
-                measure(modal.typed.substr(0, modal.caret), kPromptTextSize, false) + 1.0;
+        if (caretVisible(modal.field, ctx.timeSeconds)) {
+            const double caretX = xOfIndex(promptRun(box, modal.typed), modal.field.selection.caret)
+                                  + 1.0;
             setFill(canvas, kPaper);
             canvas.fillRect(static_cast<float>(caretX), static_cast<float>(box.y + 8.0), 1.0f,
                             static_cast<float>(box.h - 16.0));
@@ -605,28 +615,12 @@ bool GuildPanel::render(MenuContext& ctx) {
         // Printable ASCII only, which is what keeps the caret's byte index and
         // its character index the same thing. Guild names and usernames are
         // both ASCII by the server's own rules.
-        const std::size_t limit = promptLimit(modal.prompt);
-        for (const char c : ctx.window.typedText()) {
-            const auto byte = static_cast<unsigned char>(c);
-            if (byte < 0x20 || byte > 0x7E) continue;
-            if (modal.typed.size() >= limit) break;
-            modal.typed.insert(modal.caret, 1, c);
-            ++modal.caret;
-            modal.caretAnchor = ctx.timeSeconds;
-        }
-        if (ctx.window.keyPressed(Key::Backspace) && modal.caret > 0) {
-            modal.typed.erase(modal.caret - 1, 1);
-            --modal.caret;
-            modal.caretAnchor = ctx.timeSeconds;
-        }
-        if (ctx.window.keyPressed(Key::Left) && modal.caret > 0) {
-            --modal.caret;
-            modal.caretAnchor = ctx.timeSeconds;
-        }
-        if (ctx.window.keyPressed(Key::Right) && modal.caret < modal.typed.size()) {
-            ++modal.caret;
-            modal.caretAnchor = ctx.timeSeconds;
-        }
+        TextEditOptions typing;
+        typing.maxBytes = promptLimit(modal.prompt);
+        typing.asciiOnly = true;
+        editText(ctx.window, modal.typed, modal.field, ctx.timeSeconds, typing);
+        trackTextMouse(ctx.window, modal.field, box, promptRun(box, modal.typed), modal.typed,
+                       ctx.timeSeconds);
         if (ctx.window.keyPressed(Key::Enter)) {
             // An empty field just closes: the reference submits the trimmed
             // value and sends nothing when there is none.
@@ -657,12 +651,12 @@ bool GuildPanel::render(MenuContext& ctx) {
             case GuildAction::Create:
                 modal.clear();
                 modal.prompt = PromptMode::Create;
-                modal.caretAnchor = ctx.timeSeconds;
+                modal.field.focusAtEnd(modal.typed, ctx.timeSeconds);
                 break;
             case GuildAction::Invite:
                 modal.clear();
                 modal.prompt = PromptMode::Invite;
-                modal.caretAnchor = ctx.timeSeconds;
+                modal.field.focusAtEnd(modal.typed, ctx.timeSeconds);
                 break;
             case GuildAction::Kick:
                 // Named here rather than typed: the reference asks

@@ -12,8 +12,14 @@
 //                  bidirectional stream carries everything.
 //   WebSocket      always available, and the fallback whenever anything about
 //                  the WebTransport attempt does not work out.
+//   loopback       a pair of queues, when the server is in the same page as
+//                  the client. listen() in a page registers an in-page
+//                  listener on its port, and a connect() to 127.0.0.1 or
+//                  localhost on that port reaches it without touching the
+//                  network. This is how the single-file offline build plays:
+//                  one wasm carrying both halves, talking to itself.
 //
-// Both are presented here as an ordered byte stream, because that is what the
+// All three are presented here as an ordered byte stream, because that is what the
 // layer above already expects: transport.cpp's `[u32 length][payload]` framing
 // is what finds message boundaries, and it does so identically whether the
 // bytes arrived as discrete WebSocket messages or as a QUIC stream that split
@@ -67,8 +73,12 @@ int connect(const std::string& host, std::uint16_t port);
 /// build sits. One port serves the page, the WebSocket and the QUIC listener,
 /// so a client is same-origin with its server and needs nothing else running.
 ///
-/// Returns a listener handle, or kInvalid when the runtime cannot listen at
-/// all (a browser tab, which has nothing to listen with).
+/// In a page there is nothing to serve and nobody to bind for; the listener
+/// is an in-page one that connect() calls from the same page resolve to, and
+/// the certificate and web root are ignored.
+///
+/// Returns a listener handle, or kInvalid when the port is already listened
+/// on in this runtime.
 int listen(std::uint16_t port, const std::string& certPath, const std::string& keyPath,
            const std::string& webRoot);
 
@@ -94,7 +104,7 @@ void close(int channel);
 /// The peer as the transport saw it, for logging. Never client-supplied.
 std::string peer(int channel);
 
-/// "websocket" or "webtransport", once the channel is open.
+/// "websocket", "webtransport" or "loopback", once the channel is open.
 std::string kind(int channel);
 
 /// Why a channel closed, when it closed for a reason worth reporting.

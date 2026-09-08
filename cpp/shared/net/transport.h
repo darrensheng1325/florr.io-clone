@@ -17,9 +17,11 @@
 //   native       a TCP socket and poll(), as described above.
 //   emscripten   whatever the JavaScript runtime has, via net/web_channel.h:
 //                WebTransport when the runtime and the server both offer it,
-//                WebSocket otherwise. `fd()` there is a channel handle rather
-//                than a descriptor, and poll()'s timeout is ignored, because
-//                neither a browser tab nor a Node event loop may be blocked.
+//                WebSocket otherwise, and an in-page loopback when the server
+//                is in the same page as the client. `fd()` there is a channel
+//                handle rather than a descriptor, and poll()'s timeout is
+//                ignored, because neither a browser tab nor a Node event loop
+//                may be blocked.
 
 #include <cstdint>
 #include <deque>

@@ -17,6 +17,7 @@
 #include "client/ui/draw.h"
 #include "client/ui/markup.h"
 #include "client/ui/text.h"
+#include "client/ui/text_input.h"
 #include "client/web/reload.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
@@ -1094,6 +1095,26 @@ void App::frame(double dt) {
 // Screens
 // ---------------------------------------------------------------------------
 
+ui::TextFieldStyle App::nameFieldStyle() {
+    // The lobby's own field, and NOT the auth form's: a near-opaque white plate
+    // with a grey edge and a BLACK caret, which is a different control from the
+    // game's green fields rather than a restyling of them.
+    TextFieldStyle style;
+    style.fill = kPaper;
+    style.fillAlpha = 0.9;
+    style.outline = 0xB4B4B4u;
+    style.focusedOutline = 0xB4B4B4u;
+    style.outlineAlpha = 0.8;
+    style.outlineWidth = 4.0;
+    style.focusedOutlineWidth = 4.0;
+    style.radius = 3.0;
+    style.textSize = 18.0;
+    style.textStrokeWidth = 3.0;
+    style.bold = true;
+    style.caret = kInk;
+    return style;
+}
+
 void App::updateConnecting() {
     if (net_.status() != NetClient::Status::Ready) return;
 
@@ -1124,28 +1145,56 @@ bool App::keyboardCaptured() const {
     // The three things that can hold the caret, in the order updateLobby and
     // updatePlaying resolve them: a panel's field, the chat line, and the
     // lobby's name / auth fields.
-    return menus_.wantsText() || chatOpen_ || nameFocused_ || focusedField_ >= 0;
+    return menus_.wantsText() || chatOpen_ || nameField_.focused || focusedField_ >= 0;
 }
 
-void App::editText(std::string& target, std::size_t maxLength) {
-    const std::string& typed = window_.typedText();
-    for (std::size_t i = 0; i < typed.size(); ++i) {
-        if (target.size() >= maxLength) break;
-        const unsigned char c = static_cast<unsigned char>(typed[i]);
-        if (c >= 0x20) target += typed[i];
+void App::editText(std::string& target, std::size_t maxLength, ui::TextFieldState& state,
+                   bool masked) {
+    if (masked) state.selection.collapse(target.size());
+    ui::TextEditOptions typing;
+    typing.maxBytes = maxLength;
+    typing.copyable = !masked;
+    ui::editText(window_, target, state, timeSeconds_, typing);
+    if (masked) state.selection.collapse(target.size());
+}
+
+std::string* App::authValue(int index) {
+    const int serverField = registering_ ? 3 : 2;
+    if (index == 0) return &usernameField_;
+    if (index == 1) return &passwordField_;
+    if (registering_ && index == 2) return &confirmPasswordField_;
+    if (index == serverField) return &serverField_;
+    return nullptr;
+}
+
+void App::focusAuthField(int index) {
+    if (focusedField_ == index) return;
+    focusedField_ = index;
+    std::string* value = authValue(index);
+    if (!value) {
+        authField_.blur();
+        return;
     }
-    if (window_.keyPressed(Key::Backspace) && !target.empty()) {
-        // Erase a whole UTF-8 sequence, not a byte: deleting one byte of a
-        // multi-byte character leaves an invalid string behind.
-        std::size_t at = target.size() - 1;
-        while (at > 0 && (static_cast<unsigned char>(target[at]) & 0xC0) == 0x80) --at;
-        target.erase(at);
-    }
+    // Tabbing or clicking into a field takes its contents whole, which is what
+    // a browser does and what makes "tab, type" replace rather than append.
+    authField_.focus(*value, timeSeconds_);
 }
 
 void App::editChatLine() {
     const std::string before = chatDraft_;
-    editText(chatDraft_, 180);
+    editText(chatDraft_, 180, chatField_);
+    // Against the box the last frame painted: input runs before the draw, and
+    // the field does not move between the two.
+    if (chatBox_.w > 0) {
+        ui::TextRun run;
+        run.text = chatDraft_;
+        run.originX = chatBox_.x + 6.0;
+        run.size = kChatFieldTextSize;
+        ui::trackTextMouse(window_, chatField_, chatBox_, run, chatDraft_, timeSeconds_);
+        // The chat line is open or it is not; a press outside must not blur it
+        // into a state where it takes keys but shows no caret.
+        chatField_.focused = true;
+    }
     // The list opens on the first '/' and re-selects its top row whenever the
     // filter changes, which is what the reference's `input` handler does.
     if (chatDraft_ != before) {
@@ -1229,20 +1278,31 @@ void App::updateLogin(double dt) {
     // the player has clicked into it.
     const int fieldCount = (registering_ ? 3 : 2) + (advancedOpen_ ? 1 : 0);
     if (focusedField_ >= 0 && window_.keyPressed(Key::Tab)) {
-        focusedField_ = (focusedField_ + 1) % fieldCount;
+        focusAuthField((focusedField_ + 1) % fieldCount);
     }
 
     // The browser's per-field caps. A field the reference cuts at fifty must
     // not accept sixty-four here and then be refused by the server.
     const int serverField = registering_ ? 3 : 2;
-    if (focusedField_ == 0) editText(usernameField_, 50);
-    else if (focusedField_ == 1) editText(passwordField_, 100);
-    else if (registering_ && focusedField_ == 2) editText(confirmPasswordField_, 100);
+    if (focusedField_ == 0) editText(usernameField_, 50, authField_);
+    else if (focusedField_ == 1) editText(passwordField_, 100, authField_, true);
+    else if (registering_ && focusedField_ == 2) {
+        editText(confirmPasswordField_, 100, authField_, true);
+    }
     // The endpoint field alone is uncapped: auth_form.ts:414 falls through to a
     // bare `this.serverIP += e.key`, and only the three credential fields carry
     // a maxlength.
     else if (advancedOpen_ && focusedField_ == serverField) {
-        editText(serverField_, std::numeric_limits<std::size_t>::max());
+        editText(serverField_, std::numeric_limits<std::size_t>::max(), authField_);
+    }
+
+    // The two unmasked fields answer for their own pointer, so a click places
+    // the caret and a drag selects. The masked pair keep their caret at the end.
+    if (focusedField_ == 0 || (advancedOpen_ && focusedField_ == serverField)) {
+        const Rect box = focusedField_ == 0 ? layout.username : layout.serverIp;
+        std::string& value = focusedField_ == 0 ? usernameField_ : serverField_;
+        ui::trackTextMouse(window_, authField_, box, ui::textFieldRun(box, value), value,
+                           timeSeconds_);
     }
 
     // Enter submits only while a field has the caret: the browser's form is a
@@ -1274,11 +1334,11 @@ void App::updateLogin(double dt) {
 
     // Anything that is not a control and not a field blurs, which restores
     // both placeholders and takes the caret away.
-    if (hit(layout.username, mouse)) focusedField_ = 0;
-    else if (hit(layout.password, mouse)) focusedField_ = 1;
-    else if (registering_ && hit(layout.confirmation, mouse)) focusedField_ = 2;
-    else if (advancedOpen_ && hit(layout.serverIp, mouse)) focusedField_ = serverField;
-    else focusedField_ = -1;
+    if (hit(layout.username, mouse)) focusAuthField(0);
+    else if (hit(layout.password, mouse)) focusAuthField(1);
+    else if (registering_ && hit(layout.confirmation, mouse)) focusAuthField(2);
+    else if (advancedOpen_ && hit(layout.serverIp, mouse)) focusAuthField(serverField);
+    else focusAuthField(-1);
 }
 
 void App::submitAuth(const std::string& action) {
@@ -1374,15 +1434,18 @@ void App::updateLobby(double dt) {
         // A panel is taking the keystrokes; nothing here may also read them.
     } else if (chatOpen_) {
         editChatLine();
-    } else if (nameFocused_) {
-        editText(playerName_, 20);
+    } else if (nameField_.focused) {
+        editText(playerName_, 20, nameField_);
+        ui::trackTextMouse(window_, nameField_, nameBox_,
+                           ui::textFieldRun(nameBox_, playerName_, nameFieldStyle()), playerName_,
+                           timeSeconds_);
         // Enter starts the game only from here, which is the one place the
         // reference accepts it: with nothing focused, Enter opens chat.
         if (window_.keyPressed(Key::Enter)) {
-            nameFocused_ = false;
+            nameField_.blur();
             startGame();
         } else if (window_.keyPressed(Key::Escape)) {
-            nameFocused_ = false;
+            nameField_.blur();
         }
     } else if (!menus_.handleKeys(window_)) {
         if (window_.keyPressed(Key::Enter)) chatOpen_ = true;
@@ -1419,8 +1482,15 @@ void App::updateLobby(double dt) {
             // Focus follows the click. Ready and the biome row are the two
             // things the reference lets you click WITHOUT losing the caret in
             // the name field; everything else blurs it.
-            if (hitInclusive(layout.name, mouse)) nameFocused_ = true;
-            else if (!onBiome && !hitInclusive(layout.ready, mouse)) nameFocused_ = false;
+            // Taking the name whole: a click into the box that was not already
+            // focused selects it, so the first keystroke replaces the old name
+            // rather than appending to it -- which is what a browser does and
+            // what this box, capped at twenty characters, wants.
+            if (hitInclusive(layout.name, mouse)) {
+                if (!nameField_.focused) nameField_.focus(playerName_, timeSeconds_);
+            } else if (!onBiome && !hitInclusive(layout.ready, mouse)) {
+                nameField_.blur();
+            }
             chatOpen_ = hit(titleChatBox(window_.width(), window_.height()), mouse);
 
             if (hitInclusive(layout.ready, mouse)) startGame();
@@ -1952,21 +2022,16 @@ void App::drawLobby(Canvas& canvas, double time) {
     // Drawn by hand rather than through ui::textField: this one is a pale
     // plate with a grey edge and a BLACK caret, which is a different control
     // from the game's green fields and not a restyling of them.
-    TextFieldStyle nameStyle;
-    nameStyle.fill = kPaper;
-    nameStyle.fillAlpha = nameFocused_ ? 0.95 : 0.9;
-    nameStyle.outline = 0xB4B4B4u;
-    nameStyle.focusedOutline = 0xB4B4B4u;
-    nameStyle.outlineAlpha = 0.8;
-    nameStyle.outlineWidth = 4.0;
-    nameStyle.focusedOutlineWidth = 4.0;
-    nameStyle.radius = 3.0;
-    nameStyle.textSize = 18.0;
-    nameStyle.textStrokeWidth = 3.0;
-    nameStyle.bold = true;
-    nameStyle.caret = kInk;
-    textField(canvas, layout.name, ellipsised(canvas, playerName_, 260.0),
-              "This flower is called...", nameFocused_, false, time, nameStyle);
+    TextFieldStyle nameStyle = nameFieldStyle();
+    nameStyle.fillAlpha = nameField_.focused ? 0.95 : 0.9;
+    nameBox_ = layout.name;
+    // The raw value while it is being edited, so the caret and the highlight
+    // land on the glyphs actually drawn; the ellipsised form once the caret
+    // has gone, which is what keeps a long name inside its plate.
+    textField(canvas, layout.name,
+              nameField_.focused ? playerName_ : ellipsised(canvas, playerName_, 260.0),
+              "This flower is called...", nameField_.focused, false, time, nameStyle,
+              &nameField_);
 
     ButtonStyle readyStyle;
     readyStyle.fill = 0x1DD129u;
@@ -2789,6 +2854,7 @@ void App::drawChat(Canvas& canvas, double time) {
 }
 
 void App::drawChatField(Canvas& canvas, Rect box, double time) {
+    chatBox_ = box;
     // A dark translucent slot with a hairline white edge -- the reference's
     // chat input, which is the one control in the game that is not drawn in the
     // chunky plate style everything else uses.
@@ -2816,12 +2882,24 @@ void App::drawChatField(Canvas& canvas, Rect box, double time) {
     // unfocused: an <input> keeps showing it with the caret sitting in front.
     const bool empty = chatDraft_.empty();
     line.fill = empty ? 0x757575u : kPaper;
-    text(canvas, empty ? "Press Enter to chat..." : chatDraft_, box.x + 6.0,
+
+    ui::TextRun run;
+    run.text = chatDraft_;
+    run.originX = box.x + 6.0;
+    run.size = kChatFieldTextSize;
+    if (chatOpen_) {
+        // A pale wash: the slot is a dark translucent plate, and the blue one
+        // the light fields use disappears into it.
+        selectionHighlight(canvas, run, chatField_.selection,
+                           Rect{box.x + 2.0, box.y + 3.0, box.w - 4.0, box.h - 6.0}, kPaper,
+                           0.30);
+    }
+    text(canvas, empty ? "Press Enter to chat..." : chatDraft_, run.originX,
          box.y + box.h * 0.5, line);
 
     if (!chatOpen_) return;
-    if (std::fmod(time, 1.0) >= 0.5) return;
-    const double caretX = box.x + 6.0 + textWidth(canvas, chatDraft_, line.size);
+    if (!caretVisible(chatField_, time)) return;
+    const double caretX = xOfIndex(run, chatField_.selection.caret);
     setFill(canvas, kPaper);
     canvas.fillRect(static_cast<float>(caretX), static_cast<float>(box.y + 4.0), 1.0f,
                     static_cast<float>(box.h - 8.0));
@@ -3086,7 +3164,8 @@ void App::logout() {
     chatOpen_ = false;
     chatDraft_.clear();
     chatSuggestion_ = -1;
-    nameFocused_ = false;
+    chatField_.blur();
+    nameField_.blur();
 
     // Only worth a wipe when there is a world to hide: lobby and login are the
     // same scene with a different card on it, and wiping between them would

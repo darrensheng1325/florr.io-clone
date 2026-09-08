@@ -19,11 +19,23 @@ npm start       # compiles the server and runs dist/server.js
 
 Open `https://localhost:3000`.
 
+### Play offline
+
+```bash
+npm run build:offline   # -> dist/offline.html (needs emscripten on PATH)
+```
+
+`dist/offline.html` is the whole game in one file: the server and the client
+compiled into one wasm and embedded in the page. Open it straight from disk —
+no server, no network. Your account and progress are kept in that browser's
+local storage. See `cpp/docs/ARCHITECTURE.md`, "The offline build".
+
 ## Scripts
 
 | Script | Purpose |
 | --- | --- |
 | `npm run build` | Build cpp module, bundle client (production), compress bundle |
+| `npm run build:offline` | Single-file offline build: server and client in one page, `dist/offline.html`, opens from disk with no server |
 | `npm run build:server` | TypeScript compile of the server only |
 | `npm run build:client` | TypeScript compile of the client only |
 | `npm start` | Build server and run `dist/server.js` |

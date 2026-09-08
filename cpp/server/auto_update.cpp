@@ -128,6 +128,16 @@ EM_JS(void, flix_update_start, (const char* urlPtr), {
   })();
 });
 
+// Whether this module runs under Node, which is the only runtime with a
+// filesystem to install into. The same wasm can also be the single-file
+// offline page, where the server lives in a browser tab: there is no `require`
+// there, no `process`, and nothing an update could overlay, so every entry
+// point below answers for that case too rather than throwing on the first
+// `process` it touches.
+EM_JS(int, flix_update_host_is_node, (), {
+  return typeof process !== 'undefined' && process.versions && process.versions.node ? 1 : 0;
+});
+
 EM_JS(int, flix_update_running, (), {
   return Module.flixUpdate && Module.flixUpdate.running ? 1 : 0;
 });
@@ -145,20 +155,25 @@ EM_JS(void, flix_update_drain, (char* out, int capacity), {
 });
 
 EM_JS(void, flix_update_status, (char* out, int capacity), {
+  const node = typeof process !== 'undefined' && process.versions && process.versions.node;
   const status = Module.flixUpdate ? Module.flixUpdate.status
-                                   : 'No update has been run since this server started.';
+               : !node
+                   ? 'This is the offline page: the server runs inside the browser tab and ' +
+                     'has no build directory to update. Download a newer offline.html instead.'
+                   : 'No update has been run since this server started.';
   stringToUTF8(status, out, capacity);
 });
 
 EM_JS(void, flix_update_default_url, (char* out, int capacity), {
-  const repo = process.env.FLORR_UPDATE_REPO || 'flowrix-io/florr_clone';
-  const branch = process.env.FLORR_UPDATE_BRANCH || 'web';
-  const url = process.env.FLORR_UPDATE_URL ||
+  const env = (typeof process !== 'undefined' && process.env) || {};
+  const repo = env.FLORR_UPDATE_REPO || 'flowrix-io/florr_clone';
+  const branch = env.FLORR_UPDATE_BRANCH || 'web';
+  const url = env.FLORR_UPDATE_URL ||
               ('https://codeload.github.com/' + repo + '/zip/refs/heads/' + branch);
   stringToUTF8(url, out, capacity);
 });
 
-bool supported() { return true; }
+bool supported() { return flix_update_host_is_node() != 0; }
 bool inProgress() { return flix_update_running() != 0; }
 
 std::string lastStatus() {
@@ -174,7 +189,7 @@ std::string defaultUrl() {
 }
 
 bool start(const std::string& url) {
-    if (inProgress()) return false;
+    if (!supported() || inProgress()) return false;
     flix_update_start(url.c_str());
     return true;
 }

@@ -294,7 +294,7 @@ private:
     bool stacked_ = false;
     double stackLerp_ = 0;
     std::string search_;
-    bool searchFocused_ = false;
+    ui::TextFieldState searchField_;
 };
 
 /// The forge: five slots in a ring, and the grid that feeds them.
@@ -417,6 +417,9 @@ public:
     bool render(MenuContext&);
     void reset();
     static double preferredWidth();
+    /// Taller than the other corner overlays: this is the only one that has to
+    /// show a drawing board, a shape list and that shape's properties at once.
+    static double preferredHeight();
     static Rect bounds(int viewWidth, int viewHeight);
 };
 

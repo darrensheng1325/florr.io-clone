@@ -913,15 +913,9 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
                 std::to_string(target.session->connection) + ")");
             return;
         }
-        int saved = 0;
-        for (auto& entry : sessions_) {
-            if (!entry.second.playing()) continue;
-            persistPlayer(entry.second);
-            ++saved;
-        }
         // Straight to disk rather than waiting out the rate limiter: an
         // operator typing `save` is usually about to restart something.
-        database_.save();
+        const std::size_t saved = persistAll();
         out("Saved " + std::to_string(saved) + " player(s)");
         return;
     }

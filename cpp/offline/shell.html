@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- First, before anything else in the file: the wasm is embedded in the
+         script below as UTF-8 text, and a browser that guessed another
+         encoding for a file opened from disk would decode it into garbage. -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>flowrix (offline)</title>
+    <meta name="description" content="florr.io clone, single-player, in one file">
+    <!-- Nothing external: no stylesheet, no favicon, no web fonts. This page
+         is opened from a file:// URL with no server behind it, and every
+         reference it made would be a request that fails. The faces the
+         client draws with are registered from the bytes inside the wasm. -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Ubuntu', sans-serif;
+            font-weight: 700;
+            background-color: #000;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        #loadingScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100vw;
+            text-align: center;
+            font-size: 48px;
+            transform: translate(-50%, -50%);
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <span id="loadingScreen">Loading...</span>
+    <canvas id="canvas" oncontextmenu="return false;"></canvas>
+    <script>
+(function () {
+  const query = new URLSearchParams(location.search);
+  const status = document.getElementById('loadingScreen');
+  const canvas = document.getElementById('canvas');
+
+  // The server is in this page, so there is no host to name: offline/main.cpp
+  // knows where it is. What the query may still say is the same set of
+  // scripted-run switches the online shell forwards.
+  const args = [];
+  for (const name of ['user', 'password']) {
+    const value = query.get(name);
+    if (value !== null) args.push('--' + name, value);
+  }
+  if (query.get('lobby') !== null) args.push('--lobby');
+  if (query.get('stats') !== null) args.push('--stats');
+  for (const line of query.getAll('chat')) args.push('--chat', line);
+
+  var Module = {
+    canvas,
+    arguments: args,
+    print: (text) => console.log(text),
+    printErr: (text) => console.warn(text),
+    setStatus: (text) => {
+      if (!text) {
+        status.hidden = true;
+        canvas.focus();
+        return;
+      }
+      status.hidden = false;
+      status.textContent = text;
+    },
+    onAbort: (what) => {
+      status.hidden = false;
+      status.textContent = 'error: ' + what;
+    },
+  };
+  window.Module = Module;
+})();
+</script>
+    {{{ SCRIPT }}}
+</body>
+</html>

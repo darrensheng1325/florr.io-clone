@@ -240,6 +240,55 @@ It follows the TypeScript server here, because the two share these files:
   normalised and required to stay under the root, and `.wasm` is served as
   `application/wasm` so the browser will stream-compile it.
 
+## The offline build
+
+The third web target is the whole game in one file:
+
+```
+cmake --build cpp/build-web --target flowrix_offline   # -> offline.html
+npm run build:offline                                  # the same, staged as dist/offline.html
+```
+
+`offline.html` opens from disk — double-click it, or `file:///…/offline.html`
+— with no server running and no network. It is not a third program:
+`offline/main.cpp` starts the shipping `GameServer` and the shipping `App` in
+one wasm and steps both from one `requestAnimationFrame` callback, the server
+first so that this frame's input is simulated before this frame is drawn. The
+two talk over the same `Listener`/`Dialer` pair as the network build, over the
+in-page loopback described under Transports. Bots, the maze, squads, the
+console commands — everything the server does, it does here, for one player.
+
+What makes it one file is `-sSINGLE_FILE`: the wasm is embedded in the script
+and the script in the page, so nothing is fetched. That is the whole
+requirement — a page opened from a `file://` URL may not fetch a `.wasm` beside
+itself — and it is also why the page references nothing else: no stylesheet,
+no favicon, and no Google Fonts. The Ubuntu faces embedded in the wasm for
+measuring are registered with the document (`FontFace`) at startup, so text is
+drawn in the same bytes it was measured with. The file is a few megabytes, and
+`dist/offline.html` is gitignored so a rebuild does not land in every commit of
+the otherwise committed `dist/`.
+
+State lives in the browser's localStorage, under the `flowrix-offline/` prefix
+so that a copy of the page served from the game's own origin never presents the
+online client's session token to a server that has never heard of it:
+
+* the client's settings and session token, through the same
+  localStorage-backed WasmFS mount the online client uses
+  (`client/web/persist.cpp`);
+* the account database, mirrored **by path** (`restoreFile`/`mirrorFile` in
+  the same file): copied back into memory before the server opens it, compared
+  against storage once a second and written when it changed, and flushed from
+  the page's unload handler along with every playing account
+  (`GameServer::persistAll`). It cannot share the mount, because the mount
+  pairs a storage key with the file object it created and the database is
+  written atomically — a temp file renamed over the old one — so every save
+  would be a new object the mount has no name for.
+
+A scheduled `restart` is honoured the way a process restart would be: the
+page reloads, which is "the same build, started fresh". `update` answers that
+there is nothing to install into. Without storage (a private window) both
+halves still run and simply forget, as the online client does.
+
 ## Transports
 
 `shared/net/web_channel.h` is the seam. Natively `transport.cpp` moves bytes
@@ -247,12 +296,23 @@ with `socket()`, `connect()`, `accept()` and `recv()`; a browser tab has none
 of those, and emscripten's BSD-socket emulation offers WebSocket and nothing
 else. So the emscripten build asks this layer for whatever the runtime has:
 
-| | native | emscripten |
-|---|---|---|
-| client → server | TCP | WebTransport, else WebSocket |
-| server listens on | TCP | WebSocket, plus WebTransport with a certificate |
+| | native | emscripten (Node server, page client) | emscripten (offline page) |
+|---|---|---|---|
+| client → server | TCP | WebTransport, else WebSocket | in-page loopback |
+| server listens on | TCP | WebSocket, plus WebTransport with a certificate | an in-page port |
 
-The choice is made per connection, by the client, while it connects:
+The loopback is what the offline build plays over. A `listen()` in a page —
+where there is nothing to bind and nobody outside to serve — registers an
+in-page listener under its port, and a `connect()` from the same page to
+`127.0.0.1` or `localhost` on that port is resolved to it directly: the two
+ends are made together as a pair of queues, each one's `send` feeding the
+other's receive queue, both open at once. Any other host still goes over the
+network, so the Advanced Settings field can point the offline client at a real
+server. Under Node the same `listen()` is a real HTTP(S) server and nothing
+below changes.
+
+Between a page client and a Node server the choice is made per connection, by
+the client, while it connects:
 
 1. `GET /transport-info` asks the server what it offers. No answer means
    WebSocket, which is the safe assumption anyway.
@@ -272,10 +332,10 @@ listener is plain HTTP and WebSocket only, because WebTransport is
 secure-context only and there would be nothing to offer — see Serving the
 client above for how one is found.
 
-Only `Connection`'s byte movement and `poll()` differ between the two
-backends. The framing, the frame loop, the backlog rule and the conditions
-that end a connection are one implementation — `Listener::service()` — shared
-by both, because a copy of those rules per backend is how they would come to
+Only `Connection`'s byte movement and `poll()` differ between the backends.
+The framing, the frame loop, the backlog rule and the conditions that end a
+connection are one implementation — `Listener::service()` — shared by all of
+them, because a copy of those rules per backend is how they would come to
 differ in more.
 
 **The two pairs do not interoperate.** A native client speaks TCP and a wasm

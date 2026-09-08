@@ -223,8 +223,33 @@ private:
     /// a key is a character and nothing else: no movement, no hotkey.
     bool keyboardCaptured() const;
 
+    /// The caret and selection of the three places one can be. Exclusive by
+    /// construction -- only one of the auth form, the chat line and the lobby
+    /// name box holds the keyboard at a time -- so the auth form's four inputs
+    /// share one, re-seated as the focus moves between them.
+    ui::TextFieldState authField_;
+    ui::TextFieldState nameField_;
+    ui::TextFieldState chatField_;
+    /// Where drawChatField last painted, so the pointer can be tracked against
+    /// it on the frame that follows.
+    Rect chatBox_{};
+    /// Where the lobby name box last painted, for the same reason.
+    Rect nameBox_{};
+
     /// Text entry shared by the login fields and the chat box.
-    void editText(std::string& target, std::size_t maxLength);
+    ///
+    /// `masked` pins the caret to the end and refuses to copy: a password box
+    /// draws one bullet per BYTE, so a caret dragged into the middle of one
+    /// would sit off its own glyph, and there is nothing worth selecting in a
+    /// field that shows no text.
+    void editText(std::string& target, std::size_t maxLength, ui::TextFieldState& state,
+                  bool masked = false);
+    /// The lobby name box's plate, shared by its painter and its hit test.
+    static ui::TextFieldStyle nameFieldStyle();
+    /// The auth form's field at `index`, or null when there is none there.
+    std::string* authValue(int index);
+    /// Moves the caret to another auth field, taking its contents whole.
+    void focusAuthField(int index);
     /// One frame of chat editing: typing, the slash-command list's keys, and
     /// send or cancel. Shared by the lobby and the game so the box behaves
     /// identically on both.
@@ -383,7 +408,6 @@ private:
     /// between runs beside the session token, which is where the browser build
     /// keeps it too (localStorage, not the account).
     std::string playerName_;
-    bool nameFocused_ = false;
 
     /// Scripted-login progress. A screenshot or smoke run has no one to type,
     /// so it registers, and falls back to logging in when the name is taken.

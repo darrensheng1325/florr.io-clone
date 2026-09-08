@@ -37,11 +37,14 @@ message(STATUS "flowrix: ${FLIX_BUILD} build (${CMAKE_BUILD_TYPE})")
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 
 # --- what the web build is ---------------------------------------------------
-# `emcmake cmake ..` sets EMSCRIPTEN and builds TWO targets: the client, as a
-# page, and the server, as a Node program. A browser tab cannot listen on a
-# port, but Node can, so the server's web build targets Node rather than the
-# page -- see its link step below. The tools and the test binary are the only
-# native-only targets.
+# `emcmake cmake ..` sets EMSCRIPTEN and builds THREE targets: the client, as a
+# page; the server, as a Node program; and the offline build, which is both of
+# them in one page. A browser tab cannot listen on a port, but Node can, so the
+# server's web build targets Node rather than the page -- see its link step
+# below. The offline build's server listens on nothing: its client is in the
+# same page and reaches it over an in-page loopback (shared/net/web_channel.h),
+# and the whole game ships as one HTML file that opens from disk. The tools and
+# the test binary are the only native-only targets.
 #
 # FLIX_WEB_BUILD is what the client compiles differently: the chat tags that
 # need a document to mean anything are honoured only where there is one. See
@@ -124,6 +127,7 @@ add_library(flix_client STATIC
   client/ui/draw.cpp
   client/ui/text.cpp
   client/ui/text_cache.cpp
+  client/ui/text_input.cpp
   client/ui/markup.cpp
   client/ui/menu_style.cpp
   client/ui/menu_widgets.cpp
@@ -352,6 +356,47 @@ if(EMSCRIPTEN)
     "-lnodefs.js"
     "-sEXPORTED_RUNTIME_METHODS=['FS']"
     ${FLIX_EMBED_DATA})
+
+  # --- the offline build -----------------------------------------------------
+  # Both halves in one wasm, in one page, in one file. offline/main.cpp starts
+  # a GameServer and an App and steps them from one frame callback; the server
+  # listens on an in-page port and the client dials it, so the transport, the
+  # protocol and both programs are the ones above, unchanged.
+  #
+  # -sSINGLE_FILE is what makes it one file: the wasm is embedded in the
+  # script and the script in the page, and nothing is fetched -- which is the
+  # whole requirement, because a page opened from disk (file://) may not fetch
+  # a .wasm beside itself. The content is embedded as for the other two, and
+  # the fonts inside it are registered with the document at startup, so the
+  # page loads nothing from the network either. WASMFS, for the client's
+  # storage-backed mount; the server's stack size, because this wasm carries
+  # the server's JSON parser too. The linked output is offline.html; the .js
+  # and .wasm that would otherwise sit beside it do not exist.
+  add_executable(flowrix_offline offline/main.cpp)
+  target_link_libraries(flowrix_offline PRIVATE flix_server flix_client)
+  add_dependencies(flowrix_offline flix_data)
+  set_target_properties(flowrix_offline PROPERTIES OUTPUT_NAME offline SUFFIX ".html")
+  set_property(TARGET flowrix_offline APPEND PROPERTY LINK_DEPENDS ${FLIX_DATA_STAGED})
+  set_property(TARGET flowrix_offline APPEND PROPERTY LINK_DEPENDS
+               "${CMAKE_CURRENT_SOURCE_DIR}/offline/shell.html")
+  target_compile_options(flowrix_offline PRIVATE
+   "-flto"
+   "-fno-rtti"
+   "-fno-exceptions"
+  )
+  target_link_options(flowrix_offline PRIVATE
+    ${FLIX_WEB_LINK_OPTIONS}
+    "-sENVIRONMENT=web"
+    "-sWASMFS"
+    "-sSINGLE_FILE=1"
+    "-sSTACK_SIZE=4194304"
+    "-flto"
+    "-msimd128"
+    "-sEVAL_CTORS=0"
+    "-fno-rtti -fno-exceptions"
+    ${FLIX_WEB_CLIENT_OPT}
+    ${FLIX_EMBED_DATA}
+    "--shell-file" "${CMAKE_CURRENT_SOURCE_DIR}/offline/shell.html")
 endif()
 
 # --- tools -------------------------------------------------------------------

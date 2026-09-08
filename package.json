@@ -8,6 +8,7 @@
     "build": "node scripts/encodeMap.js && FLIX_BUILD=release node scripts/build-web.js all",
     "build:web-client": "FLIX_BUILD=release node scripts/build-web.js client",
     "build:server": "FLIX_BUILD=release node scripts/build-web.js server",
+    "build:offline": "node scripts/encodeMap.js && FLIX_BUILD=release node scripts/build-web.js offline",
     "build:server:ts": "tsc -p tsconfig.server.json",
     "dev:cert": "node scripts/gen-dev-cert.js",
     "test:ecs": "node scripts/ecs-selftest.js",

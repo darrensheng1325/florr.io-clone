@@ -46,6 +46,7 @@
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
+#include "client/ui/text_input.h"
 
 namespace flix {
 
@@ -202,7 +203,7 @@ struct PanelState {
     Tab tab = Tab::Controls;
     WidgetId pressed{};
     int dragging = -1;              ///< index into Slider, or -1
-    bool ipFocused = false;
+    ui::TextFieldState ipField;
     std::string serverIp = kDefaultServerAddress;
     std::array<bool, kToggleCount> toggles{};
     double mobFramerate = 15.0;
@@ -279,6 +280,17 @@ void insetSurface(Canvas& canvas, Rect r, std::uint32_t surface) {
 std::uint32_t surfaceColour(bool active, bool hovered) {
     if (active) return kSurfaceActive;
     return hovered ? kSurfaceHover : kSurfaceIdle;
+}
+
+/// The run the endpoint field paints, scrolled so its caret stays in the box.
+TextRun endpointRun(Rect box, const std::string& value, const ui::TextFieldState& state) {
+    TextRun run;
+    run.text = value;
+    run.size = 13.0;
+    const double toCaret =
+        measure(value.substr(0, std::min(state.selection.caret, value.size())), run.size, false);
+    run.originX = box.x + 8.0 - std::max(0.0, toCaret - (box.w - 20.0));
+    return run;
 }
 
 ButtonStyle gardnStyle(std::uint32_t fill, double textSize) {
@@ -451,7 +463,7 @@ void SettingsPanel::reset() {
     PanelState& st = panelState();
     st.pressed = WidgetId{};
     st.dragging = -1;
-    st.ipFocused = false;
+    st.ipField.blur();
 }
 
 bool SettingsPanel::render(MenuContext& ctx) {
@@ -489,20 +501,18 @@ bool SettingsPanel::render(MenuContext& ctx) {
             rebinding_ = -1;
             break;
         }
-    } else if (st.ipFocused) {
+    } else if (st.ipField.focused) {
         if (ctx.window.keyPressed(Key::Escape) || ctx.window.keyPressed(Key::Enter)) {
-            st.ipFocused = false;
+            st.ipField.blur();
         } else {
-            if (ctx.window.keyPressed(Key::Backspace) && !st.serverIp.empty()) {
-                st.serverIp.pop_back();
-            }
-            for (const char c : ctx.window.typedText()) {
-                if (st.serverIp.size() >= 128) break;
-                if (static_cast<unsigned char>(c) >= 0x20) st.serverIp += c;
-            }
+            // ASCII: a host name or an address is, and this is the one field a
+            // player is most likely to paste rather than type.
+            TextEditOptions typing;
+            typing.asciiOnly = true;
+            editText(ctx.window, st.serverIp, st.ipField, ctx.timeSeconds, typing);
         }
     }
-    if (st.ipFocused) ctx.wantsText = true;
+    if (st.ipField.focused) ctx.wantsText = true;
 
     // --- card ---------------------------------------------------------------
     overlayCard(canvas, panel, kSettingsSkin);
@@ -537,7 +547,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
             st.tab = static_cast<Tab>(i);
             scroll_.offset = 0;
             rebinding_ = -1;
-            st.ipFocused = false;
+            st.ipField.blur();
         }
     }
 
@@ -657,23 +667,36 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.cy += 25.0;
 
             const Rect field{contentX, p.cy, contentW, kFieldHeight};
-            insetSurface(canvas, field, surfaceColour(st.ipFocused, p.over(field)));
-            // Truncated from the LEFT: the tail of an address is the part that
-            // identifies it, and the caret sits at the end.
-            std::string shown = st.serverIp;
-            while (!shown.empty() && measure(shown, 13.0, false) > contentW - 20.0) {
-                shown.erase(shown.begin());
+            insetSurface(canvas, field, surfaceColour(st.ipField.focused, p.over(field)));
+            // Scrolled to keep the caret in view rather than truncated from the
+            // left: the tail of an address is what identifies it, which is
+            // where the caret starts, but the caret can be dragged anywhere now.
+            const TextRun run = endpointRun(field, st.serverIp, st.ipField);
+            canvas.save();
+            canvas.beginPath();
+            canvas.rect(static_cast<float>(field.x + 3.0), static_cast<float>(field.y),
+                        static_cast<float>(field.w - 6.0), static_cast<float>(field.h));
+            canvas.clip();
+            if (st.ipField.focused) {
+                selectionHighlight(canvas, run, st.ipField.selection,
+                                   Rect{field.x + 4.0, field.y + 6.0, field.w - 8.0,
+                                        field.h - 12.0});
             }
             TextStyle value = bodyStyle(13.0, kInk, kInk, 0.0);
             value.bold = false;
-            text(canvas, shown, contentX + 8.0, p.cy + kFieldHeight * 0.5, value);
-            if (st.ipFocused && std::fmod(ctx.timeSeconds, 1.0) < 0.5) {
+            text(canvas, st.serverIp, run.originX, p.cy + kFieldHeight * 0.5, value);
+            if (st.ipField.focused && caretVisible(st.ipField, ctx.timeSeconds)) {
                 setFill(canvas, kInk);
-                canvas.fillRect(static_cast<float>(contentX + 8.0 + measure(shown, 13.0, false)),
-                                static_cast<float>(p.cy + 8.0), 2.0f,
-                                static_cast<float>(kFieldHeight - 16.0));
+                canvas.fillRect(
+                    static_cast<float>(xOfIndex(run, st.ipField.selection.caret)),
+                    static_cast<float>(p.cy + 8.0), 2.0f,
+                    static_cast<float>(kFieldHeight - 16.0));
             }
-            if (p.click(field)) st.ipFocused = true;
+            canvas.restore();
+            if (p.inView) {
+                trackTextMouse(ctx.window, st.ipField, field, run, st.serverIp, ctx.timeSeconds);
+            }
+            if (p.over(field)) ctx.window.setCursorShape(CursorShape::Text);
             p.cy += kFieldHeight + 15.0;
 
             p.checkbox(kShowConsoleLogs, "Show Console Logs on Screen");
@@ -715,7 +738,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
         // clicking off a field does everywhere else.
         if (!p.consumed) {
             rebinding_ = -1;
-            st.ipFocused = false;
+            st.ipField.blur();
         }
         return keepOpen;
     }

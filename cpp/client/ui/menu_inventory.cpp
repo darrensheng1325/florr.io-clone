@@ -17,6 +17,7 @@
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
+#include "client/ui/text_input.h"
 #include "shared/game/config.h"
 
 namespace flix {
@@ -306,7 +307,7 @@ void InventoryPanel::reset() {
     // Only the hover and the field's focus. Scroll position, search text and
     // Stack mode all survive a close and reopen in the browser -- the panel is
     // a window onto the account, not a wizard that starts over.
-    searchFocused_ = false;
+    searchField_.blur();
     tooltipDelay.reset();
 }
 
@@ -355,7 +356,8 @@ bool InventoryPanel::render(MenuContext& ctx) {
 
     // No placeholder: the browser's field is a bare white box until it is typed
     // into, and a grey "Search" there reads as a value the filter is applying.
-    inputField(canvas, searchRect, search_, "", searchFocused_, ctx.timeSeconds);
+    inputField(canvas, searchRect, search_, "", searchField_.focused, ctx.timeSeconds,
+               &searchField_);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
 
     // --- content -----------------------------------------------------------
@@ -478,24 +480,24 @@ bool InventoryPanel::render(MenuContext& ctx) {
     }
 
     // --- input -------------------------------------------------------------
-    if (searchFocused_) {
+    // The field's pointer handling runs unless Close or Stack is taking this
+    // press: neither of those disturbs the caret in the browser, and blurring
+    // on them would lose a half-typed filter to a stray click on the toggle.
+    if (!(ctx.pressed() && (closeRect.contains(mouse) || toggleHit.contains(mouse)))) {
+        trackTextMouse(ctx.window, searchField_, searchRect,
+                       inputFieldRun(searchRect, search_, searchField_), search_,
+                       ctx.timeSeconds);
+    }
+    if (searchField_.focused) {
         ctx.wantsText = true;
-        for (const char c : ctx.window.typedText()) {
-            if (static_cast<unsigned char>(c) >= 0x20 && search_.size() < kSearchLimit) {
-                search_ += c;
-            }
-        }
-        if (ctx.window.keyPressed(Key::Backspace) && !search_.empty()) {
-            // Erase a whole UTF-8 sequence: dropping one byte of a multi-byte
-            // character leaves a string that will not measure or draw.
-            std::size_t at = search_.size() - 1;
-            while (at > 0 && (static_cast<unsigned char>(search_[at]) & 0xC0) == 0x80) --at;
-            search_.erase(at);
-        }
+        TextEditOptions typing;
+        typing.maxBytes = kSearchLimit;
+        editText(ctx.window, search_, searchField_, ctx.timeSeconds, typing);
         if (ctx.window.keyPressed(Key::Enter) || ctx.window.keyPressed(Key::Escape)) {
-            searchFocused_ = false;
+            searchField_.blur();
         }
     }
+    if (searchRect.contains(mouse)) ctx.window.setCursorShape(CursorShape::Text);
 
     if (ctx.pressed()) {
         // Close and Stack act on PRESS, as the browser's mousedown handler
@@ -509,7 +511,8 @@ bool InventoryPanel::render(MenuContext& ctx) {
             stacked_ = !stacked_;
             return true;
         }
-        searchFocused_ = searchRect.contains(mouse);
+        // The field answered for its own press above.
+        if (searchRect.contains(mouse)) return true;
         if (hovered >= 0 && !ctx.drag.active()) {
             const Cell& cell = grid.cells[static_cast<std::size_t>(hovered)];
             ctx.drag.source = DragState::Source::Inventory;

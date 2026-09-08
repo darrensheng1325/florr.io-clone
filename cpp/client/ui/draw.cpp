@@ -256,19 +256,47 @@ void scrim(Canvas& canvas, double alpha) {
     canvas.fillRect(0, 0, static_cast<float>(canvas.width()), static_cast<float>(canvas.height()));
 }
 
+void selectionHighlight(Canvas& canvas, const TextRun& run, const TextSelection& selection,
+                        Rect band, std::uint32_t colour, double alpha) {
+    if (selection.empty()) return;
+    const double left = std::max(xOfIndex(run, selection.begin()), band.x);
+    const double right = std::min(xOfIndex(run, selection.end()), band.right());
+    if (right <= left) return;
+    setFill(canvas, colour, alpha);
+    canvas.fillRect(static_cast<float>(left), static_cast<float>(band.y),
+                    static_cast<float>(right - left), static_cast<float>(band.h));
+}
+
+namespace {
+
+/// A field shorter than its own type scale would otherwise clip its glyphs
+/// against its outline; the browser never hits this because every one of its
+/// fields is 42px tall.
+double fieldTextSize(Rect r, const TextFieldStyle& style) {
+    return std::min(style.textSize, r.h * 0.6);
+}
+
+} // namespace
+
+TextRun textFieldRun(Rect r, const std::string& value, const TextFieldStyle& style) {
+    TextRun run;
+    run.text = value;
+    run.originX = r.x + style.padding;
+    run.size = fieldTextSize(r, style);
+    run.bold = style.bold;
+    return run;
+}
+
 void textField(Canvas& canvas, Rect r, const std::string& value, const std::string& placeholder,
                bool focused, bool masked, double timeSeconds,
-               const TextFieldStyle& style) {
+               const TextFieldStyle& style, const TextFieldState* state) {
     const std::uint32_t outlineBase = focused ? style.focusedOutline : style.outline;
     const std::uint32_t outline =
         outlineBase == 0xFFFFFFFFu ? hsvScale(style.fill, 0.8) : outlineBase;
     strokedBox(canvas, r, style.radius, style.fill, style.fillAlpha, outline,
                focused ? style.focusedOutlineWidth : style.outlineWidth, style.outlineAlpha);
 
-    // A field shorter than its own type scale would otherwise clip its glyphs
-    // against its outline; the browser never hits this because every one of
-    // its fields is 42px tall.
-    const double textSize = std::min(style.textSize, r.h * 0.6);
+    const double textSize = fieldTextSize(r, style);
 
     std::string shown = value;
     if (masked) shown.assign(value.size(), '*');
@@ -291,6 +319,16 @@ void textField(Canvas& canvas, Rect r, const std::string& value, const std::stri
         return;
     }
 
+    // The highlight goes under the text, and only on a field whose caret this
+    // painter is being told about -- a masked one keeps its old behaviour,
+    // since a selection over a row of bullets is not a thing worth painting.
+    const bool selectable = state && !masked;
+    if (selectable && focused) {
+        selectionHighlight(canvas, textFieldRun(r, value, style), state->selection,
+                           Rect{r.x + style.padding * 0.5, r.y + 6.0,
+                                r.w - style.padding, std::max(2.0, r.h - 12.0)});
+    }
+
     ts.fill = style.textFill;
     text(canvas, shown, r.x + style.padding, r.y + r.h * 0.5, ts);
 
@@ -301,10 +339,18 @@ void textField(Canvas& canvas, Rect r, const std::string& value, const std::stri
     // of each starting its cycle wherever its own process happened to launch.
     // Filled rather than stroked: a stroked line straddles its path and lands
     // half a pixel off the glyph it follows.
-    const auto epochMillis = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    if ((epochMillis / 500) % 2 != 0) return;
-    const double caretX = r.x + style.padding + textWidth(canvas, shown, textSize, style.bold);
+    // A field with a caret of its own blinks on THAT instead, so the bar stays
+    // solid while it is being typed at rather than winking out mid-word.
+    if (selectable) {
+        if (!caretVisible(*state, timeSeconds)) return;
+    } else {
+        const auto epochMillis = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        if ((epochMillis / 500) % 2 != 0) return;
+    }
+    const double caretX =
+        selectable ? xOfIndex(textFieldRun(r, value, style), state->selection.caret)
+                   : r.x + style.padding + textWidth(canvas, shown, textSize, style.bold);
     setFill(canvas, style.caret);
     canvas.fillRect(static_cast<float>(caretX), static_cast<float>(r.y + 10), 2.0f,
                     static_cast<float>(std::max(2.0, r.h - 20.0)));

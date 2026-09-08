@@ -103,6 +103,14 @@ public:
     /// when step() first returns false.
     void shutdown();
 
+    /// The flush without the stop: every playing account is written to the
+    /// database and the database to disk, and the server carries on. What
+    /// the periodic save does on its own timer, and what the `save` console
+    /// command and the offline page's unload handler do on demand -- a tab
+    /// that is closing has no shutdown() coming, only this. Returns how many
+    /// accounts were written.
+    std::size_t persistAll();
+
     /// Safe to call from a signal handler: it only stores to an atomic flag,
     /// and the shutdown work itself happens on the main thread.
     void stop() { running_.store(false); }

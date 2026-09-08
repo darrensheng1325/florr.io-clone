@@ -32,6 +32,7 @@
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
+#include "client/ui/text_input.h"
 #include "shared/game/config.h"
 #include "shared/game/shop.h"
 
@@ -106,8 +107,6 @@ constexpr double kShopStrokeRatio = 0.10;
 
 constexpr double kScrollbarWidth = 6.0;
 
-/// Half-period of the code field's caret: 530 ms on, 530 ms off.
-constexpr double kCaretBlinkSeconds = 0.530;
 constexpr std::size_t kCodeMaxLength = 64;
 
 /// One wheel notch in a browser is 100 CSS px of `deltaY`, and the shop adds
@@ -216,12 +215,10 @@ struct ShopState {
     enum class Modal : std::uint8_t { None, Confirm, Alert };
 
     std::string code;
-    std::size_t caret = 0;
-    bool focused = false;
-    /// When the blink phase last restarted. Anchored to the last edit rather
-    /// than taken modulo wall time, so the caret is solid the instant a key
-    /// lands instead of blinking out mid-keystroke.
-    double caretAnchor = 0;
+    /// Caret, selection, focus and the blink's phase. The phase is anchored to
+    /// the last edit rather than taken modulo wall time, so the caret is solid
+    /// the instant a key lands instead of blinking out mid-keystroke.
+    ui::TextFieldState field;
 
     Modal modal = Modal::None;
     std::string message;
@@ -249,6 +246,19 @@ struct ShopState {
     std::vector<FallingStar> stars;
     Rng rng;
 };
+
+/// The run the code field paints, scrolled so the caret stays inside the box.
+/// The paint and the hit test both take it from here, or a click would land on
+/// a glyph other than the one under the pointer.
+TextRun codeRun(Rect box, const std::string& code, const ui::TextFieldState& state) {
+    TextRun run;
+    run.text = code;
+    run.size = 16.0;
+    const double toCaret =
+        measure(code.substr(0, std::min(state.selection.caret, code.size())), run.size, false);
+    run.originX = box.x + 8.0 - std::max(0.0, toCaret - (box.w - 16.0));
+    return run;
+}
 
 ShopState& stateFor(const ShopPanel* panel) {
     static std::unordered_map<const ShopPanel*, ShopState> states;
@@ -560,11 +570,6 @@ void drawDiscountRibbon(Canvas& canvas, Vec2 corner, int percent) {
     canvas.restore();
 }
 
-bool caretVisible(double timeSeconds, double anchorSeconds) {
-    const double since = std::max(0.0, timeSeconds - anchorSeconds);
-    return static_cast<long long>(since / kCaretBlinkSeconds) % 2 == 0;
-}
-
 } // namespace
 
 double ShopPanel::preferredWidth() { return 753.0; }
@@ -575,7 +580,7 @@ void ShopPanel::reset() {
     // code field for the manager's whole lifetime; closing the panel drops
     // only the focus and any open modal.
     ShopState& state = stateFor(this);
-    state.focused = false;
+    state.field.blur();
     state.modal = ShopState::Modal::None;
     state.message.clear();
     state.pendingPetal = kNoPetal;
@@ -629,7 +634,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     // A focused field or an open modal owns the keyboard. Without this the
     // menu system reads every letter typed into the code field as a hotkey and
     // Escape as "close the shop".
-    if (modalUp || state.focused) ctx.wantsText = true;
+    if (modalUp || state.field.focused) ctx.wantsText = true;
 
     // Read the balance from the live entity when there is one, so a mythic
     // kill's payout shows up before the next profile arrives.
@@ -842,7 +847,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         if (fieldHover) cursor = CursorShape::Text;
         fillRounded(canvas, codeField, 5.0, kPaper, 0.10);
         strokeRounded(canvas, codeField, 5.0,
-                      state.focused ? kPaper : (fieldHover ? kCodeBlueLit : kCodeBlue), 2.0);
+                      state.field.focused ? kPaper : (fieldHover ? kCodeBlueLit : kCodeBlue), 2.0);
 
         canvas.save();
         canvas.beginPath();
@@ -850,21 +855,28 @@ bool ShopPanel::render(MenuContext& ctx) {
                     static_cast<float>(codeField.w - 8.0), static_cast<float>(codeField.h));
         canvas.clip();
         {
-            const double beforeCaret = measure(state.code.substr(0, state.caret), 16.0, false);
-            // Scroll the text so the caret stays inside the field rather than
-            // running out of its right edge.
-            const double scrollX = std::max(0.0, beforeCaret - (codeField.w - 16.0));
+            const TextRun run = codeRun(codeField, state.code, state.field);
             const bool placeholder = state.code.empty();
             const std::string shown =
-                placeholder ? (state.focused ? std::string() : "Enter code...") : state.code;
+                placeholder ? (state.field.focused ? std::string() : "Enter code...") : state.code;
+
+            // A pale wash rather than the blue one: this field is a translucent
+            // white inset on a green card, and a blue block on it reads as a
+            // different control rather than as selected text.
+            if (state.field.focused) {
+                selectionHighlight(canvas, run, state.field.selection,
+                                   Rect{codeField.x + 4.0, codeField.y + 6.0, codeField.w - 8.0,
+                                        codeField.h - 12.0},
+                                   kPaper, 0.35);
+            }
 
             if (placeholder) canvas.setGlobalAlpha(0.45f);
-            text(canvas, shown, codeField.x + 8.0 - scrollX, codeField.y + codeField.h * 0.5,
+            text(canvas, shown, run.originX, codeField.y + codeField.h * 0.5,
                  shopText(16.0, false, kPaper, 0.0));
             if (placeholder) canvas.setGlobalAlpha(1.0f);
 
-            if (state.focused && caretVisible(ctx.timeSeconds, state.caretAnchor)) {
-                const double caretX = codeField.x + 8.0 - scrollX + beforeCaret;
+            if (state.field.focused && caretVisible(state.field, ctx.timeSeconds)) {
+                const double caretX = xOfIndex(run, state.field.selection.caret);
                 setStroke(canvas, kPaper);
                 canvas.setLineWidth(1.5f);
                 canvas.beginPath();
@@ -1070,8 +1082,8 @@ bool ShopPanel::render(MenuContext& ctx) {
         // the moment it emits, and the reply only decides between the shower
         // and the red alert.
         state.code.clear();
-        state.caret = 0;
-        state.caretAnchor = ctx.timeSeconds;
+        state.field.selection.collapse(0);
+        state.field.caretSeconds = ctx.timeSeconds;
     };
 
     // --- keyboard -----------------------------------------------------------
@@ -1081,34 +1093,23 @@ bool ShopPanel::render(MenuContext& ctx) {
         } else if (ctx.window.keyPressed(Key::Escape)) {
             clearModal();
         }
-    } else if (state.focused) {
-        for (const char c : ctx.window.typedText()) {
-            // Printable ASCII only: codes are, and it keeps the caret's byte
-            // index and its character index the same thing.
-            const auto byte = static_cast<unsigned char>(c);
-            if (byte < 0x20 || byte > 0x7E) continue;
-            if (state.code.size() >= kCodeMaxLength) break;
-            state.code.insert(state.caret, 1, c);
-            ++state.caret;
-            state.caretAnchor = ctx.timeSeconds;
-        }
-        if (ctx.window.keyPressed(Key::Backspace) && state.caret > 0) {
-            state.code.erase(state.caret - 1, 1);
-            --state.caret;
-            state.caretAnchor = ctx.timeSeconds;
-        }
-        if (ctx.window.keyPressed(Key::Left) && state.caret > 0) {
-            --state.caret;
-            state.caretAnchor = ctx.timeSeconds;
-        }
-        if (ctx.window.keyPressed(Key::Right) && state.caret < state.code.size()) {
-            ++state.caret;
-            state.caretAnchor = ctx.timeSeconds;
-        }
+    } else if (state.field.focused) {
+        // Printable ASCII only: codes are, and it keeps the caret's byte index
+        // and its character index the same thing.
+        TextEditOptions typing;
+        typing.maxBytes = kCodeMaxLength;
+        typing.asciiOnly = true;
+        editText(ctx.window, state.code, state.field, ctx.timeSeconds, typing);
         if (ctx.window.keyPressed(Key::Enter)) submitCode();
         // Escape leaves the field rather than the panel; a second press then
         // closes the shop, which is the browser's behaviour exactly.
-        if (ctx.window.keyPressed(Key::Escape)) state.focused = false;
+        if (ctx.window.keyPressed(Key::Escape)) state.field.blur();
+    }
+    // The drag half of the pointer, before the press pass below claims it.
+    if (!modalUp) {
+        trackTextMouse(ctx.window, state.field, codeField,
+                       codeRun(codeField, state.code, state.field), state.code,
+                       ctx.timeSeconds);
     }
 
     // --- mouse --------------------------------------------------------------
@@ -1123,28 +1124,20 @@ bool ShopPanel::render(MenuContext& ctx) {
         return true;
     }
 
-    if (!codeField.contains(mouse)) state.focused = false;
     if (closeRect.contains(mouse)) return false;
 
     for (int i = 0; i < 3; ++i) {
         if (!tabRects[static_cast<std::size_t>(i)].contains(mouse)) continue;
         // Leaving the code field behind clears its focus, or the shop would go
         // on eating keystrokes from a tab with no field on it.
-        if (static_cast<int>(tab_) != i) state.focused = false;
+        if (static_cast<int>(tab_) != i) state.field.blur();
         tab_ = static_cast<Tab>(i);
         return true;
     }
 
-    if (codeField.contains(mouse)) {
-        if (!state.focused) {
-            state.focused = true;
-            state.caretAnchor = ctx.timeSeconds;
-        }
-        // Placed at the end rather than under the pointer: per-glyph hit
-        // testing buys nothing on a field this short.
-        state.caret = state.code.size();
-        return true;
-    }
+    // The field answered for its own press in trackTextMouse above, caret
+    // placement and selection drag included.
+    if (codeField.contains(mouse)) return true;
 
     if (redeemButton.contains(mouse)) {
         submitCode();

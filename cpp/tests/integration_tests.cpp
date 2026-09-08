@@ -645,3 +645,31 @@ TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
     // half its petal, then the shooter's scale over the divisor.
     CHECK(seenRadius < ammoStats.radius);
 }
+
+TEST(persist_all_writes_the_database_and_keeps_serving) {
+    Harness h("persist-all");
+    if (!h.ready) { CHECK(false); return; }
+
+    // A registration is dirty in memory and, left alone, reaches the disk
+    // only on the periodic save. persistAll() is the on-demand flush: the
+    // offline page calls it from the tab's unload handler, where nothing
+    // else would ever write the file.
+    NetClient client;
+    CHECK(flix::testsupport::loginNew(h, client, "carol", "hunter2!"));
+    // Nobody is in the world yet, so no player is written -- but the database is.
+    CHECK_EQ(h.server.persistAll(), std::size_t{0});
+    {
+        Database probe;
+        std::string error;
+        CHECK(probe.load(h.dbPath, error));
+        CHECK(probe.findUser("carol") != nullptr);
+    }
+
+    // Unlike shutdown(), the listener is still up afterwards.
+    NetClient second;
+    CHECK(connectClient(h, second));
+
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    CHECK_EQ(h.server.persistAll(), std::size_t{1});
+}

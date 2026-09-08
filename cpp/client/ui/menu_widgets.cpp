@@ -56,41 +56,89 @@ void toggleBox(Canvas& canvas, Rect r, double lerpAmount) {
                     static_cast<float>(r.w - inset * 2), static_cast<float>(r.h - inset * 2));
 }
 
+namespace {
+
+/// The browser floats a real <input> over this plate at r.x + 4 and gives it
+/// `padding: 0 8px`, so its first glyph starts 12px in, not 8.
+constexpr double kFieldInset = 12.0;
+constexpr double kFieldTextSize = 13.0;
+
+/// How far the text is pushed left to keep the caret inside the box. The field
+/// used to drop leading BYTES off the value instead, which both cut multi-byte
+/// characters in half and pinned the view to the tail -- fine while the caret
+/// could only ever be at the end, wrong the moment it can be dragged.
+double fieldScroll(Rect r, const std::string& value, const TextFieldState& state) {
+    const double span = std::max(1.0, r.w - kFieldInset * 2);
+    const double toCaret =
+        measure(value.substr(0, std::min(state.selection.caret, value.size())), kFieldTextSize,
+                false);
+    return std::max(0.0, toCaret - span);
+}
+
+} // namespace
+
+Rect inputFieldBand(Rect r) { return {r.x + 4, r.y + 4, r.w - 8, r.h - 8}; }
+
+TextRun inputFieldRun(Rect r, const std::string& value, const TextFieldState& state) {
+    TextRun run;
+    run.text = value;
+    run.originX = r.x + kFieldInset - fieldScroll(r, value, state);
+    run.size = kFieldTextSize;
+    return run;
+}
+
 void inputField(Canvas& canvas, Rect r, const std::string& value, const std::string& placeholder,
-                bool focused, double timeSeconds) {
+                bool focused, double timeSeconds, const TextFieldState* state) {
     setFill(canvas, kControlDark);
     canvas.beginPath();
     canvas.roundRect(static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w),
                      static_cast<float>(r.h), 5.0f);
     canvas.fill();
+    const Rect band = inputFieldBand(r);
     setFill(canvas, kControlField);
-    canvas.fillRect(static_cast<float>(r.x + 4), static_cast<float>(r.y + 4),
-                    static_cast<float>(r.w - 8), static_cast<float>(r.h - 8));
+    canvas.fillRect(static_cast<float>(band.x), static_cast<float>(band.y),
+                    static_cast<float>(band.w), static_cast<float>(band.h));
 
-    const double size = 13.0;
-    // The browser floats a real <input> over this plate at r.x + 4 and gives it
-    // `padding: 0 8px`, so its first glyph starts 12px in, not 8.
-    const double inset = 12.0;
-    // Show the TAIL of an overlong value: the caret is at the end, and a field
-    // that scrolls its own start out of view is the one people expect.
-    std::string shown = value;
-    while (!shown.empty() && measure(shown, size, false) > r.w - inset * 2) {
-        shown.erase(shown.begin());
+    if (value.empty()) {
+        text(canvas, placeholder, r.x + kFieldInset, r.y + r.h * 0.5,
+             labelStyle(kFieldTextSize, false, 0x8A8A8Au, 0.0));
+        if (!focused) return;
     }
 
-    TextStyle style = labelStyle(size, false, value.empty() ? 0x8A8A8Au : kInk, 0.0);
-    text(canvas, value.empty() ? placeholder : shown, r.x + inset, r.y + r.h * 0.5, style);
+    // A caret-less caller still gets the old behaviour: the view pinned to the
+    // end of the value, which is where its caret implicitly is.
+    TextFieldState fallback;
+    fallback.selection.collapse(value.size());
+    const TextFieldState& live = state ? *state : fallback;
+    const TextRun run = inputFieldRun(r, value, live);
 
-    if (!focused) return;
+    canvas.save();
+    canvas.beginPath();
+    canvas.rect(static_cast<float>(band.x), static_cast<float>(band.y),
+                static_cast<float>(band.w), static_cast<float>(band.h));
+    canvas.clip();
+
+    if (focused) {
+        selectionHighlight(canvas, run, live.selection, Rect{band.x, r.y + 6, band.w, r.h - 12});
+    }
+    if (!value.empty()) {
+        text(canvas, value, run.originX, r.y + r.h * 0.5,
+             labelStyle(kFieldTextSize, false, kInk, 0.0));
+    }
+
     // A one-second cycle at an even duty and a one-pixel bar: this stands in
     // for the native <input> caret the browser shows here, and the platform
-    // blink is a second, not the 1.06 an earlier pass guessed.
-    if (std::fmod(timeSeconds, 1.0) < 0.5) {
-        const double caretX = r.x + inset + measure(shown, size, false) + 1.0;
+    // blink is a second, not the 1.06 an earlier pass guessed. A field with a
+    // caret of its own phases the blink on that, so it stays solid while it is
+    // being typed at.
+    const bool blinkOn = state ? caretVisible(*state, timeSeconds)
+                               : std::fmod(timeSeconds, 1.0) < 0.5;
+    if (focused && blinkOn) {
         setFill(canvas, kInk);
-        canvas.fillRect(static_cast<float>(caretX), static_cast<float>(r.y + 6),
-                        1.0f, static_cast<float>(r.h - 12));
+        canvas.fillRect(static_cast<float>(xOfIndex(run, live.selection.caret) + 1.0),
+                        static_cast<float>(r.y + 6), 1.0f, static_cast<float>(r.h - 12));
     }
+    canvas.restore();
 }
 
 void scrollbar(Canvas& canvas, Rect view, double contentHeight, double scroll,

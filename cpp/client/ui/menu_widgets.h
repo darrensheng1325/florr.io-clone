@@ -34,10 +34,21 @@ namespace flix::ui {
 /// `lerp` is 0..1 and is the caller's to animate, so the widget stays pure.
 void toggleBox(Canvas&, Rect, double lerp);
 
-/// A text field's chrome plus its contents, with a blinking caret when focused.
-/// The panels type into a plain std::string; there is no IME to hand off to.
+/// A text field's chrome plus its contents, with a blinking caret and a
+/// selection highlight when focused. The panels type into a plain std::string;
+/// there is no IME to hand off to.
+///
+/// The field scrolls its own text to keep the caret in view, so `state` is
+/// what decides the layout as well as the caret -- hit-test it through
+/// `inputFieldRun`, never by measuring the value from the box's left edge.
 void inputField(Canvas&, Rect, const std::string& value, const std::string& placeholder,
-                bool focused, double timeSeconds);
+                bool focused, double timeSeconds, const TextFieldState* state = nullptr);
+
+/// The run `inputField` paints for these bounds, including its scroll.
+TextRun inputFieldRun(Rect, const std::string& value, const TextFieldState& state);
+
+/// The interior a field's text and highlight are clipped to.
+Rect inputFieldBand(Rect);
 
 /// A vertical scrollbar down the right of `view`. Draws nothing when the
 /// content fits, so callers need not test first.

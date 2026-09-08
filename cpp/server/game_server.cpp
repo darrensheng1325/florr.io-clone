@@ -250,11 +250,19 @@ void GameServer::run() {
 void GameServer::shutdown() {
     // Flush account progress before exiting; an orderly shutdown must not cost
     // anyone their session.
+    persistAll();
+    listener_.stop();
+}
+
+std::size_t GameServer::persistAll() {
+    std::size_t saved = 0;
     for (const auto& entry : sessions_) {
-        if (entry.second.playing()) persistPlayer(entry.second);
+        if (!entry.second.playing()) continue;
+        persistPlayer(entry.second);
+        ++saved;
     }
     database_.save();
-    listener_.stop();
+    return saved;
 }
 
 bool GameServer::step() {

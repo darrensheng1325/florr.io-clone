@@ -667,7 +667,7 @@ Rect ShopPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), ShopPanel::preferredHeight(), kMenuCornerY, w, h);
 }
 Rect SkinsPanel::bounds(int w, int h) {
-    return cornerPanel(preferredWidth(), 540.0, kMenuCornerY, w, h);
+    return cornerPanel(preferredWidth(), SkinsPanel::preferredHeight(), kMenuCornerY, w, h);
 }
 Rect LeaderboardPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), 500.0, kMenuCornerY, w, h);

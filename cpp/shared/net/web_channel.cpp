@@ -13,6 +13,15 @@
 // closed channel's slot is nulled rather than spliced out -- reusing an index
 // for something else while C++ still holds it would be the one bug this design
 // can have.
+//
+// A listener is one of two things, decided by what the runtime is. Under Node
+// it is a real HTTP(S) server with a WebSocket upgrade path -- the deployed
+// game server. In a page it is an in-page listener: a port number that
+// connect() calls from the SAME page resolve to directly, handing the two ends
+// a pair of queues instead of a socket. That is what lets one wasm carry both
+// halves of the game and play them against each other with no network at all
+// (offline/main.cpp); the Listener and Dialer above cannot tell the difference,
+// and neither can the protocol.
 
 EM_JS(void, flix_net_init, (), {
   if (Module.flixNet) return;
@@ -20,6 +29,16 @@ EM_JS(void, flix_net_init, (), {
   const net = {
     slots: [],
     isNode: typeof process !== "undefined" && process.versions && process.versions.node,
+    // port -> slot id of an in-page listener. Only a page has these; Node
+    // listens on real ports.
+    local: {},
+    // The names an in-page listener answers to. What a native Listener would
+    // be reachable at from its own machine, and nothing else: any other host
+    // is a real server somewhere and goes over the network as before.
+    isLoopbackHost(host) {
+      return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+    },
+
     // How long the transport picker waits for /transport-info, and for a
     // WebTransport handshake, before giving up and using WebSocket. Both are
     // one-off costs on the first connection of a session.
@@ -76,13 +95,49 @@ EM_JS(void, flix_net_init, (), {
 
 EM_JS(int, flix_ch_connect, (const char* hostPtr, int port), {
   const net = Module.flixNet;
+  const host = UTF8ToString(hostPtr);
+
+  // A listener in this very page takes precedence over the network, exactly
+  // as a native connect() to 127.0.0.1 reaches whatever is bound on that port
+  // locally. The two ends are made together, the sender of each feeding the
+  // receive queue of the other, and both are open at once: there is no
+  // handshake to wait for when the peer is a function call away. The Dialer
+  // still sees Connecting on this call and Open on its next poll, which is
+  // the same sequence the network path gives it, only faster.
+  if (net.local[port] !== undefined && net.isLoopbackHost(host)) {
+    const listener = net.get(net.local[port]);
+    if (!listener || !listener.listener) return -1;
+    const client = net.channel();
+    const server = net.channel();
+    const wire = (from, to, peer) => {
+      from.kind = "loopback";
+      from.peer = peer;
+      from.state = 1;
+      // Handed over whole and unshared: send() already sliced the bytes out of
+      // the heap, so the receiving queue may keep them as they are.
+      from.sender = (bytes) => net.deliver(to, bytes);
+      // Nothing is ever in flight between two queues in one thread.
+      from.bufferedFn = () => 0;
+      from.closer = () => net.fail(to, "peer closed");
+    };
+    // The peer string of the server end is what the account limiter keys on.
+    // A page has exactly one player, so the name only has to be stable and
+    // not collide with a real address.
+    wire(client, server, "loopback:" + port);
+    wire(server, client, "loopback");
+    const clientId = net.alloc(client);
+    listener.pending.push(net.alloc(server));
+    return clientId;
+  }
+
   // A page dials its own scheme: a document served over https may not open a
   // ws:// socket, and https is also the only context WebTransport exists in.
   // Node has no page, so it asks for the plain one.
   const secure = typeof location !== "undefined" && location.protocol === "https:";
-  const origin = (secure ? "https://" : "http://") + UTF8ToString(hostPtr) + ":" + port;
+  const origin = (secure ? "https://" : "http://") + host + ":" + port;
   const channel = net.channel();
   const id = net.alloc(channel);
+
 
   const withTimeout = (promise, ms, what) => Promise.race([
     promise,
@@ -204,9 +259,22 @@ EM_JS(int, flix_ch_connect, (const char* hostPtr, int port), {
 EM_JS(int, flix_ch_listen,
       (int port, const char* certPtr, const char* keyPtr, const char* rootPtr), {
   const net = Module.flixNet;
-  if (!net.isNode) return -1;
+
+  if (!net.isNode) {
+    // A page cannot bind a socket, but it can be the other end of its own
+    // connect() calls -- see flix_ch_connect. One listener per port, as with
+    // a real bind; the certificate and the web root mean nothing here, since
+    // there is no HTTP to serve and nobody outside the page to serve it to.
+    if (net.local[port] !== undefined) return -1;
+    const listener = { listener: true, state: 1, pending: [], closer: null, error: "", port: port };
+    const id = net.alloc(listener);
+    net.local[port] = id;
+    listener.closer = () => { if (net.local[port] === id) delete net.local[port]; };
+    return id;
+  }
 
   const fs = require("fs");
+
   const path = require("path");
   const crypto = require("crypto");
 

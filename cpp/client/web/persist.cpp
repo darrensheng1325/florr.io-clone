@@ -1,9 +1,14 @@
 #include "client/web/persist.h"
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <unordered_map>
+#include <vector>
 
 #include <emscripten.h>
 #include <emscripten/wasmfs.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 // $wasmFS$backends is the map WasmFS keeps of backend address -> the JS object
@@ -14,33 +19,36 @@ EM_JS_DEPS(flix_persist, "$wasmFS$backends");
 namespace flix::web {
 namespace {
 
-/// Namespaced so the client's two files cannot collide with anything else the
-/// origin stores.
-constexpr const char* kStoragePrefix = "flowrix/";
-
 void (*g_flush)() = nullptr;
 
-/// Installs the JS half of the backend: WasmFS calls into these for every read
-/// and write of a file that lives in it.
-///
-/// The bytes are kept in a typed array per open file and mirrored into
-/// localStorage after each change, rather than being re-encoded out of storage
-/// on every read. Both files are a few hundred bytes, so the copy is free and
-/// reads stay a subarray away.
+/// What mirrorFile() last saw under each key, or what restoreFile() put
+/// there. A mirror whose bytes match this is skipped, which is what makes
+/// calling it once a second free.
+std::unordered_map<std::string, std::string>& mirrored() {
+    static std::unordered_map<std::string, std::string> table;
+    return table;
+}
+
+/// Installs Module.flixStorage, the one place localStorage is touched: the
+/// base64 codec, and get/set of a byte array under a key. Both the WasmFS
+/// backend below and the path-based mirror go through it, so the encoding is
+/// stated once.
 ///
 /// Returns 0 if the origin has no storage to give -- a private window, or
-/// cookies blocked -- in which case no backend is installed.
-EM_JS(int, installBackend, (void* backend, const char* prefixPtr), {
-    const prefix = UTF8ToString(prefixPtr);
+/// cookies blocked -- in which case nothing is installed and every later call
+/// answers "no storage".
+EM_JS(int, installStorage, (), {
+    if (Module.flixStorage) return Module.flixStorage.available ? 1 : 0;
 
     // Touching localStorage is what throws when it is unavailable, not using
     // it, so the probe has to be a real write.
+    let available = true;
     try {
-        const probe = prefix + 'probe';
+        const probe = 'flowrix-probe';
         localStorage.setItem(probe, '1');
         localStorage.removeItem(probe);
     } catch (e) {
-        return 0;
+        available = false;
     }
 
     // localStorage holds strings, so the bytes go in base64. The files are
@@ -56,22 +64,59 @@ EM_JS(int, installBackend, (void* backend, const char* prefixPtr), {
         // Double quotes for the empty string: the C preprocessor sees this
         // body before JS does, and '' is an empty character constant to it.
         let binary = "";
-        for (let i = 0; i < bytes.length; ++i) binary += String.fromCharCode(bytes[i]);
+        // In slices: String.fromCharCode.apply over a whole database would
+        // overflow the argument list, and a character at a time is slow for
+        // one.
+        for (let at = 0; at < bytes.length; at += 8192) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(at, at + 8192));
+        }
         return btoa(binary);
     };
+
+    Module.flixStorage = {
+        available: available,
+        // Bytes decoded by size() and waiting for take(); see the C++ side.
+        staged: null,
+        get: (key) => {
+            try {
+                const saved = localStorage.getItem(key);
+                return saved === null ? null : decode(saved);
+            } catch (e) {
+                console.warn('[persist] could not read ' + key + ': ' + e);
+                return null;
+            }
+        },
+        set: (key, bytes) => {
+            try {
+                localStorage.setItem(key, encode(bytes));
+                return true;
+            } catch (e) {
+                // A full or read-only quota. The client is still playable, so
+                // this is a warning rather than a failure the game has to
+                // handle.
+                console.warn('[persist] could not save ' + key + ': ' + e);
+                return false;
+            }
+        },
+    };
+    return available ? 1 : 0;
+});
+
+/// Installs the JS half of the backend: WasmFS calls into these for every read
+/// and write of a file that lives in it.
+///
+/// The bytes are kept in a typed array per open file and mirrored into
+/// localStorage after each change, rather than being re-encoded out of storage
+/// on every read. Both files are a few hundred bytes, so the copy is free and
+/// reads stay a subarray away.
+EM_JS(void, installBackend, (void* backend, const char* prefixPtr), {
+    const prefix = UTF8ToString(prefixPtr);
+    const storage = Module.flixStorage;
 
     // File address -> { name, bytes }. `name` is null for a file this backend
     // was never told the name of, which is stored in memory and nowhere else.
     const files = {};
-    const save = (entry) => {
-        try {
-            localStorage.setItem(prefix + entry.name, encode(entry.bytes));
-        } catch (e) {
-            // A full or read-only quota. The client is still playable, so this
-            // is a warning rather than a failure the game has to handle.
-            console.warn('[persist] could not save ' + entry.name + ': ' + e);
-        }
-    };
+    const save = (entry) => storage.set(prefix + entry.name, entry.bytes);
 
     const impl = {
         // The name the next file created in this backend is to be stored
@@ -82,14 +127,7 @@ EM_JS(int, installBackend, (void* backend, const char* prefixPtr), {
             const name = impl.pending;
             impl.pending = null;
             let bytes = new Uint8Array(0);
-            if (name !== null) {
-                try {
-                    const saved = localStorage.getItem(prefix + name);
-                    if (saved !== null) bytes = decode(saved);
-                } catch (e) {
-                    console.warn('[persist] could not read ' + name + ': ' + e);
-                }
-            }
+            if (name !== null) bytes = storage.get(prefix + name) || bytes;
             files[file] = { name: name, bytes: bytes };
         },
         freeFile: (file) => { delete files[file]; },
@@ -127,7 +165,6 @@ EM_JS(int, installBackend, (void* backend, const char* prefixPtr), {
     };
 
     wasmFS$backends[backend] = impl;
-    return 1;
 });
 
 /// Names the storage key the next file created in this backend belongs to.
@@ -139,6 +176,29 @@ EM_JS(int, installBackend, (void* backend, const char* prefixPtr), {
 /// synchronously.
 EM_JS(void, expectNext, (void* backend, const char* namePtr), {
     wasmFS$backends[backend].pending = UTF8ToString(namePtr);
+});
+
+// The path-based half. A stored value comes back in two calls: size() decodes
+// it and reports the length, the caller sizes a buffer, take() fills it. The
+// obvious single call -- return a malloc'd buffer -- needs _malloc exported to
+// JavaScript, which is a link setting nothing else here asks for.
+EM_JS(int, storedSize, (const char* keyPtr), {
+    const storage = Module.flixStorage;
+    const bytes = storage.get(UTF8ToString(keyPtr));
+    if (!bytes) return -1;
+    storage.staged = bytes;
+    return bytes.length;
+});
+
+EM_JS(void, storedTake, (char* out, int capacity), {
+    const storage = Module.flixStorage;
+    const bytes = storage.staged;
+    storage.staged = null;
+    if (bytes) HEAPU8.set(bytes.subarray(0, capacity), out);
+});
+
+EM_JS(int, storedPut, (const char* keyPtr, const char* data, int size), {
+    return Module.flixStorage.set(UTF8ToString(keyPtr), HEAPU8.subarray(data, data + size)) ? 1 : 0;
 });
 
 EM_JS(void, installPageHide, (), {
@@ -157,9 +217,10 @@ EM_JS(void, installPageHide, (), {
 
 const char* const kStorageDirectory = "/persist";
 
-bool mountStorage(const std::vector<std::string>& names) {
+bool mountStorage(const std::vector<std::string>& names, const std::string& prefix) {
+    if (!installStorage()) return false;
     backend_t backend = wasmfs_create_jsimpl_backend();
-    if (!installBackend(backend, kStoragePrefix)) return false;
+    installBackend(backend, prefix.c_str());
 
     if (wasmfs_create_directory(kStorageDirectory, 0777, backend) != 0) return false;
 
@@ -178,6 +239,41 @@ bool mountStorage(const std::vector<std::string>& names) {
                                           0666, backend);
         if (fd >= 0) ::close(fd);
     }
+    return true;
+}
+
+bool restoreFile(const std::string& key, const std::string& path) {
+    if (!installStorage()) return false;
+    const int size = storedSize(key.c_str());
+    if (size < 0) return false;
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    if (size > 0) storedTake(bytes.data(), size);
+
+    // The file's directory, made if missing. One level is enough: the caller
+    // names a file in a directory of its own, not a tree.
+    const std::size_t slash = path.find_last_of('/');
+    if (slash != std::string::npos && slash > 0) ::mkdir(path.substr(0, slash).c_str(), 0777);
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    if (!out) return false;
+    mirrored()[key] = std::move(bytes);
+    return true;
+}
+
+bool mirrorFile(const std::string& key, const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    auto& table = mirrored();
+    const auto seen = table.find(key);
+    if (seen != table.end() && seen->second == bytes) return true;
+
+    if (!installStorage()) return false;
+    if (!storedPut(key.c_str(), bytes.data(), static_cast<int>(bytes.size()))) return false;
+    table[key] = std::move(bytes);
     return true;
 }
 

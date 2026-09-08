@@ -248,7 +248,10 @@ bool Listener::start(std::uint16_t port, std::string& errorOut) {
     stop();
     listenFd_ = web::listen(port, certPath, keyPath, webRoot);
     if (listenFd_ < 0) {
-        errorOut = "this runtime cannot listen (a browser tab has nothing to listen with)";
+        // Node binds a real port; a page keeps an in-page listener per port
+        // for connections made from the same page. Either way one port is
+        // one listener, so this is the bind() failure of the web backend.
+        errorOut = "port " + std::to_string(port) + " is already listened on in this runtime";
         return false;
     }
     port_ = port;

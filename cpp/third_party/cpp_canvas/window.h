@@ -162,6 +162,17 @@ public:
     std::string clipboardText() const;
     void setClipboardText(const std::string& text);
 
+    /// The text a paste asked for THIS frame, empty when nothing was pasted.
+    ///
+    /// Not the same question as `clipboardText()`, and deliberately not the
+    /// same mechanism on the two backends. The desktop reads the clipboard on
+    /// Ctrl/Cmd+V, since that keystroke IS the event there. A page may not read
+    /// the clipboard on a keystroke without a permission prompt, so the web
+    /// build reports what the page's own `paste` event delivered instead --
+    /// which needs no prompt and also picks up a paste from the context menu
+    /// or a touch keyboard, neither of which is a Ctrl+V at all.
+    std::string pastedText() const;
+
     void setCursorVisible(bool visible);
 
     // The pointer's shape over this window. Records a request; the shape
