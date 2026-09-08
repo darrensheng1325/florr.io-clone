@@ -59,13 +59,15 @@ const std::array<MenuMeta, kMenuCount> kMenus = {{
     {"Inventory", Key::Z},
     {"Craft", Key::C},
     {"Talents", Key::X},
-    {"Mob Gallery", Key::G},
-    {"Shop", Key::B},
-    {"Skins", Key::V},
+    {"Mob Gallery", Key::V},
+    // The two storefronts, like the three overlay panels below, are reached
+    // from the top icon strip only: they are opened between fights with the
+    // mouse already on the button, so they spend no letter a panel a player
+    // opens mid-fight could use.
+    {"Shop", Key::Unknown},
+    {"Skins", Key::Unknown},
     {"Leaderboard", Key::L},
-    {"Settings", Key::O},
-    // The three overlay panels are reached from the strip only, exactly as in
-    // the browser build, which binds no key to any of them.
+    {"Settings", Key::Escape},
     {"Changelog", Key::Unknown},
     {"Notifications", Key::Unknown},
     {"Guild", Key::Unknown},
@@ -145,6 +147,21 @@ bool insideInclusive(Rect r, Vec2 p) {
 }
 
 int menuIndex(MenuId id) { return static_cast<int>(id); }
+
+/// Whether a menu's hotkey can be changed, which is exactly whether the
+/// settings panel lists a row for it: `bindControl` is the only writer of
+/// `hotkeys`, and it only ever reaches a menu named by a ControlAction.
+///
+/// Only those are persisted. A key nobody can rebind is a constant that lives
+/// in kMenus, and writing it to the settings file as well would let an old
+/// file pin a default this build has since moved -- which is how a player who
+/// once ran the build where Settings opened on O would never get Escape.
+bool menuKeyIsRebindable(int menu) {
+    for (int i = 0; i < kControlCount; ++i) {
+        if (menuIndex(kControls[static_cast<std::size_t>(i)].menu) == menu) return true;
+    }
+    return false;
+}
 
 // --- the loadout bar --------------------------------------------------------
 
@@ -410,7 +427,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "notifRead") readNotifications.push_back(value);
         else if (key.rfind("key.", 0) == 0) {
             const int slot = std::atoi(key.c_str() + 4);
-            if (slot > 0 && slot < kMenuCount && number > 0 &&
+            if (slot > 0 && slot < kMenuCount && menuKeyIsRebindable(slot) && number > 0 &&
                 number < static_cast<int>(Key::Count)) {
                 hotkeys[static_cast<std::size_t>(slot)] = static_cast<Key>(number);
             }
@@ -459,6 +476,7 @@ bool ClientSettings::save(const std::string& path) const {
         file << "notifRead " << readNotifications[i] << '\n';
     }
     for (int i = 1; i < kMenuCount; ++i) {
+        if (!menuKeyIsRebindable(i)) continue;
         file << "key." << i << ' ' << static_cast<int>(hotkeys[static_cast<std::size_t>(i)])
              << '\n';
     }
@@ -518,17 +536,11 @@ bool MenuSystem::handleKeys(Window& window) {
     if (settings_panel_.capturingKey()) return true;
     if (wantsText_) return false;
 
-    if (window.keyPressed(Key::Escape)) {
-        // Escape drops the secondary selection as well as closing a panel, so
-        // one press always undoes whatever the last one armed.
-        const bool hadSelection = selectedSecondary_ >= 0;
-        selectedSecondary_ = -1;
-        if (anyOpen()) {
-            close();
-            return true;
-        }
-        if (hadSelection) return true;
-    }
+    // Escape gets no special case: it is the settings panel's hotkey and is
+    // read from kMenus with the rest of them below, so it toggles that panel
+    // exactly as Z toggles the inventory. Nothing else in the client claims
+    // it while a game is running -- it no longer closes an arbitrary panel,
+    // and it no longer leaves to the title screen.
 
     // Zoom, and further down the hitbox and mouse-control switches: the three
     // settings a key changes mid-game. All three are the game screen's alone,

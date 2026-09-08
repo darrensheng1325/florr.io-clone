@@ -93,3 +93,43 @@ TEST(mouse_controls_are_on_until_something_turns_them_off) {
     const ClientSettings settings;
     CHECK(settings.useMouseControls);
 }
+
+TEST(a_menu_key_no_row_can_rebind_is_not_pinned_by_an_old_settings_file) {
+    // Settings, the gallery and the two storefronts have no row in the
+    // controls panel, so their keys are constants of the build rather than
+    // preferences. An old file that still carries the binding a previous
+    // build shipped -- Settings on O, before Escape took it -- must not hold
+    // this build to it.
+    const std::string path = tempPath("stale_menu_keys.txt");
+    std::remove(path.c_str());
+    {
+        std::FILE* f = std::fopen(path.c_str(), "w");
+        CHECK(f != nullptr);
+        std::fprintf(f, "key.%d %d\n", static_cast<int>(MenuId::Settings),
+                     static_cast<int>(Key::O));
+        std::fprintf(f, "key.%d %d\n", static_cast<int>(MenuId::Gallery),
+                     static_cast<int>(Key::G));
+        // The inventory's, on the other hand, is a real preference.
+        std::fprintf(f, "key.%d %d\n", static_cast<int>(MenuId::Inventory),
+                     static_cast<int>(Key::Y));
+        std::fclose(f);
+    }
+
+    ClientSettings read;
+    CHECK(read.load(path));
+    const ClientSettings fresh;
+    CHECK(read.hotkeys[static_cast<std::size_t>(MenuId::Settings)] ==
+          fresh.hotkeys[static_cast<std::size_t>(MenuId::Settings)]);
+    CHECK(read.hotkeys[static_cast<std::size_t>(MenuId::Gallery)] ==
+          fresh.hotkeys[static_cast<std::size_t>(MenuId::Gallery)]);
+    CHECK(read.controlKey(ControlAction::Inventory) == Key::Y);
+
+    // And saving does not write them back out for the next run to read.
+    CHECK(read.save(path));
+    ClientSettings again;
+    CHECK(again.load(path));
+    CHECK(again.hotkeys[static_cast<std::size_t>(MenuId::Settings)] == Key::Escape);
+    CHECK(again.controlKey(ControlAction::Inventory) == Key::Y);
+
+    std::remove(path.c_str());
+}

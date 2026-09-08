@@ -1554,16 +1554,13 @@ void App::updatePlaying(double dt) {
         editChatLine();
     } else {
         // The menus get first refusal on the keyboard: a hotkey they claim is
-        // not also a chat key, and Escape closes a panel before it leaves the
-        // game.
+        // not also a chat key. Escape is one of theirs now -- it opens the
+        // settings panel and no longer leaves the game, which is the red exit
+        // button in the top strip's job alone.
         const bool consumed = menus_.handleKeys(window_);
         if (!consumed) {
             if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat))) {
                 chatOpen_ = true;
-            }
-            if (window_.keyPressed(Key::Escape)) {
-                leaveToTitle();
-                return;
             }
         }
     }

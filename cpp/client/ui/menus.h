@@ -543,8 +543,8 @@ private:
 
 class MenuSystem {
 public:
-    /// Handles the menu hotkeys and Escape. Returns true when the key was
-    /// consumed, so the game does not also act on it.
+    /// Handles the menu hotkeys, Escape among them. Returns true when the key
+    /// was consumed, so the game does not also act on it.
     bool handleKeys(Window&);
 
     /// True while the client is in a game, which is the only time the exit
