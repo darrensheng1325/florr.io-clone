@@ -718,7 +718,7 @@ const std::array<MenuSystem::StripSlot, kStripSlotCount>& MenuSystem::strip() {
         {MenuId::Guild,         A::OpenMenu, "guild",         true,  0x27DADEu, 0x1FB3B0u},
         {MenuId::Skins,         A::OpenMenu, "skins",         true,  0xC45CFFu, 0x9A3FD0u},
         {MenuId::Gallery,       A::OpenMenu, "mob_gallery",   true,  0xD6C206u, 0xAB9B05u},
-        {MenuId::Shop,          A::OpenMenu, "stars",         true,  0x36D153u, 0x2BA742u},
+        {MenuId::Shop,          A::OpenMenu, "stars",         true,  0x7EF16Bu, 0x64C156u},
         {MenuId::None,          A::Discord,  "discord",       true,  0x5865F2u, 0x4752C4u},
         {MenuId::Debug,         A::OpenMenu, "debug",         true,  0x666666u, 0x4D4D4Du},
         {MenuId::None,          A::Exit,     "exit_button",   true,  0xFF0000u, 0xCC0000u},
