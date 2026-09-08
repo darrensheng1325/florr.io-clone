@@ -502,6 +502,16 @@ export interface PetalOrbitTarget {
     y: number;
     /** The instance's bearing from the flower, before any clump offset. */
     angle: number;
+    /**
+     * The direction this INSTANCE faces.
+     *
+     * Equal to `angle` for an unclumped petal, but for a clumped one it is the
+     * sub-bearing that places the instance inside its clump — i.e. the outward
+     * direction from the clump centre. A clump of four peas therefore faces
+     * four ways, and fires four ways, instead of all firing down the shared
+     * slot bearing.
+     */
+    facingAngle: number;
     /** `(stats.range ?? 1) * rangeModifier`; 0 means "no physics, sit on target". */
     range: number;
 }
@@ -542,16 +552,21 @@ export function petalOrbitTarget(
     // Clumped petals arrange their instances in a small cluster around the
     // single slot centre they share.
     const clumpCount = stats.count || 1;
+    let facingAngle = totalAngle;
     if (stats.clumped && clumpCount > 1) {
         const clumpSpacing = effectiveSize * 40 * 0.5;
         const subAngle = (instanceIndex / clumpCount) * Math.PI * 2 + totalAngle;
         x += Math.cos(subAngle) * clumpSpacing;
         y += Math.sin(subAngle) * clumpSpacing;
+        // The instance sits out along `subAngle` from the clump centre, so that
+        // is the way it faces — and the way anything it launches goes.
+        facingAngle = subAngle;
     }
 
     out.x = x;
     out.y = y;
     out.angle = totalAngle;
+    out.facingAngle = facingAngle;
     out.range = range;
 }
 
@@ -621,18 +636,24 @@ export interface PetalKinematicsResult {
      * The instance's orbit BEARING this tick, before any clump offset and
      * regardless of which position mode it took.
      *
-     * Reported because two legacy effects fire along it rather than from the
-     * petal's resolved position: a projectile petal shoots down this bearing,
-     * and a thrown web is flung along it. Recomputing it at those sites is how
-     * a duplicated formula starts drifting.
+     * Reported because a thrown web is flung along it rather than from the
+     * petal's resolved position. Recomputing it at that site is how a
+     * duplicated formula starts drifting. A projectile petal fires along
+     * `facingAngle` instead, which differs only inside a clump.
      */
     angle: number;
+    /**
+     * The instance's own facing, `angle` plus its clump sub-bearing. A
+     * projectile petal fires down THIS bearing so the members of a clump shoot
+     * outward in different directions rather than all down the slot bearing.
+     */
+    facingAngle: number;
     /** True when `isHoming` fired this tick (the caller delivers the burst). */
     homing: boolean;
 }
 
 /** Scratch, reused across every instance of every player. */
-const orbitScratch: PetalOrbitTarget = { x: 0, y: 0, angle: 0, range: 0 };
+const orbitScratch: PetalOrbitTarget = { x: 0, y: 0, angle: 0, facingAngle: 0, range: 0 };
 
 /**
  * Advance one petal instance and report where it is.
@@ -666,6 +687,7 @@ export function stepPetalKinematics(
     const petalRange = orbitScratch.range;
 
     out.angle = totalAngle;
+    out.facingAngle = orbitScratch.facingAngle;
     out.homing = false;
 
     let petalX: number;

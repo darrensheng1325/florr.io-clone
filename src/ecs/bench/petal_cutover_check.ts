@@ -598,7 +598,7 @@ function runFlower(
     let legacyPhase = 0;
 
     const ecsInstances: Array<RingInstance<FixtureSlot>> = [];
-    const stepResult: PetalKinematicsResult = { x: 0, y: 0, angle: 0, homing: false };
+    const stepResult: PetalKinematicsResult = { x: 0, y: 0, angle: 0, facingAngle: 0, homing: false };
     const attraction: PetalAttractionTarget = { id: '', x: 0, y: 0, radius: 0 };
 
     let mobs: FixtureMob[] = [];

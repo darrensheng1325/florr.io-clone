@@ -410,7 +410,7 @@ function ringStatsOf(slot: any): PetalRingStats | null {
 function measuredReach(bot: ServerPlayer, petalExtension: number): number {
     const instances: Array<RingInstance<any>> = [];
     const slotCount = layoutPetalRing(bot.loadout as any[], ringStatsOf, instances);
-    const out: PetalOrbitTarget = { x: 0, y: 0, angle: 0, range: 0 };
+    const out: PetalOrbitTarget = { x: 0, y: 0, angle: 0, facingAngle: 0, range: 0 };
 
     let farthest = 0;
     const STEPS = 1440;

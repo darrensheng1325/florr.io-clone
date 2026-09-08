@@ -32,6 +32,7 @@ const char* const kPetalsJson = R"JSON({
   "pollen":   {"name":"Pollen","damage":10,"health":10,"size":1,"cooldown":1000,"count":1,"color":"#FFE763"},
   "sponge":   {"name":"Sponge","damage":10,"health":10,"size":1,"cooldown":2000,"count":1,"spongeDamageDuration":1000,"color":"#FF96E0"},
   "peas":     {"name":"Peas","damage":6,"health":5,"size":1,"cooldown":1000,"count":1,"projectile":{"count":3,"spreadAngle":0.5,"speed":800,"distance":1000},"color":"#00FF00"},
+  "peaclump": {"name":"Peaclump","damage":6,"health":5,"size":1,"cooldown":1000,"count":4,"clumped":true,"projectile":{"count":1,"spreadAngle":0,"speed":800,"distance":1000},"color":"#00FF00"},
   "lucky":    {"name":"Lucky","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"luck":2,"speed":1.5,"magnetism":50},"color":"#FFD700"},
   "reacher":  {"name":"Reacher","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"range":1.5},"color":"#00FFFF"},
   "anchor":   {"name":"Anchor","damage":1,"health":5,"size":1,"cooldown":1000,"count":1,"playerModifiers":{"rotationSpeed":0},"color":"#888888"},
@@ -991,6 +992,35 @@ TEST(a_projectile_petal_fires_its_fan_and_respects_its_cooldown) {
     CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(3));
     CHECK(rig.tickUntil([&] { return rig.countOf(net::EntityKind::Projectile) > 3; }));
     CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(6));
+}
+
+TEST(each_grain_of_a_clump_fires_along_its_own_facing) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "peaclump");
+    rig.freezeRing();
+    rig.settleEquips();
+    rig.settleRing();
+    rig.setFlags(net::InputAttack);
+    rig.tick();
+
+    // Four grains on one ring place, so the volley is four shots -- and the
+    // point of the test is that they leave in four DIFFERENT directions,
+    // spaced a quarter turn apart around the clump, rather than stacking on
+    // the slot's shared bearing.
+    CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(4));
+    const double slotBearing = rig.world.get<Transform>(rig.petals(0).front()).angle;
+    std::vector<double> offsets;
+    Query<ProjectileTag, Motion> shots{rig.world};
+    shots.each([&](Entity, ProjectileTag&, Motion& motion) {
+        offsets.push_back(wrapAngle(motion.velocity.angle() - slotBearing));
+    });
+    CHECK_EQ(offsets.size(), std::size_t(4));
+    std::sort(offsets.begin(), offsets.end());
+    CHECK_NEAR(offsets[0], -kTau * 0.25, 1e-6);
+    CHECK_NEAR(offsets[1], 0.0, 1e-6);
+    CHECK_NEAR(offsets[2], kTau * 0.25, 1e-6);
+    CHECK_NEAR(std::abs(offsets[3]), kTau * 0.5, 1e-6);
 }
 
 TEST(a_projectile_petal_that_breaks_stops_firing) {

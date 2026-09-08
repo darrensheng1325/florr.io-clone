@@ -1050,12 +1050,20 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         const double reach = config.noPhysics ? 0.0 : base * rangeMultiplier(config);
 
         Vec2 orbit = centre + Vec2::fromAngle(angle, reach);
+        double facingAngle = angle;
         if (config.clumped && subCount > 1) {
             const Body* body = world.tryGet<Body>(petal);
             const double spacing = (body ? body->radius : 0.0) * kClumpSpacing;
-            orbit += Vec2::fromAngle(angle + kTau * instance->subIndex / subCount, spacing);
+            // The grain sits out along this bearing from the clump centre, so
+            // this is the way it faces -- and the way its volley goes. The
+            // offset is fed to `fromAngle` unwrapped, exactly as before, so the
+            // clump's positions are bit-for-bit what they were.
+            const double sub = angle + kTau * instance->subIndex / subCount;
+            orbit += Vec2::fromAngle(sub, spacing);
+            facingAngle = wrapAngle(sub);
         }
         transform->angle = angle;
+        instance->facingAngle = facingAngle;
 
         // Three position modes, as the reference has them. A petal with no
         // physics -- and every fixed-direction petal is one -- is snapped onto
@@ -1402,7 +1410,12 @@ void PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
     const Transform* origin = world.tryGet<Transform>(petal);
     if (!origin) return;
     const Vec2 from = origin->position;
-    const double heading = origin->angle;
+    // The INSTANCE's facing, not the slot's: the grains of a clump each sit out
+    // on their own sub-bearing and each fires down it, so four peas leave in
+    // four directions instead of stacking on one. Reported by the ring step
+    // rather than recomputed here, so the two cannot drift apart.
+    const PetalInstance* shooter = world.tryGet<PetalInstance>(petal);
+    const double heading = shooter != nullptr ? shooter->facingAngle : origin->angle;
     const Faction* ownerFaction = world.tryGet<Faction>(player);
     const Faction faction = ownerFaction ? *ownerFaction : Faction{Team::Players, false};
     // Baked in at spawn because a shot outlives the ring that fired it: the

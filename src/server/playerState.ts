@@ -126,8 +126,8 @@ const BURST_SHIELD_DURATION_MS = 10000;
 let _ringDepsPlayer: ServerPlayer | null = null;
 let _ringHomingWasHeal = false;
 let _ringHomingWasShield = false;
-const _ringStepResult: PetalKinematicsResult = { x: 0, y: 0, angle: 0, homing: false };
-const _dropTargetScratch: PetalOrbitTarget = { x: 0, y: 0, angle: 0, range: 0 };
+const _ringStepResult: PetalKinematicsResult = { x: 0, y: 0, angle: 0, facingAngle: 0, homing: false };
+const _dropTargetScratch: PetalOrbitTarget = { x: 0, y: 0, angle: 0, facingAngle: 0, range: 0 };
 const _attractionTarget: PetalAttractionTarget = { id: '', x: 0, y: 0, radius: 0 };
 
 const _petalRingDeps: PetalRingDeps = {
@@ -2481,7 +2481,10 @@ if (player.loadout) {
         );
         const petalX = _ringStepResult.x;
         const petalY = _ringStepResult.y;
-        const petalOrbitAngle = _ringStepResult.angle;
+        // The instance's OWN facing — the clump sub-bearing for a clumped petal,
+        // the orbit bearing otherwise. Projectiles fly down this, so the four
+        // peas of a clump shoot four ways instead of stacking on one bearing.
+        const petalFacingAngle = _ringStepResult.facingAngle;
 
         // Rose-style burst heal (rysteria_gardn): once the petal has been in
         // orbit past its charge time and the flower is below max health, it
@@ -2590,11 +2593,12 @@ if (player.loadout) {
 
             // Check if cooldown has passed
             if (currentTime - lastShotTime >= cooldown) {
-                // Calculate projectile angle - shoot in the direction the petal is facing (tangent to rotation)
-                // The petal is at its orbit bearing, so the projectile goes
-                // that way. Reported by the ring step rather than recomputed,
-                // so the two cannot drift apart.
-                let projectileAngle = petalOrbitAngle;
+                // Calculate projectile angle - shoot in the direction the petal is facing.
+                // That is the INSTANCE's facing, not the clump's: a clumped
+                // petal's members sit out along their own sub-bearings and each
+                // fires down its own. Reported by the ring step rather than
+                // recomputed, so the two cannot drift apart.
+                let projectileAngle = petalFacingAngle;
 
                 // Guided shots re-aim at the nearest mob inside a cone around
                 // the firing direction (gardn find_nearest_enemy_within_angle).

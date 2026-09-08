@@ -246,8 +246,8 @@ export function runPetalRingSelfTest(): string[] {
             deltaTime: 1 / 30,
             now: 10_000,
         });
-        const result: PetalKinematicsResult = { x: 0, y: 0, angle: 0, homing: false };
-        const target: PetalOrbitTarget = { x: 0, y: 0, angle: 0, range: 0 };
+        const result: PetalKinematicsResult = { x: 0, y: 0, angle: 0, facingAngle: 0, homing: false };
+        const target: PetalOrbitTarget = { x: 0, y: 0, angle: 0, facingAngle: 0, range: 0 };
 
         const modes: Array<{ name: string; stats: PetalRingStats; wantsState: boolean }> = [
             { name: 'spring', stats: TABLE.one, wantsState: true },
@@ -298,19 +298,28 @@ export function runPetalRingSelfTest(): string[] {
             deltaTime: 1 / 30,
             now: 0,
         });
-        const a: PetalOrbitTarget = { x: 0, y: 0, angle: 0, range: 0 };
-        const b: PetalOrbitTarget = { x: 0, y: 0, angle: 0, range: 0 };
+        const a: PetalOrbitTarget = { x: 0, y: 0, angle: 0, facingAngle: 0, range: 0 };
+        const b: PetalOrbitTarget = { x: 0, y: 0, angle: 0, facingAngle: 0, range: 0 };
 
         // Two instances of a CLUMPED petal share slot 0 but must not coincide.
         petalOrbitTarget(geom, TABLE.clump, 0, 0, 1, a);
         petalOrbitTarget(geom, TABLE.clump, 0, 1, 1, b);
         check('clumped instances are offset from each other', a.x !== b.x || a.y !== b.y);
         check('clumped instances share a bearing', a.angle === b.angle);
+        // ...but each FACES its own way out of the clump, a quarter turn apart
+        // for a clump of four. A projectile petal fires down this, which is how
+        // four peas leave in four directions instead of stacking on one.
+        let delta = b.facingAngle - a.facingAngle;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        check('clumped instances face a quarter turn apart',
+            Math.abs(Math.abs(delta) - Math.PI / 2) < 1e-9);
 
         // A non-clumped petal ignores instanceIndex entirely at a given slot.
         petalOrbitTarget(geom, TABLE.three, 0, 0, 1, a);
         petalOrbitTarget(geom, TABLE.three, 0, 1, 1, b);
         check('non-clumped instances at one slot coincide', a.x === b.x && a.y === b.y);
+        check('an unclumped instance faces its own bearing', a.facingAngle === a.angle);
     }
 
     // -- defendOnly never extends on attack ------------------------------------

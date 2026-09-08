@@ -583,6 +583,13 @@ struct PetalInstance {
     std::uint8_t subCount = 1;
     /// Angle offset from the ring's rotation, fixed at spawn.
     double ringOffset = 0;
+    /// The direction this INSTANCE faces, refreshed by the ring step. It is the
+    /// slot's bearing for a lone petal, and the outward sub-bearing that places
+    /// the grain inside its cluster for a clumped one -- so a clump of four
+    /// peas faces four ways. `Transform::angle` stays the slot bearing because
+    /// that is what the clump is drawn against; anything a grain LAUNCHES goes
+    /// down this instead.
+    double facingAngle = 0;
     /// Projectile firing has its own attack-gated clock. Keeping it separate
     /// means an idle ring does not spend a shot cooldown, and an aura on the
     /// same petal cannot delay its projectile.
