@@ -314,6 +314,16 @@ inline constexpr double kRaindropAuraDamageIntervalMillis = 500.0;
 // ---------------------------------------------------------------------------
 
 /// Base radius a mob's config `size` multiplies.
+/// A projectile's radius per unit of the FIRING petal's `size`, before the
+/// shooter's own scaling.
+///
+/// Stated against `size` and not against the petal's radius, exactly as the
+/// reference states it (`spawnProjectile` stores `size * 20 / 2`): a shot is
+/// its own body, and it must not move when the petal that fires it changes
+/// size. Deriving it from the petal's radius is what silently halved every
+/// volley when the petal body was brought down to its drawn size.
+inline constexpr double kProjectileRadiusPerSize = 10.0;
+
 inline constexpr double kMobBaseRadius = 20.0;
 
 /// Contact damage cannot land more often than this on the same victim.

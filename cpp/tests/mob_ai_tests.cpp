@@ -1181,7 +1181,8 @@ TEST(a_hornets_missile_inherits_the_hornets_size) {
     const std::uint16_t ammo = content().petalIndex("hornet_missile");
     const PetalStats stats = content().petalStats(ammo, Rarity::Common);
     const double ownerScale = sim.world.get<Body>(hornet).radius / kMobBaseRadius;
-    const double expected = std::max(1.0, stats.radius * 0.5 * ownerScale / kProjectileSizeDivisor);
+    const double expected =
+        std::max(1.0, stats.size * kProjectileRadiusPerSize * ownerScale / kProjectileSizeDivisor);
     CHECK_NEAR(sim.world.get<Body>(shot).radius, expected, 1e-9);
     CHECK(ownerScale > 1.25);   // the 1.3 is really reaching the shot
 

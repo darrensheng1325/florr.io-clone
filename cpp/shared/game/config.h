@@ -228,6 +228,10 @@ struct PetalConfig {
     double damage = 0;
     double health = 0;
     double size = 1;            ///< diameter in "size units"; see petalStats()
+    /// Art only, exactly as MobConfig::visualScale is: it multiplies the drawn
+    /// petal everywhere the world paints one, and never the `size` the
+    /// simulation reaches, hits and orbits with.
+    double visualScale = 1.0;
     double cooldownMillis = kDefaultPetalReloadMillis;   ///< reload after breaking
     int count = 1;              ///< petals spawned per equipped slot
 
@@ -369,6 +373,7 @@ struct PetalStats {
     /// 20 x size -- and deriving them by dividing `radius` back out is how the
     /// two halved by the wrong scale went unnoticed.
     double size = 1;
+    double visualScale = 1.0;           ///< art only; flat across rarities
     double damageIntervalMillis = kPetalHitIntervalMillis;
     int count = 1;
     bool breakable = true;

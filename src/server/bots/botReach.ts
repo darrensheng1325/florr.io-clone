@@ -80,7 +80,7 @@ export function botRangeModifier(bot: ServerPlayer): number {
  *   radius = (defendOnly ? defendOnlyBaseRadius : baseRadius)
  *            * ((stats.range ?? 1) * rangeModifier)
  *
- * plus, for a clumped petal, the `effectiveSize * 40 * 0.5` cluster offset that
+ * plus, for a clumped petal, the `effectiveSize * 20 * 0.5` cluster offset that
  * `petalOrbitTarget` adds — worst case, since the offset points outward for one
  * instance of the clump on every revolution. The petal's own half-size is added
  * last, because reach is measured to the petal's far EDGE.
@@ -141,10 +141,10 @@ export function botPetalReach(
 
             const count = stats.count || 1;
             if (stats.clumped && count > 1) {
-                radius += effectiveSize * 40 * 0.5;
+                radius += effectiveSize * 20 * 0.5;
             }
 
-            const edge = radius + (40 * effectiveSize) / 2;
+            const edge = radius + (20 * effectiveSize) / 2;
             if (edge > farthest) farthest = edge;
         }
     }

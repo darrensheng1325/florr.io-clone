@@ -328,7 +328,7 @@ function legacyStepPetal(
 
     const clumpCount = petalStats.count || 1;
     if (petalStats.clumped && clumpCount > 1) {
-        const clumpSpacing = effectiveSize * 40 * 0.5;
+        const clumpSpacing = effectiveSize * 20 * 0.5;
         const subAngle = (instanceIndex / clumpCount) * Math.PI * 2 + totalAngle;
         targetX += Math.cos(subAngle) * clumpSpacing;
         targetY += Math.sin(subAngle) * clumpSpacing;
@@ -476,7 +476,7 @@ function legacyStepPetal(
     }
 
     if (petalStats.wallCollide) {
-        const resolved = resolveWall(petalX, petalY, 40 * effectiveSize);
+        const resolved = resolveWall(petalX, petalY, 20 * effectiveSize);
         if (resolved.collided) {
             petalX = resolved.x;
             petalY = resolved.y;

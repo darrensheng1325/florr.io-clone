@@ -10,8 +10,9 @@ namespace flix {
 namespace {
 
 /// Cluster spacing as a multiple of a petal's own radius. The reference states
-/// it as `size * 40 * 0.5`, which is exactly the 20 x size a petal's body
-/// already is, so the grains sit one radius out from the slot centre.
+/// it as `size * 20 * 0.5`, which is exactly the 10 x size a petal's body
+/// already is, so the grains sit one radius out from the slot centre -- and
+/// gardn authors the same figure as a flat `clump_radius` of 10.
 constexpr double kClumpSpacing = 1.0;
 /// A pollen puff is stated as 12 x the petal's size across, and the field takes
 /// half of that. Stated against `size` rather than against the petal's radius:
@@ -1429,12 +1430,16 @@ void PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
     // level, a size-changing petal -- fires proportionally bigger ones. Stated
     // against the body radius rather than against the modifier that produced
     // it so that every future way of growing a flower is inherited for free.
+    //
+    // The shot's own calibre comes off the petal's `size` stat and not off its
+    // radius, which is what the reference does and what keeps a volley where
+    // it was when the petal's body changed scale.
     const Body* ownerBody = world.tryGet<Body>(player);
     const double ownerScale =
         ownerBody != nullptr && kPlayerBaseRadius > 0.0
             ? std::max(0.05, ownerBody->radius / kPlayerBaseRadius)
             : 1.0;
-    const double shotRadius = std::max(1.0, stats.radius * 0.5 * ownerScale);
+    const double shotRadius = std::max(1.0, stats.size * kProjectileRadiusPerSize * ownerScale);
 
     // The flower's own motion, carried into the volley. Taken from the FLOWER
     // and not from the petal because a petal's velocity is dominated by its

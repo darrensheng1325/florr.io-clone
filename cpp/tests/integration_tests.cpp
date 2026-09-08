@@ -578,13 +578,21 @@ TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
     client.joinGame(2600, 2600);
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
 
-    // Where the flower actually stands, so the hornet can be put in its face.
+    // Where THIS client's flower stands, so the hornet can be put in its face.
+    //
+    // Matched by the viewer's own net id rather than by taking the first
+    // PlayerTag in the world: the harness world also holds bots, and the first
+    // flower in it is one of them tens of thousands of units away. A hornet
+    // anchored out there fires shots this viewer's stream never carries, and
+    // the test then turns on whether an unrelated hornet happened to wander
+    // into view and fire inside the step budget.
     World& world = h.server.world();
-    Query<PlayerTag, Transform> flowers(world);
+    const std::uint32_t selfNetId = client.view().self().netId;
+    Query<PlayerTag, NetId, Transform> flowers(world);
     Vec2 at{0, 0};
     bool found = false;
-    flowers.each([&](Entity, PlayerTag&, Transform& transform) {
-        if (!found) { at = transform.position; found = true; }
+    flowers.each([&](Entity, PlayerTag&, NetId& id, Transform& transform) {
+        if (id.value == selfNetId) { at = transform.position; found = true; }
     });
     CHECK(found);
 
@@ -613,8 +621,8 @@ TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
     const std::uint16_t ammo = content().petalIndex("hornet_missile");
     const PetalStats ammoStats = content().petalStats(ammo, Rarity::Common);
     const double ownerScale = stats.radius / kMobBaseRadius;
-    const double expected =
-        std::max(1.0, ammoStats.radius * 0.5 * ownerScale / kProjectileSizeDivisor);
+    const double expected = std::max(
+        1.0, ammoStats.size * kProjectileRadiusPerSize * ownerScale / kProjectileSizeDivisor);
 
     double seenRadius = -1.0;
     std::uint16_t seenType = 0xFFFF;

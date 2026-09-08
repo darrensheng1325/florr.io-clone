@@ -521,10 +521,14 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
     VolleyShot shot;
     shot.from = from;
     shot.speed = speed;
-    // The shot is half the ammunition petal's body, then scaled by the
-    // SHOOTER's body on its own divisor -- reach and size grow at different
-    // rates with rarity.
-    shot.radius = std::max(1.0, ammo.radius * 0.5 * ownerScale / kProjectileSizeDivisor);
+    // The shot's calibre comes off the ammunition petal's `size` stat, then is
+    // scaled by the SHOOTER's body on its own divisor -- reach and size grow at
+    // different rates with rarity. Off `size` and not off the ammunition's
+    // radius, matching the reference (`petalStats.size * scaling / 3` into a
+    // `size * 20 / 2` body): a hornet's missile is the same calibre it always
+    // was however the petal it is made of collides.
+    shot.radius = std::max(
+        1.0, ammo.size * kProjectileRadiusPerSize * ownerScale / kProjectileSizeDivisor);
     shot.distance = reach;
     shot.damage = ammo.damage;
     // Graded at the shooter's tier alongside the damage, so an apex hornet's

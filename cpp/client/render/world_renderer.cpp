@@ -67,11 +67,13 @@ constexpr double kFramesPerSecond = 60.0;
 /// which grows with level -- the body never does.
 constexpr double kFlowerArtRadius = 25.0;
 
-/// A petal's artwork is 12 world units per size unit (ui::kPetalArtSize, which
-/// the item tile scales from too); its 20-per-size hit radius is only ever
-/// drawn as a debug circle.
+/// A petal's artwork is 20 world units of diameter per size unit -- gardn's
+/// petal radius, and the scale the item tile states its icons in
+/// (ui::kPetalArtSize). Its hit radius is the same 10 per size unit -- a petal
+/// hits what it looks like it hits -- and is only ever drawn as a debug
+/// circle, which is now a ring around the artwork rather than well outside it.
 using ui::kPetalArtSize;
-constexpr double kPetalHitSize = 20.0;
+constexpr double kPetalHitSize = 10.0;
 /// A projectile is drawn from the same petal artwork, filling its own body:
 /// diameter is twice the radius the server replicated for it.
 ///
@@ -224,6 +226,13 @@ constexpr std::uint32_t kPetalRingBodyColor = 0xFFE763u;
 /// The ring a petal_ring mob carries, as multiples of its own radius.
 constexpr double kPetalRingOrbitScale = 2.4;
 constexpr double kPetalRingPetalScale = 0.55;
+
+/// A petal's `visual_scale`, as everything that paints one has to read it: art
+/// only, and a zero (or an absent field) means "unscaled" rather than
+/// "invisible", exactly as MobConfig::visualScale is treated.
+double petalArtScale(const PetalConfig* config) {
+    return (config && config->visualScale > 0) ? config->visualScale : 1.0;
+}
 
 /// How far off screen a teleporter still counts as visible. Its glow is 130
 /// units wide, so it has to be drawn before its centre reaches the edge.
@@ -1370,10 +1379,11 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
 
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
-    const double artSize = config ? config->size : 1.0;
-    // The drawn petal is 12 units per size unit. entity.radius is the 20-unit
-    // gameplay reach, and noPhysics petals carry no body at all, so neither is
-    // usable as a drawing size.
+    // The drawn petal is 12 units per size unit, times the petal's own
+    // `visual_scale`. entity.radius is the 20-unit gameplay reach, and
+    // noPhysics petals carry no body at all, so neither is usable as a drawing
+    // size -- and visual_scale must never reach either of them.
+    const double artSize = (config ? config->size : 1.0) * petalArtScale(config);
     const double diameter = kPetalArtSize * artSize * zoom;
     if (diameter <= 0.5) return;
 
@@ -1774,8 +1784,9 @@ void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
         const double x = std::cos(angle) * radius;
         const double y = std::sin(angle) * radius + (i % 3) * 3.0;
         const double rotation = static_cast<double>(petalSeed % 360) * kPi / 180.0;
+        const PetalConfig& config = content_->petal(index);
         const double size = baseSize * (0.6 + static_cast<double>(petalSeed % 200) / 1000.0) *
-                            content_->petal(index).size;
+                            config.size * petalArtScale(&config);
         sprites_->drawPetal(canvas, index, x, y, size, rotation, timeSeconds);
     }
 }
@@ -1792,7 +1803,7 @@ void WorldRenderer::drawDiggerMob(Canvas& canvas, const MobDraw& mob, double rad
         if (cutter != kInvalidIndex) {
             const PetalConfig& config = content_->petal(cutter);
             const double speed = config.speed > 0 ? config.speed : 1.0;
-            const double size = kPetalArtSize * config.size * scale;
+            const double size = kPetalArtSize * config.size * petalArtScale(&config) * scale;
             sprites_->drawPetal(canvas, cutter, 0, 0, size,
                                 std::fmod(timeSeconds * kPetalSpinRate * speed, kTau), timeSeconds);
         }
@@ -1824,7 +1835,7 @@ void WorldRenderer::drawPetalRingMob(Canvas& canvas, const MobConfig& config, co
     // Every distance is a multiple of the mob's own radius, so the ring grows
     // with rarity along with the body and stays where the server damages from.
     const double orbit = radius * kPetalRingOrbitScale;
-    const double size = radius * kPetalRingPetalScale * petal.size;
+    const double size = radius * kPetalRingPetalScale * petal.size * petalArtScale(&petal);
     const double speed = petal.speed > 0 ? petal.speed : 1.0;
     const double rotation = std::fmod(timeSeconds * kPetalSpinRate * speed, kTau);
     const double step = kTau / count;
@@ -2139,7 +2150,10 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             const double artUnits = entity.radius > 0.0
                                         ? entity.radius * kProjectileArtPerRadius
                                         : (config ? config->size : 1.0) * kProjectileArtSize;
-            const double diameter = artUnits * zoom;
+            // The shot is the petal's artwork, so it grows with the petal's
+            // visual_scale. entity.radius above is the body the server damages
+            // from and stays where it is.
+            const double diameter = artUnits * petalArtScale(config) * zoom;
             if (config && config->id == "gas" && entity.rarity == Rarity::Common) {
                 // Gas is a cloud rather than a petal, and there can be hundreds
                 // of it at once.

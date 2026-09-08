@@ -125,6 +125,7 @@ bool finite(const PetalStats& s) {
            std::isfinite(s.shield) && std::isfinite(s.slowFactor) &&
            std::isfinite(s.slowDurationMillis) && std::isfinite(s.radius) &&
            std::isfinite(s.damageIntervalMillis) && std::isfinite(s.cameraZoom) &&
+           std::isfinite(s.visualScale) &&
            std::isfinite(s.modifiers.maxHealth) && std::isfinite(s.modifiers.speed) &&
            std::isfinite(s.modifiers.range) && std::isfinite(s.modifiers.rotationSpeed) &&
            std::isfinite(s.modifiers.playerRadius) && std::isfinite(s.modifiers.damage) &&
@@ -660,14 +661,15 @@ TEST(synthetic_dirty_values_are_sanitised) {
       "junk": {
         "name": "Junk", "description": "d", "color": "#000000", "image": "<svg/>",
         "damage": -5, "health": -9, "size": 0, "cooldown": 1e400, "count": -3,
-        "visualOffsetY": 1e400, "slowFactor": 4, "cameraZoom": 0,
+        "visualOffsetY": 1e400, "slowFactor": 4, "cameraZoom": 0, "visual_scale": 1e400,
         "playerModifiers": {"luck": 1e400, "maxHealth": -2, "telekinesis": 3},
         "radiation": {"radius": -1, "intervalMs": 0},
         "petMobType": "ghost", "petMobRarity": "legendaryish"
       },
       "sane": {
         "name": "Sane", "description": "d", "color": "#ffffff", "image": "<svg/>",
-        "damage": 4, "health": 4, "size": 1, "cooldown": 1000, "count": 1
+        "damage": 4, "health": 4, "size": 1, "cooldown": 1000, "count": 1,
+        "visual_scale": 2.5
       }
     })JSON";
     files.xp = R"JSON({"wreck": {"common": -3, "unique": 100}})JSON";
@@ -726,6 +728,17 @@ TEST(synthetic_dirty_values_are_sanitised) {
     CHECK(junk.hidden);               // an infinite offset is not an offset
     CHECK(junk.slowFactor <= 1.0);    // a slow may not speed its victim up
     CHECK(junk.cameraZoom > 0.0);
+    CHECK(std::isfinite(junk.visualScale));   // art scale, but still a number
+
+    // visual_scale is read from petals.json exactly as it is from mobs.json,
+    // and it moves the artwork only: `size`, and every reach derived from it,
+    // is what the petal was authored with.
+    const PetalConfig& sane = r.petal(r.petalIndex("sane"));
+    CHECK_NEAR(sane.visualScale, 2.5, 1e-12);
+    CHECK_NEAR(sane.size, 1.0, 1e-12);
+    CHECK_NEAR(r.petalStats(r.petalIndex("sane"), Rarity::Rare).visualScale, 2.5, 1e-12);
+    CHECK_NEAR(r.petalStats(r.petalIndex("sane"), Rarity::Rare).radius, 10.0, 1e-12);
+    CHECK_NEAR(r.petalStats(r.petalIndex("sane"), Rarity::Rare).size, 1.0, 1e-12);
     CHECK(std::isfinite(junk.modifiers.luck));
     CHECK(!junk.radiation.present);
     CHECK_EQ(junk.petMobIndex, kInvalidIndex);

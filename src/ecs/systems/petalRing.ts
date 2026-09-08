@@ -554,7 +554,7 @@ export function petalOrbitTarget(
     const clumpCount = stats.count || 1;
     let facingAngle = totalAngle;
     if (stats.clumped && clumpCount > 1) {
-        const clumpSpacing = effectiveSize * 40 * 0.5;
+        const clumpSpacing = effectiveSize * 20 * 0.5;
         const subAngle = (instanceIndex / clumpCount) * Math.PI * 2 + totalAngle;
         x += Math.cos(subAngle) * clumpSpacing;
         y += Math.sin(subAngle) * clumpSpacing;
@@ -830,7 +830,7 @@ export function stepPetalKinematics(
     }
 
     if (stats.wallCollide) {
-        const resolved = deps.resolveWall(petalX, petalY, 40 * effectiveSize);
+        const resolved = deps.resolveWall(petalX, petalY, 20 * effectiveSize);
         if (resolved.collided) {
             petalX = resolved.x;
             petalY = resolved.y;

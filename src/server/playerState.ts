@@ -1171,7 +1171,10 @@ export function isPositionInPlayerPetalRange(x: number, y: number, mobSize: numb
                 const petalStats = getPetalStats(item.petalType, item.rarity);
                 if (petalStats) {
                     const effectiveSize = (item as any).customSize !== undefined ? (item as any).customSize : petalStats.size;
-                    const petalSize = 40 * effectiveSize;
+                    // A petal's body is 20 x its size across — the same figure
+                    // the client draws it at, so a mob is kept clear of what
+                    // the player can actually see reaching for it.
+                    const petalSize = 20 * effectiveSize;
                     maxPetalSize = Math.max(maxPetalSize, petalSize);
                     const petalRange = (petalStats.range ?? 1.0) * playerRangeMod;
                     maxPetalRange = Math.max(maxPetalRange, petalRange);
@@ -1543,6 +1546,11 @@ function buildPetalInstances(
                     player: player,
                     petalX: player.x, // Will be updated with actual position in game loop
                     petalY: player.y, // Will be updated with actual position in game loop
+                    // NOT the petal's body (which is 20 x size): this is the
+                    // scale the action VM's blast radii are tuned against
+                    // (petal_actions.explodePetal multiplies by 40 again), so
+                    // it keeps the figure it has always had. Shrinking the
+                    // petal's hitbox must not shrink what its abilities reach.
                     petalSize: effectiveSize * 40,
                     petalDamage: petalStats.damage, // Include petal damage for rarity scaling
                     enemies: liveEnemies(),
@@ -2418,6 +2426,8 @@ if (player.loadout) {
                     const petalX = player.x + Math.cos(totalAngle) * petalRadius;
                     const petalY = player.y + Math.sin(totalAngle) * petalRadius;
                     const effectiveSize = (petal as any).customSize !== undefined ? (petal as any).customSize : petalStats.size;
+                    // The action VM's scale, not the petal's body — see the
+                    // arm-time context above.
                     const petalSize = 40 * effectiveSize;
 
                     const actionContext = {
@@ -2710,7 +2720,9 @@ if (player.loadout) {
         // Check collision with enemies — broad-phase via spatial grid (built
         // once per tick in start_loop), then precise per-enemy distance test.
         // Pets and dead enemies are excluded by the grid.
-        const _petalSize = 40 * effectiveSize;
+        // 20 x size across, so the petal damages exactly what its artwork
+        // covers. It was 40, and a petal hit a full body-width past its edge.
+        const _petalSize = 20 * effectiveSize;
         const _petalRadius = _petalSize / 2;
         const candidates = queryEnemiesNear(petalX, petalY, _petalRadius, _enemyQueryBuffer);
         for (let _ei = 0; _ei < candidates.length; _ei++) {
@@ -2930,7 +2942,7 @@ if (player.loadout) {
             // Resolved lazily: the callback fires only on an actual block,
             // and this runs for every petal instance of every player.
             let projectileDamageMultiplier = -1;
-            const petalBlockRadius = (40 * effectiveSize) / 2;
+            const petalBlockRadius = (20 * effectiveSize) / 2;
             deps.projectiles.forEachBlocking(petalX, petalY, petalBlockRadius, (mobProjectile) => {
                 if (projectileDamageMultiplier < 0) {
                     projectileDamageMultiplier = getDamageMultiplier(player);
@@ -3006,7 +3018,7 @@ if (player.loadout) {
         // and stays as a backstop: an attacker whose flag was set without
         // setPlayerCorrupted() still swings.
         if (player.inPvpArena || player.corrupted || anyCorruptedPlayers) {
-            const petalSizePx = 40 * effectiveSize;
+            const petalSizePx = 20 * effectiveSize;
             const petalRadius = petalSizePx / 2;
             // A splitter half is the SAME person as its other half — they must
             // never damage each other, corrupted or not.

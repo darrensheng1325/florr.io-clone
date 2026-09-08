@@ -435,7 +435,7 @@ function measuredReach(bot: ServerPlayer, petalExtension: number): number {
             if (!stats) continue;
             const effectiveSize = instance.petal.customSize ?? stats.size ?? 1.0;
             petalOrbitTarget(geom, stats, instance.slotIndex, instance.instanceIndex, effectiveSize, out);
-            const edge = Math.sqrt(out.x * out.x + out.y * out.y) + (40 * effectiveSize) / 2;
+            const edge = Math.sqrt(out.x * out.x + out.y * out.y) + (20 * effectiveSize) / 2;
             if (edge > farthest) farthest = edge;
         }
     }
@@ -465,7 +465,7 @@ function legacyReach(bot: ServerPlayer, petalExtension: number): number {
         const stats = getPetalStats(item.petalType, item.rarity);
         if (!stats) continue;
         const effectiveSize = item.customSize ?? stats.size ?? 1.0;
-        maxPetalHalfSize = Math.max(maxPetalHalfSize, (40 * effectiveSize) / 2);
+        maxPetalHalfSize = Math.max(maxPetalHalfSize, (20 * effectiveSize) / 2);
         if (stats.range !== undefined) {
             maxRangeMult = Math.max(maxRangeMult, stats.range * playerRangeMod);
         } else {
@@ -575,11 +575,17 @@ function checkReach(): void {
     // petals and added them, describing a petal that does not exist — the long
     // one's orbit with the fat one's width. Here the long petal is thin and the
     // fat petal is short, so the old answer exceeds both real edges.
+    //
+    // The drift is the GAP between the two half-sizes, so the fat petal is sized
+    // explicitly rather than taken from the table: a stock basic separated the
+    // two formulas by a couple of pixels when a petal's body was 40 x its size,
+    // and by barely one once that body came down to the 20 x size it is drawn
+    // at. A control that only just clears its own threshold stops being one.
     const longRange = findPetalWith(s => (s.range ?? 1) > 1, 'rare');
     if (longRange) {
         cases.push({
             name: `long-range (${longRange}) beside a fat short-range petal`,
-            loadout: [petal(longRange, 'rare'), petal('basic', 'rare')],
+            loadout: [petal(longRange, 'rare'), petal('basic', 'rare', 3)],
             legacyWasWrong: true,
         });
     } else {

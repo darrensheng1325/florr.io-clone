@@ -54,11 +54,18 @@ constexpr std::size_t kMaxWarnings = 512;
 /// TypeScript applies `speed * 2` once per 30 Hz mob step.
 constexpr double kMobSpeedUnitsPerSecond = 60.0;
 
-/// Config `size` to a petal's own hit radius: `size` is a diameter in 40-unit
-/// units, so the radius is half of that -- exactly the scale mobs use
-/// (kMobBaseRadius). Petals were on half this scale, which cost a basic petal
-/// twenty units of reach and a cutter seventy.
-constexpr double kPetalRadiusPerSize = 20.0;
+/// Config `size` to a petal's own hit radius, in world units.
+///
+/// The same number the client draws a petal at (ui::kPetalArtSize is 20 units
+/// of DIAMETER per size unit), because a petal hits exactly what it looks like
+/// it hits -- which is how gardn states a petal too: one `radius` field, used
+/// for the body and for the artwork alike.
+///
+/// It was 20 here, twice the drawn radius, and a basic petal damaged mobs a
+/// full body-width past its own edge. Mobs and flowers are unaffected: they
+/// keep kMobBaseRadius / kPlayerBaseRadius, and only the petal was ever drawn
+/// at a different scale from the thing it collides with.
+constexpr double kPetalRadiusPerSize = 10.0;
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -583,6 +590,9 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.health = hasHealthPool ? ctx.range(src, "health", 1.0, 0.0, kMaxBaseStat) : 0.0;
 
     p.size = ctx.range(src, "size", 1.0, kMinSize, kMaxSize);
+    // Same key and same bounds as a mob's: a petal's artwork can be grown or
+    // shrunk without moving the body the server damages from.
+    p.visualScale = ctx.range(src, "visual_scale", 1.0, 0.0, kMaxSize);
     p.cooldownMillis = ctx.range(src, "cooldown", kDefaultPetalReloadMillis, 0.0, kMaxCooldownMillis);
     p.count = ctx.integer(src, "count", 1, 0, 64);
     p.isAdminPetal = ctx.boolean(src, "isAdminPetal");
@@ -1090,6 +1100,7 @@ PetalStats ContentRegistry::petalStats(std::uint16_t index, Rarity r) const {
     s.attractionForce = c.attractionForce;
     s.radius = c.size * kPetalRadiusPerSize;
     s.size = c.size;
+    s.visualScale = c.visualScale;
     s.damageIntervalMillis = c.damageIntervalMillis;
     // `count` is flat for almost every petal, and the two exceptions are
     // literal per-rarity overrides in the reference's RARITY_OVERRIDES table

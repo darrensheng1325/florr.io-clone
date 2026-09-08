@@ -32,16 +32,32 @@ namespace flix::ui {
 /// gardn's design cell. A tile's contents are written in these units.
 inline constexpr double kItemTileDesign = 60.0;
 
-/// World units per unit of a petal's `size` stat -- a size-2 basic petal is a
-/// 24-unit disc. The WORLD's scale, and the world's alone.
-inline constexpr double kPetalArtSize = 12.0;
+/// World units of DIAMETER per unit of a petal's `size` stat -- a size-2 basic
+/// petal is a 40-unit disc. The WORLD's scale, and the world's alone.
+///
+/// Ten units of radius per unit of size, which is gardn's petal `radius` and
+/// the same figure kPetalIconSize states a tile's icon in: gardn draws a petal
+/// at its collision radius (RenderPetal.cc scales the artwork by
+/// `ent.radius / PETAL_DATA[...].radius`), so the two games agree about how
+/// big a petal LOOKS even where they disagree about what it hits.
+///
+/// The browser build's 12 is what this was ported at, and it drew every petal
+/// at 0.6x of gardn's, and a petal noticeably smaller in the world than the
+/// same petal in its own inventory tile. The server's petal body was brought
+/// to this same figure (kPetalRadiusPerSize), so the two now agree: a petal
+/// hits what it looks like it hits. A petal that should still read small says
+/// so with `visual_scale` in petals.json rather than by shrinking the whole
+/// roster here -- but note that visual_scale moves the ARTWORK only, so a
+/// scaled petal is once again drawn at a size it does not collide at.
+inline constexpr double kPetalArtSize = 20.0;
 
 /// Design units of icon DIAMETER per unit of `size`, for a tile whose petal
 /// gardn does not have.
 ///
-/// Deliberately not kPetalArtSize -- the world and a tile state a petal's size
-/// on two different scales, and using the world's here drew every icon at 0.6x
-/// of gardn's and the small end of the roster as a dot.
+/// The same figure as kPetalArtSize, and not the same constant: a tile is
+/// written in its own 60-unit design cell and the world in world units, so the
+/// two are free to move apart again. They agree today because both are stated
+/// against gardn's petal radius.
 ///
 /// Ten units of radius per unit of size is what lines this game's `size` stat
 /// up with gardn's `radius` field ON AVERAGE: it is exact for 19 of the 43
@@ -78,8 +94,8 @@ inline constexpr double kItemTilePlateShade = 0.8;
 /// already fits is left alone.
 ///
 /// Natural means gardn's own icon radius for this petal, falling back to
-/// kPetalIconSize x `sizeStat`. NOT kPetalArtSize: the world and the tile
-/// state a petal's size on two different scales.
+/// kPetalIconSize x `sizeStat` -- the tile's own constant, in the tile's own
+/// design units, even where it currently holds the same number the world does.
 ///
 /// `sizeStat` and `count` are the RARITY-scaled values (`petalStats`), not the
 /// base ones: a mythic light is five icons where a common one is a single icon.
