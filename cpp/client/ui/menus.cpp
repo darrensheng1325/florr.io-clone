@@ -1,4 +1,5 @@
 #include "client/ui/menus.h"
+#include "client/ui/text_select.h"
 
 #include "shared/core/process_stats.h"
 
@@ -535,6 +536,11 @@ bool MenuSystem::handleKeys(Window& window) {
     // inventory to G should not also open the bestiary on the way past.
     if (settings_panel_.capturingKey()) return true;
     if (wantsText_) return false;
+    // A shortcut is not a hotkey. Every menu binding is a bare letter, so
+    // without this Ctrl/Cmd+C opens the forge on its way to copying a
+    // selection, and Cmd+A opens the bestiary. Not the modifier ROW being
+    // rebound -- capturingKey above has already claimed the keyboard for that.
+    if (window.ctrlHeld()) return false;
 
     // Escape gets no special case: it is the settings panel's hotkey and is
     // read from kMenus with the rest of them below, so it toggles that panel
@@ -1440,6 +1446,10 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
         close();
         return;
     }
+    // Everything a panel paints is selectable text unless the widget painting
+    // it says otherwise -- the buttons, chips, tiles, fields and tooltips all
+    // turn this back off around their own labels.
+    ui::TextCaptureScope capture(true);
     switch (drawn_) {
         case MenuId::Inventory:   keepOpen = inventory_.render(ctx); break;
         case MenuId::Crafting:    keepOpen = crafting_.render(ctx); break;

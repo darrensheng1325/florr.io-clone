@@ -7,6 +7,7 @@
 #include "client/ui/draw.h"
 #include "client/ui/menu_widgets.h"
 #include "client/ui/text.h"
+#include "client/ui/text_select.h"
 #include "shared/game/components.h"
 #include "shared/game/config.h"
 
@@ -188,6 +189,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
 }
 
 void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const ItemTile& tile) {
+    TextCaptureScope off(false);
     const double side = std::min(rect.w, rect.h);
     if (side <= 0.0 || tile.alpha <= 0.0) return;
     const double scale = side / kItemTileDesign;

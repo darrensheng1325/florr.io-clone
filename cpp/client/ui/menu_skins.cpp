@@ -37,6 +37,7 @@
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
 #include "client/ui/text_input.h"
+#include "client/ui/text_select.h"
 #include "shared/game/skin_format.h"
 
 namespace flix {
@@ -875,8 +876,13 @@ void Studio::drawShapeList(Canvas& canvas, Rect view) {
             fillRound(canvas, swatch, 2.0, hexColor(!s.fill.empty() ? s.fill : s.stroke, kInk));
             strokeRound(canvas, swatch, 2.0, kInk, 1.0);
 
-            ui::text(canvas, std::to_string(i + 1) + ". " + shortType(s.t),
-                     swatch.right() + 8.0, row.y + kRowCard * 0.5, label(kBodySize, sel));
+            // Not selectable: the row IS the control that picks this shape, so
+            // its name belongs to the button rather than to the page.
+            {
+                TextCaptureScope off(false);
+                ui::text(canvas, std::to_string(i + 1) + ". " + shortType(s.t),
+                         swatch.right() + 8.0, row.y + kRowCard * 0.5, label(kBodySize, sel));
+            }
 
             const double bx = row.right() - 3.0 * 22.0 - 2.0 * 3.0 - 4.0;
             const double by = row.y + (kRowCard - 20.0) * 0.5;

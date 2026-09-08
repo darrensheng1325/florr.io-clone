@@ -268,13 +268,20 @@ TEST(copy_takes_the_selection_when_there_is_one) {
     CHECK_EQ(value, std::string("hello world"));
 }
 
-TEST(copy_falls_back_to_the_whole_field_with_nothing_selected) {
+TEST(copy_with_nothing_selected_takes_nothing) {
+    // Deliberately NOT "the whole field". A field holds the caret for as long
+    // as it is focused -- the chat box, the whole time it is open -- and a
+    // Ctrl+C that copied its empty draft would overwrite whatever the player
+    // had just highlighted in the transcript behind it.
     std::string value = "code-42";
     TextSelection selection;
     selection.collapse(value.size());
     TextEditFrame frame;
     frame.copy = true;
-    CHECK_EQ(editText(frame, value, selection, {}).clipboard, std::string("code-42"));
+    const TextEditResult result = editText(frame, value, selection, {});
+    CHECK_EQ(result.clipboard, std::string(""));
+    CHECK(!result.changed);
+    CHECK_EQ(value, std::string("code-42"));
 }
 
 TEST(cut_removes_what_it_copied) {
@@ -288,10 +295,11 @@ TEST(cut_removes_what_it_copied) {
     CHECK_EQ(value, std::string("world"));
     CHECK_EQ(selection.caret, std::size_t{0});
 
-    // With nothing selected it takes the field, as copy does.
+    // With nothing selected there is nothing to cut, and the value stands.
     selection.collapse(value.size());
-    editText(frame, value, selection, {});
-    CHECK_EQ(value, std::string(""));
+    const TextEditResult again = editText(frame, value, selection, {});
+    CHECK_EQ(again.clipboard, std::string(""));
+    CHECK_EQ(value, std::string("world"));
 }
 
 TEST(a_masked_field_refuses_to_copy_itself) {

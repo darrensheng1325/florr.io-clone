@@ -1,6 +1,7 @@
 #include "client/ui/draw.h"
 
 #include "client/ui/text.h"
+#include "client/ui/text_select.h"
 #ifndef __EMSCRIPTEN__
 #include "client/ui/text_cache.h"
 #endif
@@ -137,8 +138,15 @@ void paintRun(Canvas& canvas, const std::string& s, double penX, double baseline
 
 void text(Canvas& canvas, const std::string& s, double x, double y, const TextStyle& style) {
     if (s.empty() || !Fonts::ready()) return;
-    paintRun(canvas, s, originX(x, measure(s, style.size, style.bold), style.align),
-             baselineY(y, style.size, style.baseline, style.bold), style);
+    const double pen = originX(x, measure(s, style.size, style.bold), style.align);
+    const double base = baselineY(y, style.size, style.baseline, style.bold);
+    // The one place a run can be recorded from: every label, heading and chat
+    // token in the game is painted through here, so the selectable-text layer
+    // needs no second copy of the alignment arithmetic to agree with.
+    if (capturingText()) {
+        TextSelect::instance().record(s, pen, base, style.size, style.bold);
+    }
+    paintRun(canvas, s, pen, base, style);
 }
 
 double textWidth(Canvas&, const std::string& s, double size, bool bold) {
@@ -176,6 +184,7 @@ void panel(Canvas& canvas, Rect r, double alpha) {
 
 void button(Canvas& canvas, Rect r, const std::string& label, bool hovered, bool pressed,
             const ButtonStyle& style) {
+    TextCaptureScope off(false);
     // Brightness in HSV, matching the browser build exactly: press 0.9, hover
     // 1.1, outline 0.8. A linear channel scale agrees with these everywhere
     // except a clamped brighten, which is where the two visibly diverge.
@@ -290,6 +299,7 @@ TextRun textFieldRun(Rect r, const std::string& value, const TextFieldStyle& sty
 void textField(Canvas& canvas, Rect r, const std::string& value, const std::string& placeholder,
                bool focused, bool masked, double timeSeconds,
                const TextFieldStyle& style, const TextFieldState* state) {
+    TextCaptureScope off(false);
     const std::uint32_t outlineBase = focused ? style.focusedOutline : style.outline;
     const std::uint32_t outline =
         outlineBase == 0xFFFFFFFFu ? hsvScale(style.fill, 0.8) : outlineBase;

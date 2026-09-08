@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "client/ui/text.h"
+#include "client/ui/text_select.h"
 
 namespace flix::ui {
 
@@ -175,6 +176,7 @@ void panelClose(Canvas& canvas, Rect r, bool hovered) {
 
 void pillButton(Canvas& canvas, Rect r, const std::string& label, std::uint32_t fill,
                 double textSize) {
+    TextCaptureScope off(false);
     fillRound(canvas, r, 5.0, fill);
 
     TextStyle caption = labelStyle(textSize, false, kPaper, 0.0);
@@ -184,6 +186,7 @@ void pillButton(Canvas& canvas, Rect r, const std::string& label, std::uint32_t 
 
 void framedButton(Canvas& canvas, Rect r, const std::string& label, std::uint32_t labelColor,
                   std::uint32_t frame, bool hovered) {
+    TextCaptureScope off(false);
     fillRound(canvas, r, 4.0, frame);
     // The interior is a wash rather than a colour, so the frame stays the only
     // thing that says what the button is.
@@ -199,6 +202,7 @@ void framedButton(Canvas& canvas, Rect r, const std::string& label, std::uint32_
 }
 
 void chip(Canvas& canvas, Rect r, const std::string& label, bool hovered, const ChipStyle& style) {
+    TextCaptureScope off(false);
     const std::uint32_t hoverFill =
         style.hoverFill == 0xFFFFFFFFu ? lighten(style.fill, 0.15) : style.hoverFill;
     const std::uint32_t fill = style.enabled ? (hovered ? hoverFill : style.fill) : 0x8A8A8Au;

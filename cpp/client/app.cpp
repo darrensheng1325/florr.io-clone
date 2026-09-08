@@ -914,6 +914,11 @@ void App::pollNetwork() {
 void App::frame(double dt) {
     pollNetwork();
 
+    // Before anything is updated OR painted: the auth form registers its
+    // focused field from the update phase and the panels record their text
+    // from the draw phase, and both belong to the frame that is starting.
+    ui::TextSelect::instance().beginFrame();
+
     // The pointer starts every frame as an arrow and whatever is under it says
     // otherwise, which is how the reference works: `canvas.style.cursor` is
     // reassigned on each move and falls back to the sheet's `cursor: default`.
@@ -1085,6 +1090,11 @@ void App::frame(double dt) {
         else drawConnectionState(canvas, timeSeconds_);
     }
 
+    // After every panel and the chat have painted, so the runs a selection is
+    // resolved against are this frame's, and over them, so the highlight is
+    // not covered by what drew it.
+    updateTextSelection(canvas);
+
     // Last of all, over every other layer: the wipe is what hides the seam
     // between two scenes, so nothing may paint on top of it.
     drawSceneWipe(canvas);
@@ -1183,6 +1193,16 @@ void App::focusAuthField(int index) {
 void App::editChatLine() {
     const std::string before = chatDraft_;
     editText(chatDraft_, 180, chatField_);
+    // A press anywhere outside the chat -- a panel, the world, the strip --
+    // closes the line, which is what clicking away from a focused input does
+    // everywhere else. The draft is KEPT: reopening with Enter picks it back
+    // up rather than throwing away half a sentence.
+    if (window_.mousePressed(MouseButton::Left) && chatRegion_.w > 0 &&
+        !chatRegion_.contains({window_.mouseX(), window_.mouseY()})) {
+        chatOpen_ = false;
+        chatSuggestion_ = -1;
+        return;
+    }
     // Against the box the last frame painted: input runs before the draw, and
     // the field does not move between the two.
     if (chatBox_.w > 0) {
@@ -1602,8 +1622,17 @@ void App::sendInputFrame(double dt) {
     // petals point and where you walk are separate decisions.
     input.aimAngle = toCursor.lengthSq() > 1e-12 ? toCursor.angle() : 0.0;
 
-    if (!chatOpen_ && !menus_.capturesMouse({window_.mouseX(), window_.mouseY()}) &&
-        !tutorial_.capturesMouse({window_.mouseX(), window_.mouseY()})) {
+    const Vec2 pointer{window_.mouseX(), window_.mouseY()};
+    // A press that landed on a line of chat is a text selection, not a swing.
+    // Checked against the PREVIOUS frame's runs because this pass runs before
+    // anything has been painted, and only on the press itself -- a hover that
+    // blocked the attack would make the whole lower-left corner unshootable.
+    ui::TextSelect& selectable = ui::TextSelect::instance();
+    const bool textDrag = selectable.dragging() ||
+                          (window_.mousePressed(MouseButton::Left) &&
+                           selectable.overTextLastFrame(pointer));
+    if (!chatOpen_ && !textDrag && !menus_.capturesMouse(pointer) &&
+        !tutorial_.capturesMouse(pointer)) {
         if (window_.mouseDown(MouseButton::Left) ||
             boundKeyDown(window_, settings.controlKey(ControlAction::ExtendPetals))) {
             input.flags |= net::InputAttack;
@@ -2694,10 +2723,116 @@ void App::drawMinimap(Canvas& canvas) {
     text(canvas, biomeOf(section).name, x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
 }
 
+void App::updateTextSelection(Canvas& canvas) {
+    ui::TextSelect& selectable = ui::TextSelect::instance();
+    const Vec2 mouse{window_.mouseX(), window_.mouseY()};
+
+    // The menu owns the pointer while it is up, so a click on one of its rows
+    // does not also start a drag through the text behind it.
+    selectable.trackMouse(window_, contextMenu_.contains(mouse));
+    selectable.paint(canvas);
+    // The I-beam is the only sign that a label can be dragged across, and the
+    // bands are tight around the glyphs, so it lands on text and nothing else.
+    if (!contextMenu_.isOpen() && selectable.overText(mouse)) {
+        window_.setCursorShape(CursorShape::Text);
+    }
+
+    const ui::FocusedField field = selectable.focusedField();
+    const bool overField = field.valid() && field.box.w > 0 && field.box.contains(mouse);
+
+    // Ctrl/Cmd+C over a page selection. A focused field has already had its
+    // own go at the keystroke -- and now only takes it when IT has something
+    // selected -- so this is what is left, and it is the only way to copy a
+    // label or a chat line without going through the menu.
+    if (window_.ctrlHeld() && window_.keyPressed(Key::C) && selectable.hasSelection() &&
+        !(field.valid() && !field.state->selection.empty())) {
+        const std::string text = selectable.selectedText();
+        if (!text.empty()) window_.setClipboardText(text);
+    }
+    // Select All belongs to a focused field first -- editText has already
+    // answered for that -- and to the page only when there is none.
+    if (window_.ctrlHeld() && window_.keyPressed(Key::A) && !field.valid()) {
+        selectable.selectAll();
+    }
+
+    if (window_.mousePressed(MouseButton::Right) && !contextMenu_.isOpen()) {
+        // Only over something this client owns. Over the world the right
+        // button is the defend control, and a card there would eat it.
+        const bool overOwnUi = overField || menus_.capturesMouse(mouse) ||
+                               selectable.overText(mouse) ||
+                               (chatOpen_ && chatBox_.contains(mouse));
+        if (overOwnUi) {
+            const bool editable = field.valid();
+            const bool fieldHasSelection = editable && !field.state->selection.empty();
+            const bool canCopy = (fieldHasSelection && field.options.copyable) ||
+                                 selectable.hasSelection();
+
+            std::vector<ui::ContextMenu::Item> items;
+            if (editable) {
+                items.push_back({ui::ContextAction::Cut, "Cut",
+                                 fieldHasSelection && field.options.copyable});
+            }
+            items.push_back({ui::ContextAction::Copy, "Copy", canCopy});
+            if (editable) {
+                items.push_back({ui::ContextAction::Paste, "Paste",
+                                 !window_.clipboardText().empty()});
+            }
+            items.push_back({ui::ContextAction::SelectAll, "Select All", true});
+            contextMenu_.open(mouse, std::move(items), window_.width(), window_.height());
+        }
+    }
+
+    switch (contextMenu_.update(canvas, window_)) {
+        case ui::ContextAction::Copy: {
+            const std::string text =
+                field.valid() && !field.state->selection.empty() && field.options.copyable
+                    ? field.state->selection.of(*field.value)
+                    : selectable.selectedText();
+            if (!text.empty()) window_.setClipboardText(text);
+            break;
+        }
+        case ui::ContextAction::Cut: {
+            if (!field.valid() || !field.options.copyable) break;
+            const std::string text = field.state->selection.of(*field.value);
+            if (text.empty()) break;
+            window_.setClipboardText(text);
+            const std::size_t at = field.state->selection.begin();
+            field.value->erase(at, field.state->selection.end() - at);
+            field.state->selection.collapse(at);
+            field.state->caretSeconds = timeSeconds_;
+            break;
+        }
+        case ui::ContextAction::Paste: {
+            // Whatever `clipboardText` can answer for. On the desktop that is
+            // the system clipboard; in a browser it is the last thing pasted
+            // INTO the page, because a page may not read the clipboard on a
+            // click without a permission prompt -- see Window::pastedText.
+            if (!field.valid()) break;
+            ui::TextEditFrame paste;
+            paste.pasted = window_.clipboardText();
+            if (paste.pasted.empty()) break;
+            ui::editText(paste, *field.value, field.state->selection, field.options);
+            field.state->caretSeconds = timeSeconds_;
+            break;
+        }
+        case ui::ContextAction::SelectAll:
+            if (field.valid()) field.state->selection.selectAll(*field.value);
+            else selectable.selectAll();
+            break;
+        case ui::ContextAction::None:
+            break;
+    }
+}
+
 void App::drawChat(Canvas& canvas, double time) {
     const double bottom = canvas.height();
     const Rect column{kChatX, bottom - kChatColumnUp, kChatColumnWidth,
                       kChatColumnUp - kChatColumnDown};
+    // The transcript and the line under it, as one box. A press outside it
+    // closes the chat, and a press inside must not -- selecting a message is
+    // done with the box open.
+    const double regionBottom = bottom - kChatFieldUp + kChatFieldHeight;
+    chatRegion_ = {column.x, column.y, column.w, regionBottom - column.y};
 
     // A leading slash swaps the transcript for the command list -- the
     // reference hides one element and shows the other in the same slot.
@@ -2753,6 +2888,17 @@ void App::drawChat(Canvas& canvas, double time) {
             canvas.restore();
         }
     } else {
+        // The transcript is the one thing outside a panel a player can select:
+        // it is static, it is prose, and it is the half of the chat box worth
+        // copying out. The command list above is not -- it is a live picker
+        // the arrow keys move through.
+        //
+        // Left-drag is also the attack control and the transcript sits in the
+        // corner people aim across, so sendInputFrame drops the attack for a
+        // press that landed ON a line and for the drag that follows it. Only
+        // that press: the bands are tight around the glyphs, so hovering over
+        // the chat still shoots.
+        ui::TextCaptureScope capture(true);
         // The transcript never expires. It flows from the TOP of its column
         // and is scrolled to the bottom only once it overflows, which is what a
         // bottom-anchored overflow:auto block does.

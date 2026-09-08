@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "client/ui/text.h"
+#include "client/ui/text_select.h"
 
 namespace flix::ui {
 
@@ -151,18 +152,14 @@ TextEditResult editText(const TextEditFrame& frame, std::string& value, TextSele
     insert(frame.typed);
     insert(frame.pasted);
 
-    if (options.copyable && (frame.copy || frame.cut)) {
-        // The selection when there is one; the whole field when there is not,
-        // which is the only thing Ctrl+C can usefully mean on an unselected
-        // one-line box.
-        out.clipboard = selection.empty() ? value : selection.of(value);
-        if (frame.cut && !out.clipboard.empty()) {
-            if (!dropSelection()) {
-                value.clear();
-                selection.collapse(0);
-                out.changed = true;
-            }
-        }
+    if (options.copyable && !selection.empty() && (frame.copy || frame.cut)) {
+        // The SELECTION and nothing else. A field with the caret in it but
+        // nothing selected must let Ctrl+C through: the chat box holds the
+        // caret the whole time it is open, and copying its empty draft over
+        // whatever the player had just highlighted in the transcript is the
+        // one thing that must not happen.
+        out.clipboard = selection.of(value);
+        if (frame.cut) dropSelection();
     }
 
     if (options.multiline && frame.enter) insert("\n");
@@ -346,6 +343,17 @@ bool editText(Window& window, std::string& value, TextFieldState& state, double 
     const TextEditResult result = editText(frame, value, state.selection, options);
     if (!result.clipboard.empty()) window.setClipboardText(result.clipboard);
     if (result.changed || result.caretMoved) state.caretSeconds = timeSeconds;
+
+    // A field being edited IS the focused one, so this is the one place that
+    // has to say so -- the context menu can then cut, paste into and select it
+    // without knowing which panel drew it.
+    if (state.focused) {
+        FocusedField field;
+        field.value = &value;
+        field.state = &state;
+        field.options = options;
+        TextSelect::instance().setFocusedField(field);
+    }
     return result.changed;
 }
 
@@ -393,6 +401,16 @@ bool trackTextMouse(Window& window, TextFieldState& state, Rect box, const TextR
             state.caretSeconds = timeSeconds;
         } else {
             state.dragging = false;
+        }
+    }
+
+    // Reported whether or not it is focused: a right-click on an unfocused box
+    // still has to raise the field's own menu rather than the page's.
+    if (state.focused) {
+        FocusedField field = TextSelect::instance().focusedField();
+        if (field.state == &state) {
+            field.box = box;
+            TextSelect::instance().setFocusedField(field);
         }
     }
 

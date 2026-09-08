@@ -27,10 +27,18 @@ inline constexpr std::uint32_t kXpBar      = 0xFAFFC9u;
 inline constexpr std::uint32_t kShade      = 0x000000u;  ///< modal scrim, at low alpha
 /// The green the browser build's auth form and chat field are made of.
 inline constexpr std::uint32_t kField      = 0x18CE18u;
-/// The wash behind selected text. Painted UNDER a field's own text, so it has
-/// to read on a white inset and on a saturated plate alike; the fields on dark
-/// plates pass `kPaper` instead and get a pale wash rather than a blue one.
+/// The wash behind selected text in a FIELD. Painted under the field's own
+/// text, so it has to read on a white inset and on a saturated plate alike;
+/// the fields on dark plates pass `kPaper` instead and get a pale wash rather
+/// than a blue one.
 inline constexpr std::uint32_t kSelection  = 0x3D7DD8u;
+/// The plate behind selected PAGE text -- a panel's labels, a chat line.
+///
+/// Opaque and much darker than any panel body, with the glyphs redrawn on top
+/// in white. It cannot be a wash: these runs land on eleven different panel
+/// colours in turn, and a blue one over the inventory's own blue is invisible
+/// at a glance even though it is technically there.
+inline constexpr std::uint32_t kSelectionPlate = 0x1E3A63u;
 
 /// Menus and the title screen sit on this; the world has its own biome ground.
 inline constexpr std::uint32_t kBackdrop   = 0x00D885u;

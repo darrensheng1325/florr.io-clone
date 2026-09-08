@@ -17,6 +17,8 @@
 
 #include "client/camera.h"
 #include "client/net_client.h"
+#include "client/ui/context_menu.h"
+#include "client/ui/text_select.h"
 #include "client/render/sprites.h"
 #include "client/render/world_renderer.h"
 #include "client/ui/menus.h"
@@ -235,6 +237,10 @@ private:
     Rect chatBox_{};
     /// Where the lobby name box last painted, for the same reason.
     Rect nameBox_{};
+    /// The transcript and its input line as one box, for the press that
+    /// closes the chat by landing anywhere else.
+    Rect chatRegion_{};
+    ui::ContextMenu contextMenu_;
 
     /// Text entry shared by the login fields and the chat box.
     ///
@@ -244,6 +250,11 @@ private:
     /// field that shows no text.
     void editText(std::string& target, std::size_t maxLength, ui::TextFieldState& state,
                   bool masked = false);
+    /// Resolves this frame's text drag, paints the highlight and runs the
+    /// right-click menu. Last of everything: the runs it selects against are
+    /// recorded as the panels paint, and its own card goes over them.
+    void updateTextSelection(Canvas&);
+
     /// The lobby name box's plate, shared by its painter and its hit test.
     static ui::TextFieldStyle nameFieldStyle();
     /// The auth form's field at `index`, or null when there is none there.

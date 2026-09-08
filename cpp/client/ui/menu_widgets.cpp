@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "client/ui/text.h"
+#include "client/ui/text_select.h"
 
 namespace flix::ui {
 
@@ -89,6 +90,7 @@ TextRun inputFieldRun(Rect r, const std::string& value, const TextFieldState& st
 
 void inputField(Canvas& canvas, Rect r, const std::string& value, const std::string& placeholder,
                 bool focused, double timeSeconds, const TextFieldState* state) {
+    TextCaptureScope off(false);
     setFill(canvas, kControlDark);
     canvas.beginPath();
     canvas.roundRect(static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w),
@@ -295,6 +297,7 @@ Vec2 measureTooltip(const std::vector<TooltipLine>& lines, double minWidth, doub
 
 Rect paintTooltip(Canvas& canvas, double x, double y, const std::vector<TooltipLine>& lines,
                   double minWidth, double extraHeight, bool alt) {
+    TextCaptureScope off(false);
     const TooltipLayout layout = layoutRows(lines, alt);
     const Vec2 size{std::max(layout.textWidth, minWidth) + kTooltipPadX * 2,
                     layout.textHeight + extraHeight + kTooltipPadY * 2};
