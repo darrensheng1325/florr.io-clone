@@ -159,6 +159,7 @@ struct Fixture {
     std::uint16_t jelly = kInvalidIndex;
     std::uint16_t venom = kInvalidIndex;
     std::uint16_t frost = kInvalidIndex;
+    std::uint16_t spore = kInvalidIndex;
 };
 
 const Fixture& fixture() {
@@ -174,7 +175,8 @@ const Fixture& fixture() {
               "sting":{"name":"Sting","damage":10,"health":5,"size":1,"knockback":2,"damageCooldown":500},
               "plain":{"name":"Plain","damage":10,"health":5,"size":1},
               "jelly":{"name":"Jelly","damage":1,"health":5,"size":1,"knockback":15},
-              "venom":{"name":"Venom","damage":1,"health":5,"size":1,"poison":0.01,"poisonDuration":2000}
+              "venom":{"name":"Venom","damage":1,"health":5,"size":1,"poison":0.01,"poisonDuration":2000},
+              "spore":{"name":"Spore","damage":0,"health":6,"size":1,"knockback":3,"poison":0.01,"poisonDuration":2000}
             })");
         if (!wrote) {
             f.error = "cannot write the fixture content";
@@ -186,6 +188,7 @@ const Fixture& fixture() {
         f.jelly = f.registry.petalIndex("jelly");
         f.venom = f.registry.petalIndex("venom");
         f.frost = f.registry.petalIndex("frost");
+        f.spore = f.registry.petalIndex("spore");
         return f;
     }();
     return state;
@@ -1155,6 +1158,37 @@ TEST(a_petal_lands_the_poison_and_slow_its_config_carries) {
     CHECK_NEAR(a.health(poisoned), 499.0, 1e-9);
     a.step(net::kTickMillis, f.registry);
     CHECK_NEAR(a.health(poisoned), 499.0 - 1.0 - 10.0 * net::kTickSeconds, 1e-6);
+}
+
+TEST(a_zero_damage_petal_still_lands_its_riders_and_still_pays_for_them) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    if (!f.ok) return;
+
+    // iris, blue_iris, bubble and bomb all ship `"damage": 0` beside a real
+    // health pool: the rider IS the petal. applyDamage refuses a swing of
+    // nothing, and reading that refusal as "this hit was rejected" left all
+    // four landing nothing at all -- no poison, no shove -- and, because a
+    // petal pays for its swing in the same block, never wearing out either:
+    // a one-hit-point iris sat on a mob for ever.
+    Arena a;
+    const Entity player = a.player({1000, 1000});
+    const Entity mob = a.mob({1040, 1000}, 500.0);
+    a.world.add<ContactDamage>(mob, ContactDamage{4.0, 0.0});
+    const Entity petal = equipPetal(a, player, f.spore, Rarity::Common, {1025, 1000});
+    a.world.add<Health>(petal, Health{6.0, 6.0, 0.0, 0.0});
+
+    a.step(0.0, f.registry);
+
+    CHECK_NEAR(a.health(mob), 500.0, 1e-9);     // it really does deal no damage
+    CHECK_NEAR(a.health(petal), 2.0, 1e-9);     // and still pays the mob's 4
+    CHECK_NEAR(a.world.get<Afflictions>(mob).poisonPerSecond, 10.0, 1e-9);
+    CHECK(a.world.get<Knockback>(mob).impulse.x > 0.0);
+
+    // Second contact empties it, exactly as a damaging petal's would.
+    a.step(net::kTickMillis, f.registry);
+    CHECK_NEAR(a.health(petal), 0.0, 1e-9);
+    CHECK(a.world.has<Dead>(petal));
 }
 
 TEST(a_petal_never_hits_its_own_flower) {

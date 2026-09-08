@@ -41,7 +41,8 @@ const char* const kPetalsJson = R"JSON({
 })JSON";
 
 const char* const kMobsJson = R"JSON({
-  "critter": {"name":"Critter","health":10,"damage":1,"size":1,"speed":1,"range":300,"cooldown":500,"color":"#FF0000","section":[0],"ai_type":"hostile"}
+  "critter": {"name":"Critter","health":10,"damage":1,"size":1,"speed":1,"range":300,"cooldown":500,"color":"#FF0000","section":[0],"ai_type":"hostile"},
+  "brute":   {"name":"Brute","health":500,"damage":5,"size":6,"speed":1,"range":300,"cooldown":500,"color":"#AA3300","section":[0],"ai_type":"hostile"}
 })JSON";
 
 std::string tempDir() {
@@ -439,6 +440,53 @@ TEST(an_empty_loadout_places_nothing_and_leaves_modifiers_neutral) {
     CHECK_NEAR(rig.modifiers().speedScale, 1.0, 1e-12);
     CHECK_NEAR(rig.modifiers().luck, 1.0, 1e-12);
     CHECK_NEAR(rig.ring().radius, kPetalOrbitRestRadius, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Attraction
+// ---------------------------------------------------------------------------
+
+TEST(an_attracted_petal_is_projected_inside_the_body_the_hit_test_uses) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "basic");
+    rig.freezeRing();
+    rig.settleRing();
+
+    const Entity petal = rig.petals(0).front();
+    const double petalRadius = rig.world.get<Body>(petal).radius;
+
+    // A mob that rolled SMALL. Its body is a little over half the tier radius
+    // the stat table quotes, and that gap is the whole bug: projecting onto the
+    // TIER radius parks the petal outside the circle the melee pass tests, so
+    // the ring whips around a mob it can never touch -- no damage out, and no
+    // health off the petal either, because a petal pays for its swing only when
+    // the swing lands. Nothing else about the capture looks wrong, which is why
+    // it read as "petal health sometimes does not go down".
+    const std::uint16_t brute = fixture().registry.mobIndex("brute");
+    const double statRadius = fixture().registry.mobStats(brute, Rarity::Common).radius;
+    const double jitter = 0.55;
+    const double bodyRadius = statRadius * jitter;
+    // The trap only exists for a roll this small; assert the fixture is in it.
+    CHECK(statRadius * kMobOrbitRadiusScale > bodyRadius + petalRadius);
+
+    const Vec2 orbit = rig.world.get<Transform>(petal).position;
+    const Entity mob = rig.world.create();
+    rig.world.add<MobTag>(mob);
+    rig.world.add<MobType>(mob, MobType{brute, Rarity::Common, jitter});
+    rig.world.add<Transform>(mob, Transform{orbit + Vec2{20.0, 0.0}, 0.0});
+    rig.world.add<Body>(mob, Body{bodyRadius, 1.0});
+    rig.world.add<Health>(mob, Health{500.0, 500.0, 0.0, 0.0});
+    rig.world.add<Faction>(mob, Faction{Team::Hostiles, false});
+
+    rig.tick(60);
+
+    CHECK(rig.world.get<PetalInstance>(petal).attractedTo == mob);
+    const double gap = (rig.world.get<Transform>(petal).position -
+                        rig.world.get<Transform>(mob).position).length();
+    CHECK(gap < bodyRadius + petalRadius);
+    // And on the edge of the body it actually has, not buried in its middle.
+    CHECK(gap > bodyRadius * 0.5);
 }
 
 // ---------------------------------------------------------------------------

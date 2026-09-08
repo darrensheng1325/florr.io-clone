@@ -1156,6 +1156,17 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
 
             const DamageResult hit = applyDamage(world, victim, source.attacker,
                                                  source.damage, nowMillis);
+            // A swing of NOTHING is still a swing. canHit() has already vouched
+            // for this victim one line above -- alive, not a corpse, not
+            // invulnerable, on the other side -- so the only refusal
+            // applyDamage can add here is a damage figure of zero, and several
+            // petals carry one deliberately: iris and blue_iris are pure
+            // poison, bubble and bomb pure utility. The reference never looks
+            // at the number; it applies every rider and charges the petal its
+            // own health BELOW damageMob(), so a zero-damage petal poisons,
+            // shoves and wears out exactly like any other. Read as a refusal,
+            // those four petals landed nothing at all and never broke.
+            const bool landed = !hit.refused || (source.isPetal && source.damage == 0.0);
             // Petal knockback is set after the hit using its own stat and the
             // victim's mass, exactly like playerState.ts. Mob contact already
             // performed its fixed player displacement above.
@@ -1163,7 +1174,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // Every rider sits BELOW the reference's already-dead `continue`
             // and inside its not-invulnerable branch, so a refused hit lands
             // none of them: it credits the ledger and nothing else.
-            if (!hit.refused && !hit.killed) {
+            if (landed && !hit.killed) {
                 if (source.isPetal) {
                     applyKnockback(world, victim, offset, source.knockback);
                 }
@@ -1184,7 +1195,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // does not flash white for a cost the reference pays silently.
             // The floating number takes care of itself: a petal is on neither
             // of the reference's two damage-report channels.
-            if (!hit.refused && source.isPetal && source.hitIntervalMillis <= 0.0 &&
+            if (landed && source.isPetal && source.hitIntervalMillis <= 0.0 &&
                 world.has<MobTag>(victim)) {
                 applyDamage(world, source.attacker, victim, contactDamageOf(world, victim),
                             nowMillis, DamageKind::Periodic);

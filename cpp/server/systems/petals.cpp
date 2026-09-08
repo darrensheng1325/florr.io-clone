@@ -368,14 +368,15 @@ void PetalSystem::rebuildAttractionGrid(World& world) {
     });
 }
 
-bool PetalSystem::findAttractionTarget(World& world, const ContentRegistry& registry, Vec2 at,
-                                       double radius, AttractionTarget& out) {
+bool PetalSystem::findAttractionTarget(World& world, Vec2 at, double radius,
+                                       AttractionTarget& out) {
     if (!(radius > 0.0)) return false;
     attractionGrid_.query(at, radius, attractionCandidates_);
 
     Entity closest = NULL_ENTITY;
     double closestDistanceSq = 0;
     Vec2 closestPosition;
+    double closestRadius = 0;
     for (const Entity mob : attractionCandidates_) {
         // The grid is last tick's; a mob an earlier petal killed is still in
         // it, and the reference skips exactly that case.
@@ -392,19 +393,25 @@ bool PetalSystem::findAttractionTarget(World& world, const ContentRegistry& regi
         closest = mob;
         closestDistanceSq = gap;
         closestPosition = transform->position;
+        closestRadius = body->radius;
     }
     if (closest == NULL_ENTITY) return false;
 
-    // The projection radius is the mob's TIER radius, without the per-spawn
-    // size jitter the body carries -- the reference reads it back out of the
-    // stat table rather than off the entity, and the two differ by whatever
-    // that mob rolled.
-    const MobType* type = world.tryGet<MobType>(closest);
-    const double statRadius =
-        type != nullptr ? registry.mobStats(type->configIndex, type->rarity).radius : 0.0;
+    // The BODY's radius, which is the circle the collision test uses, and not
+    // the tier radius out of the stat table.
+    //
+    // The two differ by the per-spawn size jitter, and the reference projects
+    // onto the tier figure -- which is a capture that cannot land a hit on any
+    // mob that rolled small. kMobOrbitRadiusScale pins the petal 0.85 tier
+    // radii from the centre while contact needs it inside `body + petal`, so a
+    // 0.55 roll on a big mob parks the ring in the gap: the petal visibly whips
+    // around its victim, deals nothing, and -- since a petal pays for its
+    // health only when it lands a hit -- never wears out either. Measuring off
+    // the body makes 0.85 mean 0.85 of the edge that is actually there, so the
+    // projection is inside the hitbox for every roll.
     out.mob = closest;
     out.position = closestPosition;
-    out.radius = statRadius > 0.0 ? statRadius : kMobBaseRadius;
+    out.radius = closestRadius > 0.0 ? closestRadius : kMobBaseRadius;
     return true;
 }
 
@@ -1096,7 +1103,7 @@ void PetalSystem::stepPetalPhysics(World& world, const ContentRegistry& registry
     // up when a mob is 30 units from where the petal is about to swing past.
     AttractionTarget locked;
     const bool captured = !instance.homing &&
-                          findAttractionTarget(world, registry, orbit, attractionRadius, locked);
+                          findAttractionTarget(world, orbit, attractionRadius, locked);
     if (captured) {
         instance.attractedTo = locked.mob;
     } else if (instance.attractedTo != NULL_ENTITY) {
