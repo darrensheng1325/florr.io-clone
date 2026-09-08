@@ -523,17 +523,18 @@
     },
     "peas": {
         "name": "Peas",
-        "damage": 10,
+        "damage": 2.5,
         "health": 10,
         "size": 1,
         "cooldown": 1000,
         "description": "Shoots out in 4 directions",
         "color": "#000000",
-        "count": 1,
+        "count": 4,
+        "clumped": true,
         "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" fill=\"none\">\n<circle cx=\"16\" cy=\"16\" r=\"14\" fill=\"#8ac255\" stroke-width=\"4\" stroke=\"#709d45\"/>\n</svg>",
         "isAdminPetal": false,
         "projectile": {
-            "count": 4,
+            "count": 1,
             "spreadAngle": 1.5708,
             "speed": 800,
             "distance": 1000

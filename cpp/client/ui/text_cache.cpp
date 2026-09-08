@@ -325,11 +325,18 @@ bool paintRunCached(Canvas& canvas, const std::string& s, double penX, double ba
         entry.padTop = padTop;
         if (entry.rgba.size() != static_cast<std::size_t>(width) * height * 4) return false;
 
+        // Room is made BEFORE the insert, and that order is the whole point.
+        // An entry is stamped with the clock below, not here, so between the
+        // emplace and that stamp its lastUsed is 0 -- which makes it the
+        // LEAST recently used thing in the map and the first candidate both
+        // loops in evictIfNeeded pick. Evicting afterwards therefore freed the
+        // very node `found` points at, and the stamp and the blit below then
+        // wrote to and read from it. c.bytes already counts this entry, so
+        // eviction frees enough room for it while it is still safely out of
+        // the map.
         c.bytes += entry.rgba.size();
-        found = c.entries.emplace(std::move(key), std::move(entry)).first;
         evictIfNeeded();
-        // evictIfNeeded may have dropped what was just inserted only if it were
-        // the least recently used, which it cannot be -- it is stamped below.
+        found = c.entries.emplace(std::move(key), std::move(entry)).first;
     }
 
     Entry& entry = found->second;
