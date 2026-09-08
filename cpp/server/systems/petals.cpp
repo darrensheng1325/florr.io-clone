@@ -1359,8 +1359,18 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             nowMillis >= instance->nextProjectileMillis) {
             instance->nextProjectileMillis =
                 nowMillis + std::max(stats.reloadMillis, net::kTickMillis);
-            fireProjectiles(world, player, petal, config, stats, instance->configIndex,
-                            instance->rarity);
+            // Read before the volley: firing is structural, and spending the
+            // petal below moves the instance out from under the pointer.
+            const std::uint8_t firedSlot = instance->slot;
+            const std::uint8_t firedSub = instance->subIndex;
+            if (fireProjectiles(world, player, petal, config, stats, instance->configIndex,
+                                instance->rarity)) {
+                // The shot IS the petal leaving the ring: firing spends it, the
+                // same way being thrown spends web and pollen, and the
+                // reference launches the petal ITSELF as the missile.
+                spendPetal(world, player, petal, firedSlot, firedSub, stats, nowMillis);
+                continue;
+            }
         }
 
         if (!hasNonProjectileAction(config, stats)) continue;
@@ -1400,16 +1410,54 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
     }
 }
 
-void PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
+void PetalSystem::spendPetal(World& world, Entity player, Entity petal, std::uint8_t slotId,
+                             std::uint8_t subIndex, const PetalStats& stats, double nowMillis) {
+    if (Health* health = world.tryGet<Health>(petal)) {
+        // Zeroed rather than destroyed, exactly as yggdrasil's revive spends
+        // its petal: the slot's ordinary break path is then what takes the
+        // instance off the ring and pays the reload, and that path is already
+        // the one that reloads an independent clump per grain -- each pea on
+        // its own shot -- and a shared pool once for the slot.
+        //
+        // Not Dead: the server reaps a Dead entity at the END of this tick, so
+        // the grain would be gone before the fold that stamps its timer ever
+        // saw it, and it would come back with no reload at all.
+        health->current = 0.0;
+        return;
+    }
+
+    // A petal with no health pool at all -- gas and rainbow, whose JSON health
+    // is null -- has no break path to fall through. Nothing would take it off
+    // the ring and nothing would stamp its slot, so it would stand there and
+    // fire again the moment its shot timer came round. Do both by hand.
+    world.add<Dead>(petal, Dead{player});
+    Loadout* loadout = world.tryGet<Loadout>(player);
+    PetalSlotState* state = world.tryGet<PetalSlotState>(player);
+    if (loadout == nullptr || state == nullptr || slotId >= kLoadoutActiveSlots) return;
+    PetalSlotState::Slot& slotState = state->slots[slotId];
+    const double reload = reloadMillisFor(stats);
+    if (slotState.independent) {
+        // One grain at a time, on the same array the break path stamps.
+        if (subIndex < slotState.instanceReadyAtMillis.size()) {
+            slotState.instanceReadyAtMillis[subIndex] = nowMillis + reload;
+        }
+        return;
+    }
+    LoadoutSlot& slot = loadout->slots[slotId];
+    slot.broken = true;
+    slot.reloadReadyAtMillis = nowMillis + reload;
+}
+
+bool PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
                                   const PetalConfig& config, const PetalStats& stats,
                                   std::uint16_t configIndex, Rarity rarity) {
     const ProjectileSpec& spec = config.projectile;
     // A shot with no speed or no reach is not a volley, it is an entity that
     // expires where it was born.
-    if (spec.speed <= 0.0 || spec.distance <= 0.0) return;
+    if (spec.speed <= 0.0 || spec.distance <= 0.0) return false;
 
     const Transform* origin = world.tryGet<Transform>(petal);
-    if (!origin) return;
+    if (!origin) return false;
     const Vec2 from = origin->position;
     // The INSTANCE's facing, not the slot's: the grains of a clump each sit out
     // on their own sub-bearing and each fires down it, so four peas leave in
@@ -1500,6 +1548,7 @@ void PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
         world.add<Replicated>(shot, replicated);
         assignNetId(world, shot);
     }
+    return true;
 }
 
 void PetalSystem::emitGroundEffect(World& world, Entity player, Vec2 at, GroundEffectKind kind,

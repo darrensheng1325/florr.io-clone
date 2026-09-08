@@ -33,6 +33,7 @@ const char* const kPetalsJson = R"JSON({
   "sponge":   {"name":"Sponge","damage":10,"health":10,"size":1,"cooldown":2000,"count":1,"spongeDamageDuration":1000,"color":"#FF96E0"},
   "peas":     {"name":"Peas","damage":6,"health":5,"size":1,"cooldown":1000,"count":1,"projectile":{"count":3,"spreadAngle":0.5,"speed":800,"distance":1000},"color":"#00FF00"},
   "peaclump": {"name":"Peaclump","damage":6,"health":5,"size":1,"cooldown":1000,"count":4,"clumped":true,"projectile":{"count":1,"spreadAngle":0,"speed":800,"distance":1000},"color":"#00FF00"},
+  "emitter":  {"name":"Emitter","damage":2,"health":null,"size":1,"cooldown":1000,"count":1,"projectile":{"count":2,"spreadAngle":0.3,"speed":400,"distance":400},"color":"#00FF00"},
   "lucky":    {"name":"Lucky","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"luck":2,"speed":1.5,"magnetism":50},"color":"#FFD700"},
   "reacher":  {"name":"Reacher","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"range":1.5},"color":"#00FFFF"},
   "anchor":   {"name":"Anchor","damage":1,"health":5,"size":1,"cooldown":1000,"count":1,"playerModifiers":{"rotationSpeed":0},"color":"#888888"},
@@ -1021,6 +1022,74 @@ TEST(each_grain_of_a_clump_fires_along_its_own_facing) {
     CHECK_NEAR(offsets[1], 0.0, 1e-6);
     CHECK_NEAR(offsets[2], kTau * 0.25, 1e-6);
     CHECK_NEAR(std::abs(offsets[3]), kTau * 0.5, 1e-6);
+}
+
+TEST(firing_a_volley_spends_the_petal_and_pays_its_reload) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "peas");
+    rig.settleEquips();
+    CHECK_EQ(rig.petals(0).size(), std::size_t(1));
+
+    rig.setFlags(net::InputAttack);
+    CHECK(rig.tickUntil([&] { return rig.countOf(net::EntityKind::Projectile) == 3; }));
+
+    // The shot IS the petal leaving the ring: the instance that fired is spent,
+    // and the slot serves the reload a mob-killed petal would have served.
+    rig.tick();
+    CHECK_EQ(rig.petals(0).size(), std::size_t(0));
+    CHECK(rig.slot(0).broken);
+
+    // Attack is still held, so the reload -- not the shot timer -- is what
+    // paces the volleys: the slot comes back and spends itself again.
+    CHECK(rig.tickUntil([&] { return !rig.slot(0).broken; }, 400));
+    CHECK(rig.tickUntil([&] { return rig.slot(0).broken; }, 400));
+}
+
+TEST(each_grain_of_a_clump_is_spent_by_its_own_shot) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "peaclump");
+    rig.settleEquips();
+    CHECK_EQ(rig.petals(0).size(), std::size_t(4));
+
+    rig.setFlags(net::InputAttack);
+    CHECK(rig.tickUntil([&] { return rig.countOf(net::EntityKind::Projectile) == 4; }));
+    rig.tick();
+    // Four grains, four shots, four spent grains -- each on its own per-instance
+    // timer rather than on a slot-wide one.
+    CHECK_EQ(rig.petals(0).size(), std::size_t(0));
+    // They serve that timer: a grain does not come straight back into another
+    // volley the tick after it fired.
+    rig.tick(10);
+    CHECK_EQ(rig.petals(0).size(), std::size_t(0));
+    CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(4));
+    CHECK(rig.tickUntil([&] { return rig.petals(0).size() == 4; }, 400));
+}
+
+TEST(a_projectile_petal_with_no_health_pool_still_pays_its_reload) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    // An unbreakable emitter has no break path to fall through, so its reload
+    // is stamped by the shot itself. Without that it would be respawned into
+    // another volley on the very next tick.
+    rig.equip(0, "emitter");
+    rig.settleEquips();
+    rig.setFlags(net::InputAttack);
+    CHECK(rig.tickUntil([&] { return rig.countOf(net::EntityKind::Projectile) == 2; }));
+
+    // Nothing else would take an unbreakable petal off the ring, so the shot
+    // marks it Dead -- which the server reaps at the end of this tick, as it
+    // does the spent web above -- and stamps the slot itself.
+    const std::vector<Entity> spent = rig.petals(0);
+    CHECK_EQ(spent.size(), std::size_t(1));
+    CHECK(rig.world.has<Dead>(spent.front()));
+    CHECK(rig.slot(0).broken);
+
+    // Ten more ticks of held attack, and still exactly the one volley: without
+    // the stamp the slot would respawn straight into the next one.
+    rig.tick(10);
+    CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(2));
 }
 
 TEST(a_projectile_petal_that_breaks_stops_firing) {

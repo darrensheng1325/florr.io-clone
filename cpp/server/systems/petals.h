@@ -246,8 +246,16 @@ private:
     void recallPets(World& world, PetalSlotState::Slot& state);
     void assignNetId(World& world, Entity e);
 
-    void fireProjectiles(World& world, Entity player, Entity petal, const PetalConfig& config,
+    /// Fire one volley. Returns whether a shot actually left the petal: a spec
+    /// with no speed or no reach fires nothing, and a petal that fired nothing
+    /// must not be spent for it.
+    bool fireProjectiles(World& world, Entity player, Entity petal, const PetalConfig& config,
                          const PetalStats& stats, std::uint16_t configIndex, Rarity rarity);
+
+    /// Take a petal that spent itself firing off the ring and put its slot on
+    /// the reload, whichever of the two health models the slot runs on.
+    void spendPetal(World& world, Entity player, Entity petal, std::uint8_t slotId,
+                    std::uint8_t subIndex, const PetalStats& stats, double nowMillis);
 
     /// Run one petal's scripted behaviour. `at` is where the effect lands,
     /// which is the flower for a spawn and the petal itself thereafter.
