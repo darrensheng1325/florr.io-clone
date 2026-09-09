@@ -88,8 +88,8 @@ function readProperties(node) {
 // ---------------------------------------------------------------------------
 
 /**
- * Rewrites an SVG's root width/height to exactly one tile, leaving the viewBox
- * and every child untouched.
+ * Rewrites an SVG's root width/height to exactly one tile, leaving every child
+ * untouched and giving the document a viewBox if it had none.
  *
  * Tiled draws an image-collection tile at the image's own size, so a 400-unit
  * texture would hang 100 units out of its 300-unit cell and the map would not
@@ -98,13 +98,25 @@ function readProperties(node) {
  * WALL_TILE_SIZE)`, stretching whatever it is handed to one tile — so pinning
  * them is inert everywhere except in Tiled, where it is the difference between
  * a readable map and a smeared one.
+ *
+ * Inert, that is, only while a viewBox says what the coordinates mean. Without
+ * one, width/height ARE the coordinate space, and rewriting them silently
+ * redefines it: land.svg draws its grass out to 400 with no viewBox, so pinning
+ * it to 300 cropped the whole bottom-right quarter away and cut every shape the
+ * crop crossed in half — a hard seam down each tile edge, in the editor and in
+ * the game both. So the old width/height is written back as the viewBox first,
+ * which is the same document said explicitly.
  */
 function fitSvgToTile(svg) {
     const open = svg.match(/<svg\b[^>]*>/);
     if (!open) return svg;
     let tag = open[0];
+    const width = tag.match(/\swidth\s*=\s*"([\d.]+)"/);
+    const height = tag.match(/\sheight\s*=\s*"([\d.]+)"/);
+    const box = /\sviewBox\s*=/.test(tag) ? '' : width && height
+        ? ` viewBox="0 0 ${width[1]} ${height[1]}"` : '';
     tag = tag.replace(/\s(width|height)\s*=\s*"[^"]*"/g, '');
-    tag = tag.replace(/<svg\b/, `<svg width="${TILE_SIZE}" height="${TILE_SIZE}"`);
+    tag = tag.replace(/<svg\b/, `<svg width="${TILE_SIZE}" height="${TILE_SIZE}"${box}`);
     return svg.slice(0, open.index) + tag + svg.slice(open.index + open[0].length);
 }
 
