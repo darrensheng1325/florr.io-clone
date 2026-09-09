@@ -720,11 +720,7 @@ bool SpawnSystem::inAnySpawnZone(Vec2 position, int section) const {
     const std::uint16_t bit = static_cast<std::uint16_t>(1u << section);
     for (const SpawnZone& zone : zones_) {
         if ((zone.sections & bit) == 0) continue;
-        // Inclusive on every edge, as the reference's own rectangle test is.
-        if (position.x >= zone.bounds.left() && position.x <= zone.bounds.right() &&
-            position.y >= zone.bounds.top() && position.y <= zone.bounds.bottom()) {
-            return true;
-        }
+        if (zoneContains(zone.bounds, zone.polygon, position)) return true;
     }
     return false;
 }
@@ -962,11 +958,16 @@ void SpawnSystem::rebuildZones() {
         if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
         SpawnZone zone;
         zone.bounds = element.bounds;
+        zone.polygon = element.polygon;
         zone.tier = element.spawnTier;
-        // Rounded UP and never zero: the smallest rectangles on the map are a
-        // few hundred units across and would otherwise be permanently empty.
-        zone.targetMobs = std::max(
-            1, static_cast<int>(std::ceil(kTargetMobDensity * element.bounds.w * element.bounds.h)));
+        // The OUTLINE's area, not the bounding box's: a diagonal band covers
+        // about half its box, and sizing its population by the box would pack
+        // it at twice the density of a rectangular zone next door.
+        //
+        // Rounded UP and never zero: the smallest zones on the map are a few
+        // hundred units across and would otherwise be permanently empty.
+        zone.targetMobs =
+            std::max(1, static_cast<int>(std::ceil(kTargetMobDensity * element.area())));
         for (int section = 0; section < kSectionCount; ++section) {
             const Rect bounds{static_cast<double>(section % kSectionsPerAxis) * kSectionSize,
                               static_cast<double>(section / kSectionsPerAxis) * kSectionSize,
@@ -979,13 +980,26 @@ void SpawnSystem::rebuildZones() {
     }
 }
 
-int SpawnSystem::countMobsInZone(const Rect& bounds) const {
+/// A point inside one zone's outline that is not in the map's border band.
+///
+/// Rejection sampling over the bounding box: uniform over the outline, and a
+/// zone that fills little of its box just spends more of the tries. False when
+/// they ran out, which is what the callers' own retry logic already handles.
+bool SpawnSystem::sampleZonePoint(const SpawnZone& zone, Rng& rng, Vec2& out) const {
+    for (int attempt = 0; attempt < kZonePlacementAttempts; ++attempt) {
+        const Vec2 candidate = samplePointInRect(zone.bounds, rng);
+        if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
+        if (inBorderBand(candidate)) continue;
+        out = candidate;
+        return true;
+    }
+    return false;
+}
+
+int SpawnSystem::countMobsInZone(const SpawnZone& zone) const {
     int count = 0;
     for (const MobPlacement& mob : mobPlacements_) {
-        if (mob.position.x >= bounds.left() && mob.position.x <= bounds.right() &&
-            mob.position.y >= bounds.top() && mob.position.y <= bounds.bottom()) {
-            ++count;
-        }
+        if (zoneContains(zone.bounds, zone.polygon, mob.position)) ++count;
     }
     return count;
 }
@@ -1015,7 +1029,7 @@ void SpawnSystem::runSpawnZones(World& world, const Terrain& terrain,
         }
 
         if (!zone.initialized) {
-            zone.pendingFill = std::max(0, zone.targetMobs - countMobsInZone(zone.bounds));
+            zone.pendingFill = std::max(0, zone.targetMobs - countMobsInZone(zone));
             zone.initialized = true;
             zone.lastWaveMillis = nowMillis;
             zone.lastTrickleMillis = nowMillis;
@@ -1040,7 +1054,7 @@ void SpawnSystem::runSpawnZones(World& world, const Terrain& terrain,
         }
 
         if (nowMillis - zone.lastWaveMillis >= kZoneWaveIntervalMillis) {
-            const int deficit = std::max(0, zone.targetMobs - countMobsInZone(zone.bounds));
+            const int deficit = std::max(0, zone.targetMobs - countMobsInZone(zone));
             zone.pendingFill = std::min(deficit, kZoneSpawnsPerPass * 4);
             zone.lastWaveMillis = nowMillis;
             zone.lastTrickleMillis = nowMillis;
@@ -1052,7 +1066,7 @@ void SpawnSystem::runSpawnZones(World& world, const Terrain& terrain,
         // than snap back.
         if (nowMillis - zone.lastTrickleMillis >= kZoneTrickleIntervalMillis) {
             zone.lastTrickleMillis = nowMillis;
-            const int current = countMobsInZone(zone.bounds);
+            const int current = countMobsInZone(zone);
             if (current >= zone.targetMobs) continue;
             const int rolled =
                 kZoneTrickleMin +
@@ -1077,6 +1091,12 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
     bool placed = false;
     for (int attempt = 0; attempt < kZonePlacementAttempts; ++attempt) {
         const Vec2 candidate = samplePointInRect(zone.bounds, rng);
+        // Rejection sampling over the bounding box keeps the distribution
+        // uniform over the outline. A candidate in a corner the polygon does
+        // not cover is thrown away like any other unusable one, so a zone that
+        // fills little of its box simply spends more of its attempts -- which
+        // is why there are attempts rather than one shot.
+        if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
         if (inBorderBand(candidate)) continue;
         if (terrain.blocked(candidate, Realm::Overworld)) continue;
         if (nearAnyPlayer(viewers, candidate, kMinSpawnDistance)) continue;
@@ -1087,9 +1107,11 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
     }
     if (!placed) return NULL_ENTITY;
 
-    // A rectangle belongs to nobody's viewport, so anything charged to luck is
+    // A zone belongs to nobody's viewport, so anything charged to luck is
     // charged to whoever is standing nearest its centre -- the reference's own
-    // attribution rule for a zone fill.
+    // attribution rule for a zone fill. The bounding box's centre, which for a
+    // concave band is not inside it; it is an attribution tiebreak, not a
+    // placement, so that costs nothing.
     const Vec2 centre{zone.bounds.x + zone.bounds.w * 0.5, zone.bounds.y + zone.bounds.h * 0.5};
     const double luck = nearestViewerLuck(viewers, centre);
     const int section = sectionAt(at);
@@ -1326,18 +1348,11 @@ bool SpawnSystem::randomPointInZoneType(Rarity tier, Rng& rng, Vec2& out) const 
     };
 
     const int picked = static_cast<int>(rng.below(static_cast<std::uint32_t>(matches)));
-    Vec2 candidate = samplePointInRect(nth(picked).bounds, rng);
-    if (!inBorderBand(candidate)) {
-        out = candidate;
-        return true;
-    }
-    // Exactly one retry, and in a DIFFERENT rectangle -- resampling the same
-    // one is how a zone drawn along the map edge starves the boss pass.
+    if (sampleZonePoint(nth(picked), rng, out)) return true;
+    // Exactly one retry, and in a DIFFERENT zone -- resampling the same one is
+    // how a zone drawn along the map edge starves the boss pass.
     if (matches < 2) return false;
-    candidate = samplePointInRect(nth(picked == 0 ? 1 : 0).bounds, rng);
-    if (inBorderBand(candidate)) return false;
-    out = candidate;
-    return true;
+    return sampleZonePoint(nth(picked == 0 ? 1 : 0), rng, out);
 }
 
 bool SpawnSystem::randomPointInZoneTypeInSection(Rarity tier, int section, Rng& rng,
@@ -1362,18 +1377,20 @@ bool SpawnSystem::randomPointInZoneTypeInSection(Rarity tier, int section, Rng& 
     };
 
     for (int attempt = 0; attempt < kZoneSectionAttempts; ++attempt) {
-        const Rect& bounds = nth(static_cast<int>(rng.below(
-                                     static_cast<std::uint32_t>(matches))))
-                                 .bounds;
-        // The slice of the rectangle that lies in this section: a zone may
-        // straddle two, and the super is being placed for one of them.
-        const double minX = std::max(bounds.left(), sectionRect.left());
-        const double maxX = std::min(bounds.right(), sectionRect.right());
-        const double minY = std::max(bounds.top(), sectionRect.top());
-        const double maxY = std::min(bounds.bottom(), sectionRect.bottom());
+        const SpawnZone& zone =
+            nth(static_cast<int>(rng.below(static_cast<std::uint32_t>(matches))));
+        // The slice of the BOUNDING BOX that lies in this section: a zone may
+        // straddle two, and the super is being placed for one of them. The
+        // outline is then tested on the candidate, so the slice only has to be
+        // a superset of where the zone really is inside this section.
+        const double minX = std::max(zone.bounds.left(), sectionRect.left());
+        const double maxX = std::min(zone.bounds.right(), sectionRect.right());
+        const double minY = std::max(zone.bounds.top(), sectionRect.top());
+        const double maxY = std::min(zone.bounds.bottom(), sectionRect.bottom());
         if (minX >= maxX || minY >= maxY) continue;
 
         const Vec2 candidate = samplePointInRect(Rect{minX, minY, maxX - minX, maxY - minY}, rng);
+        if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
         if (inBorderBand(candidate)) continue;
         out = candidate;
         return true;

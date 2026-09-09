@@ -2220,8 +2220,21 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera,
         // player asks for, not a decoration.
         for (const MapElement& element : map_->elements()) {
             if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
-            const Vec2 at = camera.worldToScreen({element.bounds.x, element.bounds.y});
             ui::setFill(canvas, rarityColor(element.spawnTier), 0.25);
+            // The OUTLINE, not the bounding box. Filling the box would show a
+            // player a tier band covering ground it does not cover, which is
+            // the one thing this overlay exists to answer.
+            if (element.polygon.size() >= 3) {
+                canvas.beginPath();
+                moveToScreen(canvas, camera, element.polygon.front());
+                for (std::size_t i = 1; i < element.polygon.size(); ++i) {
+                    lineToScreen(canvas, camera, element.polygon[i]);
+                }
+                canvas.closePath();
+                canvas.fill();
+                continue;
+            }
+            const Vec2 at = camera.worldToScreen({element.bounds.x, element.bounds.y});
             canvas.fillRect(static_cast<float>(at.x), static_cast<float>(at.y),
                             static_cast<float>(element.bounds.w * zoom),
                             static_cast<float>(element.bounds.h * zoom));

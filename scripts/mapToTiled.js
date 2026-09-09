@@ -178,7 +178,21 @@ function diff(expected, actual, at = '') {
     const roundTrip = tiled.fromTiled(path.join(outDir, tiled.MAP_FILE));
     const grouped = tiled.OBJECT_LAYERS.flatMap(spec => legacy.elements.filter(e => e.type === spec.kind));
     const expected = {
-        elements: grouped.map(e => ({ ...e, properties: e.properties || {} })),
+        // A spawn zone comes back with an explicit outline even when it went in
+        // as a rectangle: the four corners of that rectangle, which is the same
+        // area said a different way.
+        elements: grouped.map(e => {
+            const out = { ...e, properties: e.properties || {} };
+            if (e.type === 'spawn' && !e.polygon) {
+                out.polygon = [
+                    { x: e.x, y: e.y },
+                    { x: e.x + e.width, y: e.y },
+                    { x: e.x + e.width, y: e.y + e.height },
+                    { x: e.x, y: e.y + e.height },
+                ];
+            }
+            return out;
+        }),
         wallGrid: legacy.wallGrid,
         customTileTypes: (legacy.customTileTypes || []).map(t => (
             t.textureSvg ? { ...t, textureSvg: tiled.fitSvgToTile(t.textureSvg) } : t)),

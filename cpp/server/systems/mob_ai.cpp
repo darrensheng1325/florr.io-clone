@@ -114,6 +114,8 @@ struct VolleyShot {
     Rarity rarity = Rarity::Common;
     std::uint32_t netId = 0;
     bool identified = false;
+    /// Whether touching the shot glitches a flower; see Projectile.
+    bool glitchInfecting = false;
 };
 
 /// The same archetype a petal's shot is built with -- a mob's projectile is
@@ -142,6 +144,7 @@ void spawnShot(World& world, const VolleyShot& shot) {
     projectile.rarity = shot.rarity;
     projectile.seekRange = shot.seekRange;
     projectile.seekCone = shot.seekCone;
+    projectile.glitchInfecting = shot.glitchInfecting;
     world.add<Projectile>(e, projectile);
 
     // Distance is the authority on range; the lifetime is the same limit
@@ -558,6 +561,10 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
     shot.seekCone = spec.seekCone;
     shot.petalIndex = spec.ammoPetalIndex;
     shot.rarity = type.rarity;
+    // The reference stamps the shooter's TYPE on every shot so the player
+    // hook can ask isGlitchInfectingType() of it later; the answer to that
+    // question is all this side needs.
+    shot.glitchInfecting = registry.mob(type.configIndex).glitchInfecting;
 
     ai.lastProjectileMillis = nowMillis;
     ++stats_.volleys;

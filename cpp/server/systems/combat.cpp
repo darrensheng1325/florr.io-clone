@@ -618,6 +618,21 @@ void applyMobContactKnockback(World& world, Entity player, Vec2 offset) {
     transform->position += direction * kMobContactKnockback;
 }
 
+/// A glitch mob's touch -- body or shot -- leaves the flower glitched.
+///
+/// Infection is a property of TOUCH, not of damage: playerState.ts sets it
+/// beside the contact bump and above the invulnerability branch, and
+/// server.ts's projectile hook sets it before the damage it may then refuse.
+/// So the callers place this outside the hit gates, and the mark lands on a
+/// flower that is bouncing off the mob during respawn protection too. It is
+/// never cleared here: the bit lives on PlayerVisuals until the body is
+/// despawned, which is what keeps a corpse glitched, and a respawn is a fresh
+/// entity. A plain field write, so it is safe inside a candidate loop that
+/// must not relocate archetype rows.
+void markGlitched(World& world, Entity player) {
+    if (PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(player)) visuals->glitched = true;
+}
+
 } // namespace
 
 void CombatSystem::applyPoison(World& world, Entity victim, Entity source, double perSecond,
@@ -1022,6 +1037,7 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
             source.poisonPerSecond = stats.poisonPerSecond;
             source.poisonDurationMillis = stats.poisonDurationMillis;
             source.rarity = type->rarity;
+            source.glitchInfecting = content.mob(type->configIndex).glitchInfecting;
         }
         if (const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(e)) {
             source.damage *= modifiers->damageScale;
@@ -1140,6 +1156,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
                 }
                 mobContactedPlayers_.push_back(victim);
                 applyMobContactKnockback(world, victim, offset);
+                if (source.glitchInfecting) markGlitched(world, victim);
             }
 
             if (!canHit(world, victim, source.attacker, nowMillis)) continue;
@@ -1320,6 +1337,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         const double damage = projectile->damage;
         const std::uint16_t petalIndex = projectile->petalConfigIndex;
         const Rarity rarity = projectile->rarity;
+        const bool infecting = projectile->glitchInfecting;
 
         grid.query(shot.realm, shot.position, shot.radius + shot.travelled + kBroadphasePad,
                    candidates_);
@@ -1339,6 +1357,13 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const double reach = shot.radius + body->radius;
             const double distanceSquared = offset.lengthSq();
             if (distanceSquared > reach * reach) continue;
+            // Above canHit() on purpose: a glitch shot marks the flower it
+            // touches whether or not the hit itself is refused, and a
+            // flower under respawn protection is not in `impacts_` at all.
+            if (infecting && world.has<PlayerTag>(victim) && !world.has<Dead>(victim) &&
+                canDamage(world, shot.entity, victim)) {
+                markGlitched(world, victim);
+            }
             if (!canHit(world, victim, shot.entity, nowMillis)) continue;
             impacts_.push_back({victim, offset, distanceSquared});
         }

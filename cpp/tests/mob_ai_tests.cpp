@@ -1196,6 +1196,28 @@ TEST(a_hornets_missile_inherits_the_hornets_size) {
     CHECK(sim.world.has<HitCooldowns>(shot));
 }
 
+TEST(a_glitch_volley_carries_the_infection_and_a_hornets_does_not) {
+    CHECK(contentReady());
+    // The stamp is what combat reads when the shot lands, so it has to come
+    // off the SHOOTER's config -- the ammunition petal says nothing about it.
+    {
+        Sim sim;
+        sim.spawnMob("glitch", kOrigin);
+        sim.spawnPlayer(kOrigin + Vec2{200, 0});
+        const Entity shot = fireAndCatch(sim);
+        CHECK(shot != NULL_ENTITY);
+        if (shot != NULL_ENTITY) CHECK(sim.world.get<Projectile>(shot).glitchInfecting);
+    }
+    {
+        Sim sim;
+        sim.spawnMob("hornet", kOrigin);
+        sim.spawnPlayer(kOrigin + Vec2{200, 0});
+        const Entity shot = fireAndCatch(sim);
+        CHECK(shot != NULL_ENTITY);
+        if (shot != NULL_ENTITY) CHECK(!sim.world.get<Projectile>(shot).glitchInfecting);
+    }
+}
+
 TEST(a_bigger_hornet_fires_a_bigger_missile) {
     CHECK(contentReady());
     Sim common;

@@ -40240,10 +40240,28 @@
      "class": "spawn",
      "x": 103.515625,
      "y": 6225.078125,
-     "width": 3830,
-     "height": 5860,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3830,
+       "y": 0
+      },
+      {
+       "x": 3830,
+       "y": 5860
+      },
+      {
+       "x": 0,
+       "y": 5860
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40258,10 +40276,28 @@
      "class": "spawn",
      "x": 963.515625,
      "y": 4215.078125,
-     "width": 3620,
-     "height": 2000,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3620,
+       "y": 0
+      },
+      {
+       "x": 3620,
+       "y": 2000
+      },
+      {
+       "x": 0,
+       "y": 2000
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40276,10 +40312,28 @@
      "class": "spawn",
      "x": 3783.515625,
      "y": 3515.078125,
-     "width": 1970,
-     "height": 3400,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1970,
+       "y": 0
+      },
+      {
+       "x": 1970,
+       "y": 3400
+      },
+      {
+       "x": 0,
+       "y": 3400
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40294,10 +40348,28 @@
      "class": "spawn",
      "x": 5693.515625,
      "y": 4425.078125,
-     "width": 950,
-     "height": 6710,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 950,
+       "y": 0
+      },
+      {
+       "x": 950,
+       "y": 6710
+      },
+      {
+       "x": 0,
+       "y": 6710
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40312,10 +40384,28 @@
      "class": "spawn",
      "x": 5293.515625,
      "y": 8385.078125,
-     "width": 780,
-     "height": 1980,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 780,
+       "y": 0
+      },
+      {
+       "x": 780,
+       "y": 1980
+      },
+      {
+       "x": 0,
+       "y": 1980
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40330,10 +40420,28 @@
      "class": "spawn",
      "x": 6563.515625,
      "y": 5505.078125,
-     "width": 1090,
-     "height": 5060,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1090,
+       "y": 0
+      },
+      {
+       "x": 1090,
+       "y": 5060
+      },
+      {
+       "x": 0,
+       "y": 5060
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40348,10 +40456,28 @@
      "class": "spawn",
      "x": 7479.765625,
      "y": 6185.078125,
-     "width": 1590,
-     "height": 4600,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1590,
+       "y": 0
+      },
+      {
+       "x": 1590,
+       "y": 4600
+      },
+      {
+       "x": 0,
+       "y": 4600
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40366,10 +40492,28 @@
      "class": "spawn",
      "x": 8839.765625,
      "y": 6245.078125,
-     "width": 1070,
-     "height": 2980,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1070,
+       "y": 0
+      },
+      {
+       "x": 1070,
+       "y": 2980
+      },
+      {
+       "x": 0,
+       "y": 2980
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40384,10 +40528,28 @@
      "class": "spawn",
      "x": 229.765625,
      "y": 12065.078125,
-     "width": 1750,
-     "height": 4580,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1750,
+       "y": 0
+      },
+      {
+       "x": 1750,
+       "y": 4580
+      },
+      {
+       "x": 0,
+       "y": 4580
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40402,10 +40564,28 @@
      "class": "spawn",
      "x": 1909.765625,
      "y": 13430.078125,
-     "width": 6160,
-     "height": 6100,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 6160,
+       "y": 0
+      },
+      {
+       "x": 6160,
+       "y": 6100
+      },
+      {
+       "x": 0,
+       "y": 6100
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40420,10 +40600,28 @@
      "class": "spawn",
      "x": 449.765625,
      "y": 16480.078125,
-     "width": 1900,
-     "height": 2780,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1900,
+       "y": 0
+      },
+      {
+       "x": 1900,
+       "y": 2780
+      },
+      {
+       "x": 0,
+       "y": 2780
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40438,10 +40636,28 @@
      "class": "spawn",
      "x": 7829.765625,
      "y": 14350.078125,
-     "width": 390,
-     "height": 380,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 390,
+       "y": 0
+      },
+      {
+       "x": 390,
+       "y": 380
+      },
+      {
+       "x": 0,
+       "y": 380
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40456,10 +40672,28 @@
      "class": "spawn",
      "x": 7489.765625,
      "y": 16180.078125,
-     "width": 6540,
-     "height": 3780,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 6540,
+       "y": 0
+      },
+      {
+       "x": 6540,
+       "y": 3780
+      },
+      {
+       "x": 0,
+       "y": 3780
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40474,10 +40708,28 @@
      "class": "spawn",
      "x": 11379.765625,
      "y": 16025.078125,
-     "width": 3430,
-     "height": 320,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3430,
+       "y": 0
+      },
+      {
+       "x": 3430,
+       "y": 320
+      },
+      {
+       "x": 0,
+       "y": 320
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40492,10 +40744,28 @@
      "class": "spawn",
      "x": 14299.765625,
      "y": 11895.078125,
-     "width": 810,
-     "height": 470,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 810,
+       "y": 0
+      },
+      {
+       "x": 810,
+       "y": 470
+      },
+      {
+       "x": 0,
+       "y": 470
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40510,10 +40780,28 @@
      "class": "spawn",
      "x": 15299.765625,
      "y": 11930.078125,
-     "width": 920,
-     "height": 600,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 920,
+       "y": 0
+      },
+      {
+       "x": 920,
+       "y": 600
+      },
+      {
+       "x": 0,
+       "y": 600
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40528,10 +40816,28 @@
      "class": "spawn",
      "x": 17069.765625,
      "y": 5440.078125,
-     "width": 2650,
-     "height": 6370,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2650,
+       "y": 0
+      },
+      {
+       "x": 2650,
+       "y": 6370
+      },
+      {
+       "x": 0,
+       "y": 6370
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40546,10 +40852,28 @@
      "class": "spawn",
      "x": 9279.765625,
      "y": 9750.078125,
-     "width": 2180,
-     "height": 1430,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2180,
+       "y": 0
+      },
+      {
+       "x": 2180,
+       "y": 1430
+      },
+      {
+       "x": 0,
+       "y": 1430
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40564,10 +40888,28 @@
      "class": "spawn",
      "x": 10139.765625,
      "y": 9170.078125,
-     "width": 7170,
-     "height": 1620,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 7170,
+       "y": 0
+      },
+      {
+       "x": 7170,
+       "y": 1620
+      },
+      {
+       "x": 0,
+       "y": 1620
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40582,10 +40924,28 @@
      "class": "spawn",
      "x": 12579.765625,
      "y": 10770.078125,
-     "width": 4010,
-     "height": 320,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 320
+      },
+      {
+       "x": 0,
+       "y": 320
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40600,10 +40960,28 @@
      "class": "spawn",
      "x": 13489.765625,
      "y": 11000.078125,
-     "width": 2550,
-     "height": 400,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2550,
+       "y": 0
+      },
+      {
+       "x": 2550,
+       "y": 400
+      },
+      {
+       "x": 0,
+       "y": 400
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40618,10 +40996,28 @@
      "class": "spawn",
      "x": 11939.765625,
      "y": 8090.078125,
-     "width": 3060,
-     "height": 1110,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3060,
+       "y": 0
+      },
+      {
+       "x": 3060,
+       "y": 1110
+      },
+      {
+       "x": 0,
+       "y": 1110
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40636,10 +41032,28 @@
      "class": "spawn",
      "x": 14039.765625,
      "y": 7460.078125,
-     "width": 420,
-     "height": 780,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 420,
+       "y": 0
+      },
+      {
+       "x": 420,
+       "y": 780
+      },
+      {
+       "x": 0,
+       "y": 780
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40654,10 +41068,28 @@
      "class": "spawn",
      "x": 14919.765625,
      "y": 8620.078125,
-     "width": 2200,
-     "height": 580,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2200,
+       "y": 0
+      },
+      {
+       "x": 2200,
+       "y": 580
+      },
+      {
+       "x": 0,
+       "y": 580
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40672,10 +41104,28 @@
      "class": "spawn",
      "x": 15579.765625,
      "y": 8280.078125,
-     "width": 1580,
-     "height": 390,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1580,
+       "y": 0
+      },
+      {
+       "x": 1580,
+       "y": 390
+      },
+      {
+       "x": 0,
+       "y": 390
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40690,10 +41140,28 @@
      "class": "spawn",
      "x": 16199.765625,
      "y": 1475.078125,
-     "width": 930,
-     "height": 6855,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 930,
+       "y": 0
+      },
+      {
+       "x": 930,
+       "y": 6855
+      },
+      {
+       "x": 0,
+       "y": 6855
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40708,10 +41176,28 @@
      "class": "spawn",
      "x": 15259.765625,
      "y": 245.078125,
-     "width": 1010,
-     "height": 7950,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1010,
+       "y": 0
+      },
+      {
+       "x": 1010,
+       "y": 7950
+      },
+      {
+       "x": 0,
+       "y": 7950
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40726,10 +41212,28 @@
      "class": "spawn",
      "x": 16219.765625,
      "y": 225.078125,
-     "width": 640,
-     "height": 1350,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 640,
+       "y": 0
+      },
+      {
+       "x": 640,
+       "y": 1350
+      },
+      {
+       "x": 0,
+       "y": 1350
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40744,10 +41248,28 @@
      "class": "spawn",
      "x": 16899.765625,
      "y": 2255.078125,
-     "width": 820,
-     "height": 3290,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 820,
+       "y": 0
+      },
+      {
+       "x": 820,
+       "y": 3290
+      },
+      {
+       "x": 0,
+       "y": 3290
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40762,10 +41284,28 @@
      "class": "spawn",
      "x": 14969.765625,
      "y": 195.078125,
-     "width": 430,
-     "height": 4390,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 430,
+       "y": 0
+      },
+      {
+       "x": 430,
+       "y": 4390
+      },
+      {
+       "x": 0,
+       "y": 4390
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40780,10 +41320,28 @@
      "class": "spawn",
      "x": 13789.765625,
      "y": 325.078125,
-     "width": 1200,
-     "height": 2710,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1200,
+       "y": 0
+      },
+      {
+       "x": 1200,
+       "y": 2710
+      },
+      {
+       "x": 0,
+       "y": 2710
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40798,10 +41356,28 @@
      "class": "spawn",
      "x": 10139.765625,
      "y": 255.078125,
-     "width": 5020,
-     "height": 750,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5020,
+       "y": 0
+      },
+      {
+       "x": 5020,
+       "y": 750
+      },
+      {
+       "x": 0,
+       "y": 750
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40816,10 +41392,28 @@
      "class": "spawn",
      "x": 10469.765625,
      "y": 925.078125,
-     "width": 2800,
-     "height": 2040,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2800,
+       "y": 0
+      },
+      {
+       "x": 2800,
+       "y": 2040
+      },
+      {
+       "x": 0,
+       "y": 2040
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40834,10 +41428,28 @@
      "class": "spawn",
      "x": 10499.765625,
      "y": 2865.078125,
-     "width": 3050,
-     "height": 600,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3050,
+       "y": 0
+      },
+      {
+       "x": 3050,
+       "y": 600
+      },
+      {
+       "x": 0,
+       "y": 600
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40852,10 +41464,28 @@
      "class": "spawn",
      "x": 14229.765625,
      "y": 3005.078125,
-     "width": 510,
-     "height": 660,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 510,
+       "y": 0
+      },
+      {
+       "x": 510,
+       "y": 660
+      },
+      {
+       "x": 0,
+       "y": 660
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40870,10 +41500,28 @@
      "class": "spawn",
      "x": 11049.765625,
      "y": 3275.078125,
-     "width": 3410,
-     "height": 970,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3410,
+       "y": 0
+      },
+      {
+       "x": 3410,
+       "y": 970
+      },
+      {
+       "x": 0,
+       "y": 970
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40888,10 +41536,28 @@
      "class": "spawn",
      "x": 11859.765625,
      "y": 4145.078125,
-     "width": 2290,
-     "height": 2790,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2290,
+       "y": 0
+      },
+      {
+       "x": 2290,
+       "y": 2790
+      },
+      {
+       "x": 0,
+       "y": 2790
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40906,10 +41572,28 @@
      "class": "spawn",
      "x": 12239.765625,
      "y": 6815.078125,
-     "width": 400,
-     "height": 710,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 400,
+       "y": 0
+      },
+      {
+       "x": 400,
+       "y": 710
+      },
+      {
+       "x": 0,
+       "y": 710
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40924,10 +41608,28 @@
      "class": "spawn",
      "x": 11699.765625,
      "y": 4405.078125,
-     "width": 240,
-     "height": 2260,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 240,
+       "y": 0
+      },
+      {
+       "x": 240,
+       "y": 2260
+      },
+      {
+       "x": 0,
+       "y": 2260
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40942,10 +41644,28 @@
      "class": "spawn",
      "x": 10969.765625,
      "y": 4465.078125,
-     "width": 730,
-     "height": 1860,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 730,
+       "y": 0
+      },
+      {
+       "x": 730,
+       "y": 1860
+      },
+      {
+       "x": 0,
+       "y": 1860
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40960,10 +41680,28 @@
      "class": "spawn",
      "x": 10179.765625,
      "y": 4135.078125,
-     "width": 840,
-     "height": 1940,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 840,
+       "y": 0
+      },
+      {
+       "x": 840,
+       "y": 1940
+      },
+      {
+       "x": 0,
+       "y": 1940
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40978,10 +41716,28 @@
      "class": "spawn",
      "x": 9729.765625,
      "y": 3585.078125,
-     "width": 800,
-     "height": 2790,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 800,
+       "y": 0
+      },
+      {
+       "x": 800,
+       "y": 2790
+      },
+      {
+       "x": 0,
+       "y": 2790
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -40996,10 +41752,28 @@
      "class": "spawn",
      "x": 7739.765625,
      "y": 2885.078125,
-     "width": 2220,
-     "height": 3070,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2220,
+       "y": 0
+      },
+      {
+       "x": 2220,
+       "y": 3070
+      },
+      {
+       "x": 0,
+       "y": 3070
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41014,10 +41788,28 @@
      "class": "spawn",
      "x": 9589.765625,
      "y": 5775.078125,
-     "width": 190,
-     "height": 320,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 190,
+       "y": 0
+      },
+      {
+       "x": 190,
+       "y": 320
+      },
+      {
+       "x": 0,
+       "y": 320
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41032,10 +41824,28 @@
      "class": "spawn",
      "x": 7179.765625,
      "y": 4285.078125,
-     "width": 380,
-     "height": 590,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 380,
+       "y": 0
+      },
+      {
+       "x": 380,
+       "y": 590
+      },
+      {
+       "x": 0,
+       "y": 590
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41050,10 +41860,28 @@
      "class": "spawn",
      "x": 5329.765625,
      "y": 3305.078125,
-     "width": 910,
-     "height": 380,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 910,
+       "y": 0
+      },
+      {
+       "x": 910,
+       "y": 380
+      },
+      {
+       "x": 0,
+       "y": 380
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41068,10 +41896,28 @@
      "class": "spawn",
      "x": 37489.453125,
      "y": 6865.078125,
-     "width": 2210,
-     "height": 6730,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2210,
+       "y": 0
+      },
+      {
+       "x": 2210,
+       "y": 6730
+      },
+      {
+       "x": 0,
+       "y": 6730
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41086,10 +41932,28 @@
      "class": "spawn",
      "x": 37499.453125,
      "y": 305.078125,
-     "width": 2300,
-     "height": 6690,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2300,
+       "y": 0
+      },
+      {
+       "x": 2300,
+       "y": 6690
+      },
+      {
+       "x": 0,
+       "y": 6690
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41104,10 +41968,28 @@
      "class": "spawn",
      "x": 35969.453125,
      "y": 175.078125,
-     "width": 1630,
-     "height": 3750,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1630,
+       "y": 0
+      },
+      {
+       "x": 1630,
+       "y": 3750
+      },
+      {
+       "x": 0,
+       "y": 3750
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41122,10 +42004,28 @@
      "class": "spawn",
      "x": 32839.453125,
      "y": 235.078125,
-     "width": 3170,
-     "height": 4740,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3170,
+       "y": 0
+      },
+      {
+       "x": 3170,
+       "y": 4740
+      },
+      {
+       "x": 0,
+       "y": 4740
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41140,10 +42040,28 @@
      "class": "spawn",
      "x": 32559.453125,
      "y": 4845.078125,
-     "width": 2920,
-     "height": 5150,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2920,
+       "y": 0
+      },
+      {
+       "x": 2920,
+       "y": 5150
+      },
+      {
+       "x": 0,
+       "y": 5150
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41158,10 +42076,28 @@
      "class": "spawn",
      "x": 32089.453125,
      "y": 9925.078125,
-     "width": 3050,
-     "height": 5060,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3050,
+       "y": 0
+      },
+      {
+       "x": 3050,
+       "y": 5060
+      },
+      {
+       "x": 0,
+       "y": 5060
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41176,10 +42112,28 @@
      "class": "spawn",
      "x": 30459.453125,
      "y": 10855.078125,
-     "width": 3160,
-     "height": 4800,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3160,
+       "y": 0
+      },
+      {
+       "x": 3160,
+       "y": 4800
+      },
+      {
+       "x": 0,
+       "y": 4800
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41194,10 +42148,28 @@
      "class": "spawn",
      "x": 24899.453125,
      "y": 10325.078125,
-     "width": 5770,
-     "height": 3270,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5770,
+       "y": 0
+      },
+      {
+       "x": 5770,
+       "y": 3270
+      },
+      {
+       "x": 0,
+       "y": 3270
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41212,10 +42184,28 @@
      "class": "spawn",
      "x": 25749.453125,
      "y": 13345.078125,
-     "width": 4010,
-     "height": 4520,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 4520
+      },
+      {
+       "x": 0,
+       "y": 4520
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41230,10 +42220,28 @@
      "class": "spawn",
      "x": 20399.453125,
      "y": 15305.078125,
-     "width": 8620,
-     "height": 4320,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 8620,
+       "y": 0
+      },
+      {
+       "x": 8620,
+       "y": 4320
+      },
+      {
+       "x": 0,
+       "y": 4320
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41248,10 +42256,28 @@
      "class": "spawn",
      "x": 20629.453125,
      "y": 6635.078125,
-     "width": 3040,
-     "height": 9050,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3040,
+       "y": 0
+      },
+      {
+       "x": 3040,
+       "y": 9050
+      },
+      {
+       "x": 0,
+       "y": 9050
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41266,10 +42292,28 @@
      "class": "spawn",
      "x": 19699.453125,
      "y": 6855.078125,
-     "width": 1390,
-     "height": 1580,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1390,
+       "y": 0
+      },
+      {
+       "x": 1390,
+       "y": 1580
+      },
+      {
+       "x": 0,
+       "y": 1580
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41284,10 +42328,28 @@
      "class": "spawn",
      "x": 20629.453125,
      "y": 4515.078125,
-     "width": 2440,
-     "height": 2180,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2440,
+       "y": 0
+      },
+      {
+       "x": 2440,
+       "y": 2180
+      },
+      {
+       "x": 0,
+       "y": 2180
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41302,10 +42364,28 @@
      "class": "spawn",
      "x": 20619.453125,
      "y": 145.078125,
-     "width": 2370,
-     "height": 4430,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2370,
+       "y": 0
+      },
+      {
+       "x": 2370,
+       "y": 4430
+      },
+      {
+       "x": 0,
+       "y": 4430
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41320,10 +42400,28 @@
      "class": "spawn",
      "x": 31549.453125,
      "y": 1505.078125,
-     "width": 1200,
-     "height": 2680,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1200,
+       "y": 0
+      },
+      {
+       "x": 1200,
+       "y": 2680
+      },
+      {
+       "x": 0,
+       "y": 2680
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41338,10 +42436,28 @@
      "class": "spawn",
      "x": 23329.453125,
      "y": 10005.078125,
-     "width": 1040,
-     "height": 4000,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1040,
+       "y": 0
+      },
+      {
+       "x": 1040,
+       "y": 4000
+      },
+      {
+       "x": 0,
+       "y": 4000
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41356,10 +42472,28 @@
      "class": "spawn",
      "x": 26965.46875,
      "y": 32625.078125,
-     "width": 5220,
-     "height": 4610,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5220,
+       "y": 0
+      },
+      {
+       "x": 5220,
+       "y": 4610
+      },
+      {
+       "x": 0,
+       "y": 4610
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41374,10 +42508,28 @@
      "class": "spawn",
      "x": 32185.46875,
      "y": 34615.078125,
-     "width": 300,
-     "height": 2620,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 300,
+       "y": 0
+      },
+      {
+       "x": 300,
+       "y": 2620
+      },
+      {
+       "x": 0,
+       "y": 2620
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41396,6 +42548,24 @@
      "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41410,10 +42580,28 @@
      "class": "spawn",
      "x": 22165.46875,
      "y": 32325.078125,
-     "width": 4850,
-     "height": 4730,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4850,
+       "y": 0
+      },
+      {
+       "x": 4850,
+       "y": 4730
+      },
+      {
+       "x": 0,
+       "y": 4730
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41428,10 +42616,28 @@
      "class": "spawn",
      "x": 32245.46875,
      "y": 31470.078125,
-     "width": 5790,
-     "height": 6420,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5790,
+       "y": 0
+      },
+      {
+       "x": 5790,
+       "y": 6420
+      },
+      {
+       "x": 0,
+       "y": 6420
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41446,10 +42652,28 @@
      "class": "spawn",
      "x": 22695.46875,
      "y": 28460.078125,
-     "width": 4380,
-     "height": 3870,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4380,
+       "y": 0
+      },
+      {
+       "x": 4380,
+       "y": 3870
+      },
+      {
+       "x": 0,
+       "y": 3870
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41464,10 +42688,28 @@
      "class": "spawn",
      "x": 26925.46875,
      "y": 27375.078125,
-     "width": 5200,
-     "height": 5120,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5200,
+       "y": 0
+      },
+      {
+       "x": 5200,
+       "y": 5120
+      },
+      {
+       "x": 0,
+       "y": 5120
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41482,10 +42724,28 @@
      "class": "spawn",
      "x": 28605.46875,
      "y": 26935.078125,
-     "width": 1790,
-     "height": 720,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1790,
+       "y": 0
+      },
+      {
+       "x": 1790,
+       "y": 720
+      },
+      {
+       "x": 0,
+       "y": 720
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41500,10 +42760,28 @@
      "class": "spawn",
      "x": 24065.46875,
      "y": 24290.078125,
-     "width": 5120,
-     "height": 3150,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5120,
+       "y": 0
+      },
+      {
+       "x": 5120,
+       "y": 3150
+      },
+      {
+       "x": 0,
+       "y": 3150
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41518,10 +42796,28 @@
      "class": "spawn",
      "x": 29005.46875,
      "y": 26000.078125,
-     "width": 510,
-     "height": 470,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 510,
+       "y": 0
+      },
+      {
+       "x": 510,
+       "y": 470
+      },
+      {
+       "x": 0,
+       "y": 470
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41536,10 +42832,28 @@
      "class": "spawn",
      "x": 25135.46875,
      "y": 27220.078125,
-     "width": 2160,
-     "height": 770,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2160,
+       "y": 0
+      },
+      {
+       "x": 2160,
+       "y": 770
+      },
+      {
+       "x": 0,
+       "y": 770
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41554,10 +42868,28 @@
      "class": "spawn",
      "x": 24785.46875,
      "y": 23350.078125,
-     "width": 4390,
-     "height": 1150,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4390,
+       "y": 0
+      },
+      {
+       "x": 4390,
+       "y": 1150
+      },
+      {
+       "x": 0,
+       "y": 1150
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41572,10 +42904,28 @@
      "class": "spawn",
      "x": 26055.46875,
      "y": 22960.078125,
-     "width": 2270,
-     "height": 430,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2270,
+       "y": 0
+      },
+      {
+       "x": 2270,
+       "y": 430
+      },
+      {
+       "x": 0,
+       "y": 430
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41590,10 +42940,28 @@
      "class": "spawn",
      "x": 26615.46875,
      "y": 22790.078125,
-     "width": 1090,
-     "height": 250,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1090,
+       "y": 0
+      },
+      {
+       "x": 1090,
+       "y": 250
+      },
+      {
+       "x": 0,
+       "y": 250
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41608,10 +42976,28 @@
      "class": "spawn",
      "x": 1099.453125,
      "y": 42330.078125,
-     "width": 850,
-     "height": 8900,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 850,
+       "y": 0
+      },
+      {
+       "x": 850,
+       "y": 8900
+      },
+      {
+       "x": 0,
+       "y": 8900
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41626,10 +43012,28 @@
      "class": "spawn",
      "x": 1849.453125,
      "y": 44930.078125,
-     "width": 4300,
-     "height": 760,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4300,
+       "y": 0
+      },
+      {
+       "x": 4300,
+       "y": 760
+      },
+      {
+       "x": 0,
+       "y": 760
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41644,10 +43048,28 @@
      "class": "spawn",
      "x": 5919.453125,
      "y": 44785.078125,
-     "width": 8590,
-     "height": 990,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 8590,
+       "y": 0
+      },
+      {
+       "x": 8590,
+       "y": 990
+      },
+      {
+       "x": 0,
+       "y": 990
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41662,10 +43084,28 @@
      "class": "spawn",
      "x": 9509.453125,
      "y": 41845.078125,
-     "width": 1010,
-     "height": 3070,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1010,
+       "y": 0
+      },
+      {
+       "x": 1010,
+       "y": 3070
+      },
+      {
+       "x": 0,
+       "y": 3070
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41680,10 +43120,28 @@
      "class": "spawn",
      "x": 7029.453125,
      "y": 45610.078125,
-     "width": 980,
-     "height": 3660,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 980,
+       "y": 0
+      },
+      {
+       "x": 980,
+       "y": 3660
+      },
+      {
+       "x": 0,
+       "y": 3660
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41698,10 +43156,28 @@
      "class": "spawn",
      "x": 4799.453125,
      "y": 48490.078125,
-     "width": 2360,
-     "height": 780,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2360,
+       "y": 0
+      },
+      {
+       "x": 2360,
+       "y": 780
+      },
+      {
+       "x": 0,
+       "y": 780
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41716,10 +43192,28 @@
      "class": "spawn",
      "x": 7899.453125,
      "y": 48540.078125,
-     "width": 2480,
-     "height": 730,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2480,
+       "y": 0
+      },
+      {
+       "x": 2480,
+       "y": 730
+      },
+      {
+       "x": 0,
+       "y": 730
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41734,10 +43228,28 @@
      "class": "spawn",
      "x": 4949.453125,
      "y": 49165.078125,
-     "width": 830,
-     "height": 3080,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 830,
+       "y": 0
+      },
+      {
+       "x": 830,
+       "y": 3080
+      },
+      {
+       "x": 0,
+       "y": 3080
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41752,10 +43264,28 @@
      "class": "spawn",
      "x": 9579.453125,
      "y": 49255.078125,
-     "width": 730,
-     "height": 3000,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 730,
+       "y": 0
+      },
+      {
+       "x": 730,
+       "y": 3000
+      },
+      {
+       "x": 0,
+       "y": 3000
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41770,10 +43300,28 @@
      "class": "spawn",
      "x": 5699.453125,
      "y": 51545.078125,
-     "width": 4010,
-     "height": 730,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 730
+      },
+      {
+       "x": 0,
+       "y": 730
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41788,10 +43336,28 @@
      "class": "spawn",
      "x": 7119.453125,
      "y": 52205.078125,
-     "width": 740,
-     "height": 1830,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 740,
+       "y": 0
+      },
+      {
+       "x": 740,
+       "y": 1830
+      },
+      {
+       "x": 0,
+       "y": 1830
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41806,10 +43372,28 @@
      "class": "spawn",
      "x": 4499.453125,
      "y": 53905.078125,
-     "width": 2680,
-     "height": 760,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2680,
+       "y": 0
+      },
+      {
+       "x": 2680,
+       "y": 760
+      },
+      {
+       "x": 0,
+       "y": 760
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41824,10 +43408,28 @@
      "class": "spawn",
      "x": 4549.453125,
      "y": 54675.078125,
-     "width": 40,
-     "height": 230,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 40,
+       "y": 0
+      },
+      {
+       "x": 40,
+       "y": 230
+      },
+      {
+       "x": 0,
+       "y": 230
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41842,10 +43444,28 @@
      "class": "spawn",
      "x": 4399.453125,
      "y": 54585.078125,
-     "width": 820,
-     "height": 3190,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 820,
+       "y": 0
+      },
+      {
+       "x": 820,
+       "y": 3190
+      },
+      {
+       "x": 0,
+       "y": 3190
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41860,10 +43480,28 @@
      "class": "spawn",
      "x": 13709.453125,
      "y": 45690.078125,
-     "width": 750,
-     "height": 2090,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 750,
+       "y": 0
+      },
+      {
+       "x": 750,
+       "y": 2090
+      },
+      {
+       "x": 0,
+       "y": 2090
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41878,10 +43516,28 @@
      "class": "spawn",
      "x": 12209.453125,
      "y": 46410.078125,
-     "width": 1740,
-     "height": 760,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1740,
+       "y": 0
+      },
+      {
+       "x": 1740,
+       "y": 760
+      },
+      {
+       "x": 0,
+       "y": 760
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41896,10 +43552,28 @@
      "class": "spawn",
      "x": 14369.453125,
      "y": 46430.078125,
-     "width": 980,
-     "height": 840,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 980,
+       "y": 0
+      },
+      {
+       "x": 980,
+       "y": 840
+      },
+      {
+       "x": 0,
+       "y": 840
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41914,10 +43588,28 @@
      "class": "spawn",
      "x": 14559.453125,
      "y": 47230.078125,
-     "width": 3550,
-     "height": 830,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3550,
+       "y": 0
+      },
+      {
+       "x": 3550,
+       "y": 830
+      },
+      {
+       "x": 0,
+       "y": 830
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41932,10 +43624,28 @@
      "class": "spawn",
      "x": 12219.453125,
      "y": 47075.078125,
-     "width": 800,
-     "height": 1840,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 800,
+       "y": 0
+      },
+      {
+       "x": 800,
+       "y": 1840
+      },
+      {
+       "x": 0,
+       "y": 1840
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41950,10 +43660,28 @@
      "class": "spawn",
      "x": 14639.453125,
      "y": 48005.078125,
-     "width": 740,
-     "height": 1170,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 740,
+       "y": 0
+      },
+      {
+       "x": 740,
+       "y": 1170
+      },
+      {
+       "x": 0,
+       "y": 1170
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41968,10 +43696,28 @@
      "class": "spawn",
      "x": 12239.453125,
      "y": 48815.078125,
-     "width": 3230,
-     "height": 1060,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3230,
+       "y": 0
+      },
+      {
+       "x": 3230,
+       "y": 1060
+      },
+      {
+       "x": 0,
+       "y": 1060
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -41986,10 +43732,28 @@
      "class": "spawn",
      "x": 6989.453125,
      "y": 53805.078125,
-     "width": 4390,
-     "height": 1010,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4390,
+       "y": 0
+      },
+      {
+       "x": 4390,
+       "y": 1010
+      },
+      {
+       "x": 0,
+       "y": 1010
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42004,10 +43768,28 @@
      "class": "spawn",
      "x": 13719.453125,
      "y": 49745.078125,
-     "width": 850,
-     "height": 2810,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 850,
+       "y": 0
+      },
+      {
+       "x": 850,
+       "y": 2810
+      },
+      {
+       "x": 0,
+       "y": 2810
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42022,10 +43804,28 @@
      "class": "spawn",
      "x": 121.25,
      "y": 19897.578125,
-     "width": 6600,
-     "height": 3130,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 6600,
+       "y": 0
+      },
+      {
+       "x": 6600,
+       "y": 3130
+      },
+      {
+       "x": 0,
+       "y": 3130
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42040,10 +43840,28 @@
      "class": "spawn",
      "x": 8951.25,
      "y": 22807.578125,
-     "width": 3870,
-     "height": 7520,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3870,
+       "y": 0
+      },
+      {
+       "x": 3870,
+       "y": 7520
+      },
+      {
+       "x": 0,
+       "y": 7520
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42058,10 +43876,28 @@
      "class": "spawn",
      "x": 14381.25,
      "y": 20107.578125,
-     "width": 5580,
-     "height": 2900,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5580,
+       "y": 0
+      },
+      {
+       "x": 5580,
+       "y": 2900
+      },
+      {
+       "x": 0,
+       "y": 2900
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42076,10 +43912,28 @@
      "class": "spawn",
      "x": 17791.25,
      "y": 22642.578125,
-     "width": 2320,
-     "height": 3900,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2320,
+       "y": 0
+      },
+      {
+       "x": 2320,
+       "y": 3900
+      },
+      {
+       "x": 0,
+       "y": 3900
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42094,10 +43948,28 @@
      "class": "spawn",
      "x": 16081.25,
      "y": 24732.578125,
-     "width": 4180,
-     "height": 2090,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4180,
+       "y": 0
+      },
+      {
+       "x": 4180,
+       "y": 2090
+      },
+      {
+       "x": 0,
+       "y": 2090
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42112,10 +43984,28 @@
      "class": "spawn",
      "x": 16046.25,
      "y": 26822.578125,
-     "width": 3910,
-     "height": 3400,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3910,
+       "y": 0
+      },
+      {
+       "x": 3910,
+       "y": 3400
+      },
+      {
+       "x": 0,
+       "y": 3400
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42130,10 +44020,28 @@
      "class": "spawn",
      "x": 451.25,
      "y": 22907.578125,
-     "width": 4030,
-     "height": 6210,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4030,
+       "y": 0
+      },
+      {
+       "x": 4030,
+       "y": 6210
+      },
+      {
+       "x": 0,
+       "y": 6210
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42148,10 +44056,28 @@
      "class": "spawn",
      "x": 111.25,
      "y": 28867.578125,
-     "width": 3650,
-     "height": 8710,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3650,
+       "y": 0
+      },
+      {
+       "x": 3650,
+       "y": 8710
+      },
+      {
+       "x": 0,
+       "y": 8710
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42166,10 +44092,28 @@
      "class": "spawn",
      "x": 13746.25,
      "y": 28672.578125,
-     "width": 3060,
-     "height": 3040,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3060,
+       "y": 0
+      },
+      {
+       "x": 3060,
+       "y": 3040
+      },
+      {
+       "x": 0,
+       "y": 3040
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42184,10 +44128,28 @@
      "class": "spawn",
      "x": 15466.25,
      "y": 28192.578125,
-     "width": 690,
-     "height": 680,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 690,
+       "y": 0
+      },
+      {
+       "x": 690,
+       "y": 680
+      },
+      {
+       "x": 0,
+       "y": 680
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42202,10 +44164,28 @@
      "class": "spawn",
      "x": 16676.25,
      "y": 30112.578125,
-     "width": 3270,
-     "height": 2570,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3270,
+       "y": 0
+      },
+      {
+       "x": 3270,
+       "y": 2570
+      },
+      {
+       "x": 0,
+       "y": 2570
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42220,10 +44200,28 @@
      "class": "spawn",
      "x": 17576.25,
      "y": 32542.578125,
-     "width": 2350,
-     "height": 5940,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2350,
+       "y": 0
+      },
+      {
+       "x": 2350,
+       "y": 5940
+      },
+      {
+       "x": 0,
+       "y": 5940
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42238,10 +44236,28 @@
      "class": "spawn",
      "x": 91.25,
      "y": 35132.578125,
-     "width": 4950,
-     "height": 4790,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4950,
+       "y": 0
+      },
+      {
+       "x": 4950,
+       "y": 4790
+      },
+      {
+       "x": 0,
+       "y": 4790
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42256,10 +44272,28 @@
      "class": "spawn",
      "x": 4691.25,
      "y": 35847.578125,
-     "width": 5750,
-     "height": 4240,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5750,
+       "y": 0
+      },
+      {
+       "x": 5750,
+       "y": 4240
+      },
+      {
+       "x": 0,
+       "y": 4240
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42274,10 +44308,28 @@
      "class": "spawn",
      "x": 9631.25,
      "y": 36377.578125,
-     "width": 1540,
-     "height": 3700,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1540,
+       "y": 0
+      },
+      {
+       "x": 1540,
+       "y": 3700
+      },
+      {
+       "x": 0,
+       "y": 3700
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42292,10 +44344,28 @@
      "class": "spawn",
      "x": 10501.25,
      "y": 37047.578125,
-     "width": 1610,
-     "height": 2930,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1610,
+       "y": 0
+      },
+      {
+       "x": 1610,
+       "y": 2930
+      },
+      {
+       "x": 0,
+       "y": 2930
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42310,10 +44380,28 @@
      "class": "spawn",
      "x": 11771.25,
      "y": 38397.578125,
-     "width": 4200,
-     "height": 1530,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4200,
+       "y": 0
+      },
+      {
+       "x": 4200,
+       "y": 1530
+      },
+      {
+       "x": 0,
+       "y": 1530
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42328,10 +44416,28 @@
      "class": "spawn",
      "x": 12741.25,
      "y": 37817.578125,
-     "width": 6965,
-     "height": 2160,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 6965,
+       "y": 0
+      },
+      {
+       "x": 6965,
+       "y": 2160
+      },
+      {
+       "x": 0,
+       "y": 2160
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42350,6 +44456,24 @@
      "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42364,10 +44488,28 @@
      "class": "spawn",
      "x": 13406.25,
      "y": 37417.578125,
-     "width": 1670,
-     "height": 510,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1670,
+       "y": 0
+      },
+      {
+       "x": 1670,
+       "y": 510
+      },
+      {
+       "x": 0,
+       "y": 510
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42382,10 +44524,28 @@
      "class": "spawn",
      "x": 12071.25,
      "y": 30997.578125,
-     "width": 4010,
-     "height": 3120,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 0
+      },
+      {
+       "x": 4010,
+       "y": 3120
+      },
+      {
+       "x": 0,
+       "y": 3120
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42400,10 +44560,28 @@
      "class": "spawn",
      "x": 10771.25,
      "y": 32997.578125,
-     "width": 2290,
-     "height": 3730,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2290,
+       "y": 0
+      },
+      {
+       "x": 2290,
+       "y": 3730
+      },
+      {
+       "x": 0,
+       "y": 3730
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42418,10 +44596,28 @@
      "class": "spawn",
      "x": 11861.25,
      "y": 32497.578125,
-     "width": 1830,
-     "height": 2080,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1830,
+       "y": 0
+      },
+      {
+       "x": 1830,
+       "y": 2080
+      },
+      {
+       "x": 0,
+       "y": 2080
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42436,10 +44632,28 @@
      "class": "spawn",
      "x": 12491.25,
      "y": 35587.578125,
-     "width": 4470,
-     "height": 1960,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4470,
+       "y": 0
+      },
+      {
+       "x": 4470,
+       "y": 1960
+      },
+      {
+       "x": 0,
+       "y": 1960
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42454,10 +44668,28 @@
      "class": "spawn",
      "x": 12121.25,
      "y": 36557.578125,
-     "width": 640,
-     "height": 1050,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 640,
+       "y": 0
+      },
+      {
+       "x": 640,
+       "y": 1050
+      },
+      {
+       "x": 0,
+       "y": 1050
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42472,10 +44704,28 @@
      "class": "spawn",
      "x": 12981.25,
      "y": 34887.578125,
-     "width": 660,
-     "height": 890,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 660,
+       "y": 0
+      },
+      {
+       "x": 660,
+       "y": 890
+      },
+      {
+       "x": 0,
+       "y": 890
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42490,10 +44740,28 @@
      "class": "spawn",
      "x": 12841.25,
      "y": 34517.578125,
-     "width": 530,
-     "height": 560,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 530,
+       "y": 0
+      },
+      {
+       "x": 530,
+       "y": 560
+      },
+      {
+       "x": 0,
+       "y": 560
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42508,10 +44776,28 @@
      "class": "spawn",
      "x": 14101.25,
      "y": 34587.578125,
-     "width": 3330,
-     "height": 2410,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3330,
+       "y": 0
+      },
+      {
+       "x": 3330,
+       "y": 2410
+      },
+      {
+       "x": 0,
+       "y": 2410
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42526,10 +44812,28 @@
      "class": "spawn",
      "x": 16381.25,
      "y": 32447.578125,
-     "width": 1060,
-     "height": 2250,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1060,
+       "y": 0
+      },
+      {
+       "x": 1060,
+       "y": 2250
+      },
+      {
+       "x": 0,
+       "y": 2250
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42544,10 +44848,28 @@
      "class": "spawn",
      "x": 26049.453125,
      "y": 50025.078125,
-     "width": 6690,
-     "height": 3700,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 6690,
+       "y": 0
+      },
+      {
+       "x": 6690,
+       "y": 3700
+      },
+      {
+       "x": 0,
+       "y": 3700
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42562,10 +44884,28 @@
      "class": "spawn",
      "x": 22939.453125,
      "y": 55475.078125,
-     "width": 4200,
-     "height": 3440,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4200,
+       "y": 0
+      },
+      {
+       "x": 4200,
+       "y": 3440
+      },
+      {
+       "x": 0,
+       "y": 3440
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42580,10 +44920,28 @@
      "class": "spawn",
      "x": 31159.453125,
      "y": 40105.078125,
-     "width": 3210,
-     "height": 2680,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3210,
+       "y": 0
+      },
+      {
+       "x": 3210,
+       "y": 2680
+      },
+      {
+       "x": 0,
+       "y": 2680
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42598,10 +44956,28 @@
      "class": "spawn",
      "x": 34169.453125,
      "y": 40065.078125,
-     "width": 1900,
-     "height": 910,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1900,
+       "y": 0
+      },
+      {
+       "x": 1900,
+       "y": 910
+      },
+      {
+       "x": 0,
+       "y": 910
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42616,10 +44992,28 @@
      "class": "spawn",
      "x": 35389.453125,
      "y": 40825.078125,
-     "width": 720,
-     "height": 5100,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 720,
+       "y": 0
+      },
+      {
+       "x": 720,
+       "y": 5100
+      },
+      {
+       "x": 0,
+       "y": 5100
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42634,10 +45028,28 @@
      "class": "spawn",
      "x": 36069.453125,
      "y": 45235.078125,
-     "width": 3930,
-     "height": 720,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3930,
+       "y": 0
+      },
+      {
+       "x": 3930,
+       "y": 720
+      },
+      {
+       "x": 0,
+       "y": 720
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42652,10 +45064,28 @@
      "class": "spawn",
      "x": 20079.453125,
      "y": 40165.078125,
-     "width": 7100,
-     "height": 4790,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 7100,
+       "y": 0
+      },
+      {
+       "x": 7100,
+       "y": 4790
+      },
+      {
+       "x": 0,
+       "y": 4790
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42670,10 +45100,28 @@
      "class": "spawn",
      "x": 37979.453125,
      "y": 53575.078125,
-     "width": 2010,
-     "height": 6190,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2010,
+       "y": 0
+      },
+      {
+       "x": 2010,
+       "y": 6190
+      },
+      {
+       "x": 0,
+       "y": 6190
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42688,10 +45136,28 @@
      "class": "spawn",
      "x": 29989.453125,
      "y": 56095.078125,
-     "width": 4260,
-     "height": 2690,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4260,
+       "y": 0
+      },
+      {
+       "x": 4260,
+       "y": 2690
+      },
+      {
+       "x": 0,
+       "y": 2690
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42710,6 +45176,24 @@
      "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 0,
+       "y": 0
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42724,10 +45208,28 @@
      "class": "spawn",
      "x": 28489.453125,
      "y": 145.078125,
-     "width": 3750,
-     "height": 5270,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3750,
+       "y": 0
+      },
+      {
+       "x": 3750,
+       "y": 5270
+      },
+      {
+       "x": 0,
+       "y": 5270
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42742,10 +45244,28 @@
      "class": "spawn",
      "x": 169.453125,
      "y": 245.078125,
-     "width": 5940,
-     "height": 3120,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5940,
+       "y": 0
+      },
+      {
+       "x": 5940,
+       "y": 3120
+      },
+      {
+       "x": 0,
+       "y": 3120
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42760,10 +45280,28 @@
      "class": "spawn",
      "x": 5929.453125,
      "y": 185.078125,
-     "width": 3640,
-     "height": 2790,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3640,
+       "y": 0
+      },
+      {
+       "x": 3640,
+       "y": 2790
+      },
+      {
+       "x": 0,
+       "y": 2790
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42778,10 +45316,28 @@
      "class": "spawn",
      "x": 6039.453125,
      "y": 2795.078125,
-     "width": 2010,
-     "height": 1180,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2010,
+       "y": 0
+      },
+      {
+       "x": 2010,
+       "y": 1180
+      },
+      {
+       "x": 0,
+       "y": 1180
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42796,10 +45352,28 @@
      "class": "spawn",
      "x": 6729.453125,
      "y": 3775.078125,
-     "width": 1240,
-     "height": 1350,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1240,
+       "y": 0
+      },
+      {
+       "x": 1240,
+       "y": 1350
+      },
+      {
+       "x": 0,
+       "y": 1350
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42814,10 +45388,28 @@
      "class": "spawn",
      "x": 22909.453125,
      "y": 175.078125,
-     "width": 3090,
-     "height": 1400,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 3090,
+       "y": 0
+      },
+      {
+       "x": 3090,
+       "y": 1400
+      },
+      {
+       "x": 0,
+       "y": 1400
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42832,10 +45424,28 @@
      "class": "spawn",
      "x": 23859.453125,
      "y": 1385.078125,
-     "width": 2070,
-     "height": 1790,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2070,
+       "y": 0
+      },
+      {
+       "x": 2070,
+       "y": 1790
+      },
+      {
+       "x": 0,
+       "y": 1790
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42850,10 +45460,28 @@
      "class": "spawn",
      "x": 25859.453125,
      "y": 345.078125,
-     "width": 2670,
-     "height": 1710,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2670,
+       "y": 0
+      },
+      {
+       "x": 2670,
+       "y": 1710
+      },
+      {
+       "x": 0,
+       "y": 1710
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42868,10 +45496,28 @@
      "class": "spawn",
      "x": 23949.453125,
      "y": 3105.078125,
-     "width": 4770,
-     "height": 2660,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4770,
+       "y": 0
+      },
+      {
+       "x": 4770,
+       "y": 2660
+      },
+      {
+       "x": 0,
+       "y": 2660
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42886,10 +45532,28 @@
      "class": "spawn",
      "x": 25879.453125,
      "y": 1895.078125,
-     "width": 2830,
-     "height": 1350,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2830,
+       "y": 0
+      },
+      {
+       "x": 2830,
+       "y": 1350
+      },
+      {
+       "x": 0,
+       "y": 1350
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42904,10 +45568,28 @@
      "class": "spawn",
      "x": 10849.453125,
      "y": 52185.078125,
-     "width": 4090,
-     "height": 3350,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4090,
+       "y": 0
+      },
+      {
+       "x": 4090,
+       "y": 3350
+      },
+      {
+       "x": 0,
+       "y": 3350
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42922,10 +45604,28 @@
      "class": "spawn",
      "x": 14819.453125,
      "y": 52325.078125,
-     "width": 2550,
-     "height": 6710,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2550,
+       "y": 0
+      },
+      {
+       "x": 2550,
+       "y": 6710
+      },
+      {
+       "x": 0,
+       "y": 6710
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",
@@ -42940,10 +45640,28 @@
      "class": "spawn",
      "x": 10919.453125,
      "y": 55395.078125,
-     "width": 4060,
-     "height": 3510,
+     "width": 0,
+     "height": 0,
      "rotation": 0,
      "visible": true,
+     "polygon": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 4060,
+       "y": 0
+      },
+      {
+       "x": 4060,
+       "y": 3510
+      },
+      {
+       "x": 0,
+       "y": 3510
+      }
+     ],
      "properties": [
       {
        "name": "spawnType",

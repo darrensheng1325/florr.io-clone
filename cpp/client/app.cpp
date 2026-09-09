@@ -2579,6 +2579,21 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
             }
             const Rarity tier = element.hasSpawnTier ? element.spawnTier : Rarity::Common;
             setFill(map, kMinimapSpawnColors[static_cast<std::size_t>(rarityIndex(tier))], 0.4);
+            // The zone's outline, so the minimap shows the band the spawner
+            // actually uses rather than the box around it. The bounding box
+            // above is still what culls: it is a superset of the outline.
+            if (element.polygon.size() >= 3) {
+                map.beginPath();
+                for (std::size_t i = 0; i < element.polygon.size(); ++i) {
+                    const float px = static_cast<float>((element.polygon[i].x - scrollX) * scale);
+                    const float py = static_cast<float>((element.polygon[i].y - scrollY) * scale);
+                    if (i == 0) map.moveTo(px, py);
+                    else map.lineTo(px, py);
+                }
+                map.closePath();
+                map.fill();
+                continue;
+            }
             map.fillRect(static_cast<float>(left), static_cast<float>(top),
                          static_cast<float>(w), static_cast<float>(h));
         }

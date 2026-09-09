@@ -227,6 +227,10 @@ private:
         bool isMobBody = false;
         bool isPet = false;
         bool isPlayerBody = false;
+        /// A glitch-family mob body: its touch marks the flower (see
+        /// markGlitched). Resolved from the config in the gather, where the
+        /// registry is at hand.
+        bool glitchInfecting = false;
         /// The space the body is in; the broadphase is asked about this one.
         Realm realm = Realm::Overworld;
     };

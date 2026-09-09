@@ -51,6 +51,10 @@ bool sameElement(const MapElement& a, const MapElement& b) {
     if (a.hasTeleportTo && (a.teleportTo.x != b.teleportTo.x || a.teleportTo.y != b.teleportTo.y)) {
         return false;
     }
+    if (a.polygon.size() != b.polygon.size()) return false;
+    for (std::size_t i = 0; i < a.polygon.size(); ++i) {
+        if (a.polygon[i].x != b.polygon[i].x || a.polygon[i].y != b.polygon[i].y) return false;
+    }
     if (a.hasSpawnTable != b.hasSpawnTable) return false;
     if (a.spawnTable.size() != b.spawnTable.size()) return false;
     for (std::size_t i = 0; i < a.spawnTable.size(); ++i) {
@@ -153,6 +157,32 @@ TEST(the_tilesets_flags_agree_with_the_engine) {
         std::fprintf(stderr, "[tiled] tile \"%s\" disagrees with constants.h\n", name.c_str());
     }
     CHECK(mismatched.empty());
+}
+
+TEST(every_spawn_zone_is_a_polygon) {
+    // The point of the change: a tier band is an outline, not a box. A zone
+    // that came back as a bare rectangle would still work, which is exactly why
+    // it needs asserting -- nothing else would notice.
+    MapData map;
+    std::string error;
+    CHECK(map.loadWorldMap(tiledPath(), error));
+
+    int zones = 0;
+    for (const MapElement& element : map.elements()) {
+        if (element.kind != MapElementKind::Spawn) continue;
+        ++zones;
+        CHECK(element.polygon.size() >= 3);
+        // The bounding box is the outline's, and it is what every broadphase
+        // in the spawner still works in.
+        for (const Vec2 point : element.polygon) {
+            CHECK(point.x >= element.bounds.left() && point.x <= element.bounds.right());
+            CHECK(point.y >= element.bounds.top() && point.y <= element.bounds.bottom());
+        }
+        // Every corner is on the outline, and the boundary is inside.
+        for (const Vec2 point : element.polygon) CHECK(element.contains(point));
+        CHECK(element.area() > 0.0);
+    }
+    CHECK(zones > 100);
 }
 
 TEST(the_background_layer_reproduces_the_section_grid) {

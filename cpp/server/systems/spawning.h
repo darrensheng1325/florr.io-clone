@@ -345,7 +345,14 @@ private:
     /// player walking back into an area they cleared an hour ago finds it
     /// freshly stocked rather than mid-trickle.
     struct SpawnZone {
+        /// The outline's bounding box: what the section mask, the viewport test
+        /// and the point sampler all work in.
         Rect bounds;
+        /// The outline itself, or empty when the zone is a plain rectangle.
+        /// Copied off the map element rather than pointed at it, because these
+        /// zones outlive nothing but they are rebuilt from a MapData the system
+        /// does not own.
+        std::vector<Vec2> polygon;
         Rarity tier = Rarity::Common;
         /// The 3x3 sections this rectangle touches. The density fill asks
         /// "am I in a zone?" of every candidate point it samples, and with 148
@@ -433,7 +440,8 @@ private:
 
     /// Mobs the last census saw inside `bounds`, inclusive on every edge as
     /// the reference's own count is.
-    int countMobsInZone(const Rect& bounds) const;
+    bool sampleZonePoint(const SpawnZone& zone, Rng&, Vec2& out) const;
+    int countMobsInZone(const SpawnZone& zone) const;
 
     /// True when a body of `halfSize` at `position` would touch a mob the last
     /// census saw, with `extraGap` of clearance on top. One scan behind the

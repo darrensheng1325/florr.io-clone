@@ -78,7 +78,55 @@ bool tooManyMobsNearby(const std::vector<MobDisc>& mobs, Vec2 centre) {
     return false;
 }
 
+/// How far off an edge still counts as on it, in world units.
+constexpr double kEdgeEpsilon = 1e-6;
+
+/// True when `at` lies on the segment a-b.
+bool onSegment(Vec2 a, Vec2 b, Vec2 at) {
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double cross = (at.x - a.x) * dy - (at.y - a.y) * dx;
+    const double length = std::sqrt(dx * dx + dy * dy);
+    if (length <= 0.0) {
+        return std::fabs(at.x - a.x) <= kEdgeEpsilon && std::fabs(at.y - a.y) <= kEdgeEpsilon;
+    }
+    if (std::fabs(cross) > kEdgeEpsilon * length) return false;
+    const double dot = (at.x - a.x) * dx + (at.y - a.y) * dy;
+    return dot >= -kEdgeEpsilon && dot <= length * length + kEdgeEpsilon;
+}
+
 } // namespace
+
+bool zoneContains(const Rect& bounds, const std::vector<Vec2>& polygon, Vec2 at) {
+    // Inclusive on every edge, as the reference's own rectangle test is.
+    const bool inBox = at.x >= bounds.left() && at.x <= bounds.right() &&
+                       at.y >= bounds.top() && at.y <= bounds.bottom();
+    if (polygon.size() < 3) return inBox;
+    // The box first: this is asked of every mob on the map against every zone
+    // on it, and eight ninths of those pairs are nowhere near each other.
+    if (!inBox) return false;
+
+    bool inside = false;
+    for (std::size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+        const Vec2 a = polygon[j];
+        const Vec2 b = polygon[i];
+        if (onSegment(a, b, at)) return true;
+        if ((b.y > at.y) != (a.y > at.y) &&
+            at.x < b.x + ((at.y - b.y) / (a.y - b.y)) * (a.x - b.x)) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+double zoneArea(const Rect& bounds, const std::vector<Vec2>& polygon) {
+    if (polygon.size() < 3) return bounds.w * bounds.h;
+    double twice = 0.0;
+    for (std::size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+        twice += (polygon[j].x + polygon[i].x) * (polygon[j].y - polygon[i].y);
+    }
+    return std::fabs(twice) * 0.5;
+}
 
 BiomeDisplay biomeDisplay(const std::string& biomeName) {
     struct Entry { const char* id; BiomeDisplay display; };
@@ -112,11 +160,7 @@ bool MapData::safeForSpawn(const MapElement& element) {
 const MapElement* MapData::biomeAt(Vec2 at) const {
     for (const MapElement& element : elements_) {
         if (element.kind != MapElementKind::Biome) continue;
-        // Inclusive on every edge, as the reference's own rectangle test is.
-        if (at.x >= element.bounds.left() && at.x <= element.bounds.right() &&
-            at.y >= element.bounds.top() && at.y <= element.bounds.bottom()) {
-            return &element;
-        }
+        if (element.contains(at)) return &element;
     }
     return nullptr;
 }
@@ -236,6 +280,25 @@ void MapData::adopt(const Json& array) {
         else if (kind == "teleporter") element.kind = MapElementKind::Teleporter;
         element.bounds = {value["x"].asDouble(), value["y"].asDouble(), value["width"].asDouble(),
                           value["height"].asDouble()};
+        // An outline, when the element has one. The bounding box is recomputed
+        // from it rather than trusted: the two are written by the same tool,
+        // but a hand-edited map whose box and outline disagree would put the
+        // broadphase and the containment test on different shapes, and the
+        // failure mode is a zone that quietly spawns nothing.
+        const Json& outline = value["polygon"];
+        if (outline.isArray() && outline.size() >= 3) {
+            element.polygon.reserve(outline.size());
+            for (const Json& point : outline.items()) {
+                element.polygon.push_back({point["x"].asDouble(), point["y"].asDouble()});
+            }
+            double minX = element.polygon[0].x, maxX = minX;
+            double minY = element.polygon[0].y, maxY = minY;
+            for (const Vec2 point : element.polygon) {
+                minX = std::min(minX, point.x); maxX = std::max(maxX, point.x);
+                minY = std::min(minY, point.y); maxY = std::max(maxY, point.y);
+            }
+            element.bounds = {minX, minY, maxX - minX, maxY - minY};
+        }
         // A zero-sized rectangle is a mistake in a spawn zone or a biome, but
         // it is how EVERY teleporter in the bundle is authored: the pad is a
         // point, so its width and height are both 0. Discarding those left the
@@ -368,15 +431,21 @@ MapData::TeleportStep MapData::stepTeleporters(Vec2 centre, double deltaSeconds,
     return step;
 }
 
-bool MapData::findOpenPoint(const Rect& area, Rng& rng, const Terrain& terrain, Vec2& out,
+bool MapData::findOpenPoint(const MapElement& area, Rng& rng, const Terrain& terrain, Vec2& out,
                             const std::vector<MobDisc>* mobs) const {
-    const double width = area.w - kSpawnPadding * 2;
-    const double height = area.h - kSpawnPadding * 2;
+    const double width = area.bounds.w - kSpawnPadding * 2;
+    const double height = area.bounds.h - kSpawnPadding * 2;
     if (width <= 0 || height <= 0) return false;
 
     for (int attempt = 0; attempt < kSpawnAttempts; ++attempt) {
-        const Vec2 candidate{area.x + kSpawnPadding + rng.unit() * width,
-                             area.y + kSpawnPadding + rng.unit() * height};
+        const Vec2 candidate{area.bounds.x + kSpawnPadding + rng.unit() * width,
+                             area.bounds.y + kSpawnPadding + rng.unit() * height};
+        // Rejection sampling over the bounding box, so the distribution stays
+        // uniform over the outline rather than being biased by however a
+        // triangulation happened to cut it up. The padded box is sampled and
+        // the OUTLINE is tested, so a point in the corner the polygon does not
+        // cover is thrown away like any other unusable candidate.
+        if (!area.contains(candidate)) continue;
         // The reference's three-part safety test, in its order: the geometry
         // the body sits in, then the mob it would be sitting inside, then the
         // crowd around it.
@@ -412,7 +481,7 @@ Vec2 MapData::defaultSpawn(Rng& rng, const Terrain& terrain,
     }
     Vec2 spawn;
     for (const MapElement* zone : zones) {
-        if (findOpenPoint(zone->bounds, rng, terrain, spawn, mobs)) return spawn;
+        if (findOpenPoint(*zone, rng, terrain, spawn, mobs)) return spawn;
     }
     if (!zones.empty()) {
         // Every candidate was solid. The zone's centre is still a better guess
@@ -424,7 +493,7 @@ Vec2 MapData::defaultSpawn(Rng& rng, const Terrain& terrain,
 
 bool MapData::spawnInElement(const MapElement& element, Rng& rng, const Terrain& terrain,
                              Vec2& out, const std::vector<MobDisc>* mobs) const {
-    return findOpenPoint(element.bounds, rng, terrain, out, mobs);
+    return findOpenPoint(element, rng, terrain, out, mobs);
 }
 
 bool MapData::spawnInBiome(const std::string& biomeName, Rng& rng, const Terrain& terrain,
@@ -441,7 +510,7 @@ bool MapData::spawnInBiome(const std::string& biomeName, Rng& rng, const Terrain
         std::swap(areas[i - 1], areas[rng.below(static_cast<std::uint32_t>(i))]);
     }
     for (const MapElement* area : areas) {
-        if (findOpenPoint(area->bounds, rng, terrain, out, mobs)) return true;
+        if (findOpenPoint(*area, rng, terrain, out, mobs)) return true;
     }
     out = areas.front()->centre();
     return true;

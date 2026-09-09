@@ -371,6 +371,31 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
                 element.set("y", object["y"].asDouble());
                 element.set("width", object["width"].asDouble());
                 element.set("height", object["height"].asDouble());
+
+                // A polygon object. Tiled writes its points RELATIVE to the
+                // object's own x/y, so a dragged zone moves as one; the game
+                // wants world coordinates, and MapData recomputes the bounding
+                // box from them. Without this the zone arrives as a Tiled
+                // polygon's zero-sized rectangle and is dropped as degenerate.
+                const Json& outline = object["polygon"];
+                if (outline.isArray() && outline.size() >= 3) {
+                    Json points = Json::array();
+                    for (const Json& point : outline.items()) {
+                        Json at = Json::object();
+                        at.set("x", object["x"].asDouble() + point["x"].asDouble());
+                        at.set("y", object["y"].asDouble() + point["y"].asDouble());
+                        points.push(std::move(at));
+                    }
+                    element.set("polygon", std::move(points));
+                } else if (object["polyline"].isArray()) {
+                    // An area, not a path. Reported rather than closed for the
+                    // author: a polyline that happens to enclose something is
+                    // not the same shape as the polygon they meant to draw.
+                    std::fprintf(stderr, "[map] %s: object on layer \"%s\" is a polyline; "
+                                         "a zone must be a closed polygon\n",
+                                 path.c_str(), spec.layer);
+                    continue;
+                }
                 element.set("properties", std::move(properties));
                 elements_.push(std::move(element));
             }

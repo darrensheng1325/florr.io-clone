@@ -23,7 +23,11 @@ bool inBeginnerGround(const MapData& map, Vec2 at) {
     for (const MapElement& element : map.elements()) {
         if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
         if (element.spawnTier != Rarity::Common) continue;
-        if (element.bounds.contains(at)) return true;
+        // The outline, which is what the spawner and the join handler ask. A
+        // bounding-box test here would pass a spawn that landed in the corner a
+        // polygon zone does not cover -- the exact bug this shape change is
+        // meant to make impossible.
+        if (element.contains(at)) return true;
     }
     return false;
 }
@@ -34,7 +38,7 @@ bool inTierAbove(const MapData& map, Vec2 at, Rarity floor) {
     for (const MapElement& element : map.elements()) {
         if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
         if (rarityIndex(element.spawnTier) < rarityIndex(floor)) continue;
-        if (element.bounds.contains(at)) return true;
+        if (element.contains(at)) return true;
     }
     return false;
 }
@@ -215,7 +219,7 @@ TEST(a_chosen_biome_is_honoured_and_survives_a_respawn) {
     const auto insideChosenBiome = [&](Vec2 at) {
         for (const MapElement& element : h.server.mapData().elements()) {
             if (element.kind != MapElementKind::Biome || element.biomeName != biome) continue;
-            if (MapData::safeForSpawn(element) && element.bounds.contains(at)) return true;
+            if (MapData::safeForSpawn(element) && element.contains(at)) return true;
         }
         return false;
     };
@@ -256,4 +260,96 @@ TEST(a_biome_the_map_cannot_place_anyone_in_falls_back) {
     CHECK(body != NULL_ENTITY);
     if (body == NULL_ENTITY) return;
     CHECK(inBeginnerGround(h.server.mapData(), h.server.world().get<Transform>(body).position));
+}
+
+// ---------------------------------------------------------------------------
+// Zone outlines
+// ---------------------------------------------------------------------------
+//
+// Spawn zones are polygons. These are the geometry that decides which tier of
+// mob a point belongs to, so the interesting cases are the ones a rectangle
+// never had: a concave notch, and the boundary itself.
+
+namespace {
+
+/// A 4000-unit square with a 2000-unit bite taken out of its bottom-right --
+/// an L, which is the smallest shape whose bounding box lies about it.
+MapElement lZone() {
+    MapElement zone;
+    zone.kind = MapElementKind::Spawn;
+    zone.polygon = {{0, 0}, {4000, 0}, {4000, 2000}, {2000, 2000}, {2000, 4000}, {0, 4000}};
+    zone.bounds = {0, 0, 4000, 4000};
+    return zone;
+}
+
+} // namespace
+
+TEST(a_zone_outline_excludes_what_its_bounding_box_includes) {
+    const MapElement zone = lZone();
+
+    // Inside both.
+    CHECK(zone.contains({1000, 1000}));
+    CHECK(zone.contains({3000, 1000}));
+    CHECK(zone.contains({1000, 3000}));
+
+    // The bite: inside the bounding box, outside the zone. This is the whole
+    // difference between the two shapes, and the reason the spawner tests the
+    // outline rather than the box it culls with.
+    CHECK(zone.bounds.contains({3000, 3000}));
+    CHECK(!zone.contains({3000, 3000}));
+
+    // Outside both.
+    CHECK(!zone.contains({-1, 1000}));
+    CHECK(!zone.contains({5000, 1000}));
+}
+
+TEST(a_zone_boundary_counts_as_inside) {
+    // The rectangles these replaced were tested inclusively on every edge, so a
+    // mob standing exactly on a border was in that zone. A polygon that dropped
+    // it would move every seam between two tier bands by a hair, silently.
+    const MapElement zone = lZone();
+    for (const Vec2 corner : zone.polygon) CHECK(zone.contains(corner));
+    CHECK(zone.contains({2000, 0}));        // on the top edge
+    CHECK(zone.contains({0, 4000}));        // on a corner
+    CHECK(zone.contains({3000, 2000}));     // on the notch's horizontal edge
+    CHECK(zone.contains({2000, 3000}));     // on the notch's vertical edge
+}
+
+TEST(a_zone_area_is_the_outlines_not_the_boxs) {
+    // A zone's mob target is scaled by this. Sizing an L-shaped band by its
+    // bounding box would pack it at a third again the density of a rectangular
+    // zone next to it.
+    const MapElement zone = lZone();
+    CHECK_EQ(zone.area(), 4000.0 * 4000.0 - 2000.0 * 2000.0);
+    CHECK_EQ(zone.bounds.w * zone.bounds.h, 4000.0 * 4000.0);
+
+    // A zone with no outline is its rectangle, area and all.
+    MapElement rect;
+    rect.kind = MapElementKind::Spawn;
+    rect.bounds = {100, 200, 30, 40};
+    CHECK_EQ(rect.area(), 30.0 * 40.0);
+    CHECK(rect.contains({130, 240}));       // inclusive, as it always was
+    CHECK(!rect.contains({130.5, 240}));
+}
+
+TEST(a_spawn_in_a_polygon_zone_lands_inside_it) {
+    // Placement samples the bounding box and rejects what falls outside the
+    // outline. With an L that is a quarter of the box, so this also says the
+    // rejection loop does not simply give up.
+    Terrain terrain;   // all ground: the outline is the only thing rejecting
+    MapData map;
+    Rng rng(12345);
+    const MapElement zone = lZone();
+
+    int placed = 0;
+    for (int trial = 0; trial < 200; ++trial) {
+        Vec2 at;
+        if (!map.spawnInElement(zone, rng, terrain, at)) continue;
+        ++placed;
+        CHECK(zone.contains(at));
+    }
+    // Not "every attempt succeeded" -- the sampler is allowed to run out of
+    // tries -- but it must work the large majority of the time or a zone like
+    // this would starve.
+    CHECK(placed > 150);
 }

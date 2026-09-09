@@ -360,10 +360,32 @@ export interface BiomeSpawnEntry {
 
 export interface MapElement {
     type: 'wall' | 'spawn' | 'teleporter' | 'biome';
+    /**
+     * The element's bounding box. When `polygon` is present these four are its
+     * AABB rather than its shape: every broadphase question — is this zone near
+     * a viewport, which sections does it touch — is asked of the box, and only
+     * containment, area and point sampling go to the outline.
+     */
     x: number;
     y: number;
     width: number;
     height: number;
+    /**
+     * The zone's outline in world coordinates, when it is not a rectangle.
+     *
+     * Spawn zones are drawn as polygons in Tiled: a tier band follows a
+     * coastline or a canyon, and a rectangle over one of those either spills
+     * mobs into the next tier's ground or leaves a wedge of its own empty. A
+     * missing `polygon` means the outline IS the rectangle, which is what every
+     * biome and teleporter still is.
+     *
+     * DECLARED HERE, NOT HONOURED HERE. This file's only stake in it is that
+     * `map_bundle.ts` typechecks; nothing in `src/` reads the field, so the
+     * unmaintained TypeScript server still treats every zone as the box above,
+     * and will spawn into the corners a polygon does not cover. The C++ server
+     * is the one that reads outlines — see cpp/shared/game/map_elements.h.
+     */
+    polygon?: { x: number; y: number }[];
     properties?: {
         teleportTo?: { x: number; y: number; serverPort?: number };
         spawnType?: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic' | 'ultra';

@@ -170,6 +170,26 @@ function encodeSpawnTable(table) {
     return JSON.stringify(table, null, 1).replace(/\n\s*/g, ' ');
 }
 
+/**
+ * A spawn zone's outline, as a Tiled polygon.
+ *
+ * Tiled writes polygon points RELATIVE to the object's own x/y, so the object
+ * anchors at the outline's first point and the points are offsets from it. A
+ * zone that is still a plain rectangle is written as its four corners rather
+ * than as a rectangle object: the whole point of the change is that a tier band
+ * can follow a coastline, and a shape you cannot add a vertex to without first
+ * converting it is a shape nobody converts.
+ */
+function polygonOf(element) {
+    if (Array.isArray(element.polygon) && element.polygon.length >= 3) return element.polygon;
+    return [
+        { x: element.x, y: element.y },
+        { x: element.x + element.width, y: element.y },
+        { x: element.x + element.width, y: element.y + element.height },
+        { x: element.x, y: element.y + element.height },
+    ];
+}
+
 function objectFromElement(element, id) {
     const p = element.properties || {};
     const object = {
@@ -183,6 +203,16 @@ function objectFromElement(element, id) {
         rotation: 0,
         visible: true,
     };
+    if (element.type === 'spawn') {
+        const points = polygonOf(element);
+        // The anchor is the first point, so a dragged object moves its whole
+        // outline and the offsets stay put.
+        object.x = points[0].x;
+        object.y = points[0].y;
+        object.width = 0;
+        object.height = 0;
+        object.polygon = points.map(point => ({ x: point.x - points[0].x, y: point.y - points[0].y }));
+    }
     const custom = {};
     if (element.type === 'teleporter') {
         // Every teleporter in the map is authored as a point: the pad has no
@@ -208,6 +238,18 @@ function objectFromElement(element, id) {
     return object;
 }
 
+/** The axis-aligned box around a set of points. */
+function boundsOf(points) {
+    let minX = points[0].x, maxX = points[0].x, minY = points[0].y, maxY = points[0].y;
+    for (const point of points) {
+        if (point.x < minX) minX = point.x;
+        if (point.x > maxX) maxX = point.x;
+        if (point.y < minY) minY = point.y;
+        if (point.y > maxY) maxY = point.y;
+    }
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
 function elementFromObject(object, kind, context) {
     const custom = readProperties(object);
     const properties = {};
@@ -228,6 +270,20 @@ function elementFromObject(object, kind, context) {
     if (custom.teleportToX !== undefined || custom.teleportToY !== undefined) {
         properties.teleportTo = { x: custom.teleportToX || 0, y: custom.teleportToY || 0 };
         if (custom.serverPort !== undefined) properties.teleportTo.serverPort = custom.serverPort;
+    }
+    // A polygon object carries its points relative to its own x/y; the game
+    // wants world coordinates, and the rectangle it reports is the AABB. A
+    // rectangle object still works and stays a rectangle -- there is nothing to
+    // gain from writing four points for a shape that is four points.
+    if (Array.isArray(object.polygon) && object.polygon.length >= 3) {
+        const points = object.polygon.map(point => ({
+            x: (object.x || 0) + point.x,
+            y: (object.y || 0) + point.y,
+        }));
+        return { type: kind, ...boundsOf(points), polygon: points, properties };
+    }
+    if (Array.isArray(object.polyline)) {
+        throw new Error(`${context}: a zone is an area, not a polyline; close it into a polygon`);
     }
     return {
         type: kind,

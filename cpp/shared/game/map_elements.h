@@ -47,6 +47,22 @@ struct BiomeSpawnEntry {
     std::string mobType;
 };
 
+/// True when `at` is inside a zone outline, boundary INCLUDED.
+///
+/// An empty `polygon` means the outline is `bounds` itself. The boundary counts
+/// as inside for both shapes, because the rectangles these replaced were tested
+/// inclusively on every edge -- a mob standing exactly on a zone's border has
+/// always been in that zone, and a polygon that dropped it would be a silent
+/// behaviour change at every seam between two tier bands.
+///
+/// The same three functions exist in src/constants.ts for the TypeScript
+/// server, written to match: two servers that disagree about where a zone ends
+/// spawn different mobs on the same map.
+bool zoneContains(const Rect& bounds, const std::vector<Vec2>& polygon, Vec2 at);
+
+/// The outline's area.
+double zoneArea(const Rect& bounds, const std::vector<Vec2>& polygon);
+
 enum class MapElementKind : std::uint8_t {
     Other = 0,
     Spawn,
@@ -59,7 +75,22 @@ enum class MapElementKind : std::uint8_t {
 /// build's SCALE_FACTOR of 1 might suggest is coming.
 struct MapElement {
     MapElementKind kind = MapElementKind::Other;
+
+    /// The element's bounding box. When `polygon` is set these are its AABB
+    /// rather than its shape: every broadphase question -- is this zone near a
+    /// viewport, which of the nine sections does it touch, is it worth looking
+    /// at -- is asked of the box, and only containment, area and point sampling
+    /// go to the outline. Keeping the box means none of those had to change.
     Rect bounds;
+
+    /// The zone's outline in world coordinates, or empty when the outline IS
+    /// `bounds`.
+    ///
+    /// Spawn zones are polygons: a tier band follows a coastline or a canyon,
+    /// and a rectangle over one of those either spills mobs onto the next
+    /// tier's ground or leaves a wedge of its own permanently empty. Biomes and
+    /// teleporters are still rectangles and points respectively.
+    std::vector<Vec2> polygon;
 
     /// Spawn zones only: the mob tier that belongs in this rectangle.
     Rarity spawnTier = Rarity::Common;
@@ -79,7 +110,19 @@ struct MapElement {
     Vec2 teleportTo;
     bool hasTeleportTo = false;
 
+    /// The centre of the BOUNDING BOX, which for a concave outline can be a
+    /// point outside the zone. Deliberately so: this is what orders zones and
+    /// attributes a spawn to the nearest player, neither of which wants a
+    /// centroid, and a rectangle's centre could already land inside a wall.
+    /// Anything that needs a point a body can stand on goes through
+    /// MapData::spawnInElement.
     Vec2 centre() const { return {bounds.x + bounds.w * 0.5, bounds.y + bounds.h * 0.5}; }
+
+    /// True when `at` is inside the outline, boundary included.
+    bool contains(Vec2 at) const { return zoneContains(bounds, polygon, at); }
+
+    /// The outline's area, which is what a zone's mob target is scaled by.
+    double area() const { return zoneArea(bounds, polygon); }
 };
 
 /// One live mob body, as a spawn candidate has to see it.
@@ -235,11 +278,13 @@ private:
     /// one answer to what a spawn table row means rather than two.
     void adopt(const Json& array);
 
-    /// Picks a point inside `area` a flower can safely be dropped on: no tile
-    /// its BODY would overlap is solid, no mob is standing there, and the spot
-    /// is not already crowded. False when fifty tries found nothing, which
-    /// happens -- some zones are drawn over terrain that later became a wall.
-    bool findOpenPoint(const Rect& area, Rng&, const Terrain&, Vec2& out,
+    /// Picks a point inside `area`'s OUTLINE a flower can safely be dropped on:
+    /// no tile its BODY would overlap is solid, no mob is standing there, and
+    /// the spot is not already crowded. False when fifty tries found nothing,
+    /// which happens -- some zones are drawn over terrain that later became a
+    /// wall, and a polygon covering little of its own bounding box needs more
+    /// luck than a rectangle did.
+    bool findOpenPoint(const MapElement& area, Rng&, const Terrain&, Vec2& out,
                        const std::vector<MobDisc>* mobs) const;
 
     std::vector<MapElement> elements_;

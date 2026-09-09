@@ -74,7 +74,7 @@ within 150 units, so the two never end up on opposite sides.
 | --- | --- |
 | `background` | the ground: which artwork each cell is painted with |
 | `terrain` | the tile grid — collision. Air is left empty, so the background shows through |
-| `spawns` | `spawn` rectangles, with a `spawnType` property |
+| `spawns` | `spawn` **polygons**, with a `spawnType` property |
 | `biomes` | `biome` rectangles, with `biomeName`, `backgroundTexture` and `spawnTable` |
 | `teleporters` | `teleporter` **points**, with `teleportToX` / `teleportToY` and an optional `serverPort` |
 
@@ -82,6 +82,38 @@ Objects are grouped by kind so each set can be hidden while you work on
 another. The game never sees the grouping: every reader filters by kind before
 it looks at order, so only the order *within* a layer is observable, and that
 is preserved.
+
+### Spawn zones are polygons
+
+A mob tier band is an outline, not a box. Draw one with Tiled's polygon tool
+(or drag a vertex onto an existing zone) and it can follow a coastline or a
+canyon; a rectangle over the same ground either spills mobs onto the next
+tier's territory or leaves a wedge of its own permanently empty.
+
+Everything the spawner does in bulk still works on the zone's **bounding box** —
+which sections it touches, whether it is near anyone's viewport, whether it is
+worth looking at — and only three questions go to the outline: is this point in
+this zone, how large is it, and where inside it should this mob go. That split
+is why the change is cheap: the box is a superset of the outline, so every
+broadphase stayed exactly as it was.
+
+- **Placement** samples the bounding box and throws away what falls outside the
+  outline. A zone covering a small fraction of its box just spends more of its
+  attempts; it does not spawn in the corners.
+- **Population** is scaled by the outline's area, so a diagonal band is not
+  packed at twice the density of a rectangular zone beside it.
+- **The boundary is inside.** The rectangles these replaced were tested
+  inclusively on every edge, so a mob standing exactly on a border was in that
+  zone, and it still is.
+
+Biomes and teleporters are unchanged — a rectangle and a point. A spawn zone
+saved as a plain rectangle object still loads and stays a rectangle; the
+converter writes the four corners instead so the shape is one you can add a
+vertex to without converting it first.
+
+One caveat worth knowing: `src/constants.ts` declares the `polygon` field so
+`map_bundle.ts` typechecks, but nothing in `src/` reads it. The unmaintained
+TypeScript server therefore still treats every zone as its bounding box.
 
 A biome's spawn table is a list of records, which Tiled has no property type
 for, so it travels as a JSON string in the `spawnTable` property — Tiled edits

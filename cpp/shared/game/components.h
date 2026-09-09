@@ -645,6 +645,11 @@ struct Projectile {
     /// Homing cone and range, both zero for a dumb projectile.
     double seekRange = 0;
     double seekCone = 0;
+    /// Fired by a glitch-family mob: touching this shot leaves the flower
+    /// glitched. Stamped at spawn from the shooter's config, as the reference
+    /// stamps `sourceType`, so a shot still infects after its shooter is gone
+    /// and never asks a recycled entity id what it was.
+    bool glitchInfecting = false;
 };
 
 struct Lifetime {

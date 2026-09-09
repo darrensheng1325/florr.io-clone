@@ -160,6 +160,8 @@ struct Fixture {
     std::uint16_t venom = kInvalidIndex;
     std::uint16_t frost = kInvalidIndex;
     std::uint16_t spore = kInvalidIndex;
+    std::uint16_t grunt = kInvalidIndex;
+    std::uint16_t glitch = kInvalidIndex;
 };
 
 const Fixture& fixture() {
@@ -169,7 +171,10 @@ const Fixture& fixture() {
         const std::string petals = tempDir() + "/petals.json";
         // `poison` is per MILLISECOND in the JSON, so 0.01 is 10/second.
         const bool wrote =
-            writeText(mobs, R"({"grunt":{"name":"Grunt","health":10,"damage":5,"size":1,"speed":1,"section":[0]}})") &&
+            writeText(mobs, R"({
+              "grunt":{"name":"Grunt","health":10,"damage":5,"size":1,"speed":1,"section":[0]},
+              "glitch":{"name":"Glitch","health":250,"damage":25,"size":1,"speed":2.5,"section":[7]}
+            })") &&
             writeText(petals, R"({
               "frost":{"name":"Frost","damage":1,"health":5,"size":1,"slowFactor":0.5,"slowDuration":1000},
               "sting":{"name":"Sting","damage":10,"health":5,"size":1,"knockback":2,"damageCooldown":500},
@@ -189,6 +194,8 @@ const Fixture& fixture() {
         f.venom = f.registry.petalIndex("venom");
         f.frost = f.registry.petalIndex("frost");
         f.spore = f.registry.petalIndex("spore");
+        f.grunt = f.registry.mobIndex("grunt");
+        f.glitch = f.registry.mobIndex("glitch");
         return f;
     }();
     return state;
@@ -482,6 +489,46 @@ TEST(only_the_first_mob_contact_lands_per_player_per_tick) {
     a.step(0.0);
     // playerState.ts breaks out of the candidate loop after the first contact.
     CHECK_NEAR(a.health(player), 90.0, 1e-9);
+}
+
+TEST(a_glitch_mobs_touch_marks_the_flower_even_while_invulnerable) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    Arena a;
+    const Entity player = a.player({1000, 1000});
+    a.world.add<PlayerVisuals>(player);
+    a.world.get<Health>(player).invulnerableUntilMillis = 1000.0;
+    const Entity mob = a.mob({980, 1000}, 100.0);
+    a.world.add<MobType>(mob, MobType{f.glitch, Rarity::Common});
+    a.world.add<ContactDamage>(mob, ContactDamage{10.0, 500.0});
+
+    a.step(0.0, f.registry);
+    // playerState.ts sets `glitched` beside the 25-unit bump and above its
+    // invulnerability branch: the damage is refused, the mark is not. It is
+    // what the client's PlayerRenderGlitch bit is ORed from on the wire.
+    CHECK_NEAR(a.health(player), 100.0, 1e-9);
+    CHECK_NEAR(a.world.get<Transform>(player).position.x, 1025.0, 1e-9);
+    CHECK(a.world.get<PlayerVisuals>(player).glitched);
+
+    // And it stays: nothing in combat clears it once the mob has gone.
+    a.world.add<Dead>(mob);
+    a.step(net::kTickMillis, f.registry);
+    CHECK(a.world.get<PlayerVisuals>(player).glitched);
+}
+
+TEST(an_ordinary_mobs_touch_leaves_no_mark) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    Arena a;
+    const Entity player = a.player({1000, 1000});
+    a.world.add<PlayerVisuals>(player);
+    const Entity mob = a.mob({980, 1000}, 100.0);
+    a.world.add<MobType>(mob, MobType{f.grunt, Rarity::Common});
+    a.world.add<ContactDamage>(mob, ContactDamage{10.0, 500.0});
+
+    a.step(0.0, f.registry);
+    CHECK_NEAR(a.health(player), 90.0, 1e-9);
+    CHECK(!a.world.get<PlayerVisuals>(player).glitched);
 }
 
 // ---------------------------------------------------------------------------
@@ -886,6 +933,56 @@ TEST(a_shot_is_spent_whole_on_a_flower) {
     a.step(0.0);
     CHECK_NEAR(a.health(player), 75.0, 1e-9);
     CHECK(a.world.has<Dead>(shot));
+}
+
+TEST(a_glitch_mobs_shot_marks_the_flower_it_hits) {
+    Arena a;
+    const Entity mob = a.mob({500, 1000}, 100.0);
+    const Entity player = a.player({1000, 1000});
+    a.world.add<PlayerVisuals>(player);
+    const Entity shot = spawnShot(a, {1000, 1000}, {1000, 0}, 25.0, 500.0, mob, NULL_ENTITY);
+    a.world.add<Faction>(shot, Faction{Team::Hostiles, false});
+    a.world.get<Projectile>(shot).glitchInfecting = true;
+
+    a.step(0.0);
+    CHECK_NEAR(a.health(player), 75.0, 1e-9);
+    CHECK(a.world.get<PlayerVisuals>(player).glitched);
+}
+
+TEST(a_glitch_shot_marks_an_invulnerable_flower_it_passes_through) {
+    Arena a;
+    const Entity mob = a.mob({500, 1000}, 100.0);
+    const Entity player = a.player({1000, 1000});
+    a.world.add<PlayerVisuals>(player);
+    a.world.get<Health>(player).invulnerableUntilMillis = 1000.0;
+    const Entity shot = spawnShot(a, {1000, 1000}, {1000, 0}, 25.0, 500.0, mob, NULL_ENTITY);
+    a.world.add<Faction>(shot, Faction{Team::Hostiles, false});
+    a.world.get<Projectile>(shot).glitchInfecting = true;
+
+    a.step(0.0);
+    // server.ts applyProjectileHitToPlayer: the mark lands before the
+    // invulnerability branch that refuses the damage.
+    CHECK_NEAR(a.health(player), 100.0, 1e-9);
+    CHECK(a.world.get<PlayerVisuals>(player).glitched);
+}
+
+TEST(an_ordinary_shot_leaves_no_mark_and_a_friendly_glitch_shot_leaves_none_either) {
+    Arena a;
+    const Entity mob = a.mob({500, 1000}, 100.0);
+    const Entity player = a.player({1000, 1000});
+    a.world.add<PlayerVisuals>(player);
+    const Entity plain = spawnShot(a, {1000, 1000}, {1000, 0}, 25.0, 500.0, mob, NULL_ENTITY);
+    a.world.add<Faction>(plain, Faction{Team::Hostiles, false});
+    // A glitch flower fighting FOR the flower (the Flower petal's pet squad)
+    // shoots from the flower's own side, and its shots pass through it.
+    const Entity friendly = spawnShot(a, {1000, 1000}, {1000, 0}, 25.0, 500.0, NULL_ENTITY,
+                                      NULL_ENTITY);
+    a.world.add<Faction>(friendly, Faction{Team::Players, false});
+    a.world.get<Projectile>(friendly).glitchInfecting = true;
+
+    a.step(0.0);
+    CHECK_NEAR(a.health(player), 75.0, 1e-9);
+    CHECK(!a.world.get<PlayerVisuals>(player).glitched);
 }
 
 TEST(opposing_shots_shoot_each_other_down) {
