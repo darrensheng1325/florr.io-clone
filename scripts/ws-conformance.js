@@ -21,7 +21,19 @@ const crypto = require('crypto');
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.WS_TEST_PORT || 3991);
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-const PROTOCOL_VERSION = 14;
+
+// Read out of protocol.h rather than written down here. Every check that the
+// server ANSWERED at all is a check that a Welcome came back carrying the
+// version the server supports, so a number copied into this file goes stale
+// the next time the protocol is bumped -- and then six framing tests fail for
+// a reason that has nothing to do with framing.
+const PROTOCOL_VERSION = (() => {
+  const header = fs.readFileSync(
+    path.join(ROOT, 'cpp', 'shared', 'net', 'protocol.h'), 'utf8');
+  const found = header.match(/kProtocolVersion\s*=\s*(\d+)/);
+  if (!found) throw new Error('protocol.h no longer declares kProtocolVersion');
+  return Number(found[1]);
+})();
 
 let failures = 0;
 const check = (name, ok, detail) => {

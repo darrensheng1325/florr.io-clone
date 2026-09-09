@@ -9,9 +9,12 @@
 // ordinary operations rather than special cases.
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
+#include "server/db.h"
 #include "shared/core/entity.h"
+#include "shared/game/realm.h"
 #include "shared/net/protocol.h"
 
 namespace flix {
@@ -44,9 +47,26 @@ struct Session {
     Entity entity = NULL_ENTITY;
 
     /// The biome this connection asked to start in, from JoinGame. Empty means
-    /// the beginner ground. Kept on the session rather than passed down so a
-    /// respawn lands where the player chose, not back at the default.
+    /// the beginner ground; "pvp" and "maze" name the two other realms. Kept on
+    /// the session rather than passed down so a respawn lands where the player
+    /// chose, not back at the default.
     std::string spawnBiome;
+
+    /// The coordinate space the body is in while Playing (realm.h). Overworld
+    /// between bodies, so a title-screen session reads as ordinary ground.
+    Realm realm = Realm::Overworld;
+
+    /// The arena run's account, while there is one.
+    ///
+    /// A flower in the PVP ring plays on a scratch copy of its account: a fixed
+    /// starter ring, an empty inventory, no talents, and whatever it loots in
+    /// there. Every handler that reads "the player's inventory or loadout"
+    /// reads this instead while it is set (GameServer::liveRecord), which is
+    /// how the real record is never touched by a run -- the reference's
+    /// regularInventory/regularLoadout stash, turned inside out. A quarter of
+    /// the run's loot reaches the real account when the run ends
+    /// (src/server/playerManager.ts:99-158). Null outside the ring.
+    std::unique_ptr<PlayerRecord> arena;
 
     /// The flower's name, typed on the title screen and sent with JoinGame.
     /// Separate from `username`: the account is who you are, this is what the

@@ -137,7 +137,9 @@ void emitMovementScenario(const char* mapBundlePath) {
         emit(std::string("scenario/movement/tile/") + sample.name,
              static_cast<double>(terrain.at(sample.point)));
     }
-    const Vec2 resolvedStart = terrain.resolveCircle({3000.0, 2940.0}, 20.0);
+    // The oracle's movement scenario is an overworld one: it is the tile map's
+    // wall slide that the TypeScript build is compared against.
+    const Vec2 resolvedStart = terrain.resolveCircle({3000.0, 2940.0}, 20.0, Realm::Overworld);
     emit("scenario/movement/resolve-start/x", resolvedStart.x);
     emit("scenario/movement/resolve-start/y", resolvedStart.y);
     MovementSystem movement;

@@ -17,6 +17,7 @@
 #include "shared/game/constants.h"
 #include "shared/game/rarity.h"
 #include "shared/net/bytebuffer.h"
+#include "shared/game/realm.h"
 #include "shared/net/protocol.h"
 
 namespace flix {
@@ -71,6 +72,8 @@ struct RemoteEntity {
     /// the level label.
     std::uint16_t level = 1;
     Rarity bestRarity = Rarity::Common;
+    /// Player-only: the arena leaderboard's number, zero outside the ring.
+    std::uint32_t arenaScore = 0;
 
     /// The guild whose tag hangs under this flower's health bar. Nothing sets
     /// it yet: there is no guild protocol, exactly as menu_guild.cpp records,
@@ -200,6 +203,13 @@ public:
 
     const std::unordered_map<std::uint32_t, RemoteEntity>& entities() const { return entities_; }
     const SelfState& self() const { return self_; }
+
+    /// Which coordinate space this client's body is in (realm.h). Everything
+    /// in `entities()` is in the same one -- the server streams a viewer its
+    /// own realm and nothing else -- so this is also what decides whether the
+    /// ground under them is the tile map, the maze or the arena floor.
+    Realm realm() const { return realm_; }
+    void setRealm(Realm realm) { realm_ = realm; }
     std::uint32_t tick() const { return tick_; }
     double serverTimeMillis() const { return serverTimeMillis_; }
 
@@ -246,6 +256,7 @@ private:
     std::unordered_map<std::uint32_t, RemoteEntity> entities_;
     std::vector<ViewEvent> events_;
     SelfState self_;
+    Realm realm_ = Realm::Overworld;
     std::uint32_t tick_ = 0;
     double serverTimeMillis_ = 0;
     /// Drawn position of the viewer's flower. Held here rather than looked up

@@ -196,7 +196,8 @@ private:
     /// which is the petal's IDEAL orbit point rather than where the spring has
     /// actually left it: "30 units of attraction" then lights up when a mob is
     /// 30 units from where the petal is about to swing past.
-    bool findAttractionTarget(World& world, Vec2 at, double radius, AttractionTarget& out);
+    bool findAttractionTarget(World& world, Vec2 at, Realm realm, double radius,
+                              AttractionTarget& out);
 
     void clearRing(World& world, Entity player);
     void reconcileSlots(World& world, const ContentRegistry& registry, Entity player,

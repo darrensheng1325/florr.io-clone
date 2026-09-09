@@ -157,7 +157,7 @@ TEST(a_player_joins_on_the_beginner_ground) {
     CHECK(!inTierAbove(h.server.mapData(), at, Rarity::Rare));
     // Section 0 is the map's top-left, which is where the beginner ground is.
     CHECK_EQ(sectionAt(at), 0);
-    CHECK(!h.server.terrain().blocked(at));
+    CHECK(!h.server.terrain().blocked(at, Realm::Overworld));
 }
 
 TEST(respawning_returns_to_the_beginner_ground) {

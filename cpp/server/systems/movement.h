@@ -126,7 +126,7 @@ struct StepOutcome {
 /// away and the body stops where it started. Off by default because the
 /// reference only guards flowers -- mobs and projectiles take the resolver's
 /// word for it.
-StepOutcome stepCollide(const Terrain& terrain, Vec2& position, Vec2 velocity,
+StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec2 velocity,
                         double radius, double dt, bool collideTerrain = true,
                         bool refuseWallCrossing = false);
 
@@ -195,6 +195,7 @@ private:
     struct SeparationEntry {
         Entity entity = NULL_ENTITY;
         Vec2 position;
+        Realm realm = Realm::Overworld;
         double radius = 0;
         /// The centipede this mob belongs to, NULL_ENTITY for anything else.
         Entity chainHead = NULL_ENTITY;
@@ -227,7 +228,7 @@ private:
     void buildSeparationSet(World& world);
     /// The LOD gate: false for a mob too far from every flower to be worth
     /// colliding this tick.
-    bool activeForSeparation(Vec2 position) const;
+    bool activeForSeparation(Vec2 position, Realm realm) const;
 
     /// Collected lazily: a tick with no seeking projectile pays nothing.
     void collectSeekTargets();
@@ -258,7 +259,7 @@ private:
     /// Separation scratch, reused every tick so a steady state allocates
     /// nothing. `separationSlot_` is keyed by entity INDEX, which is how a
     /// grid candidate gets back to its entry in O(1).
-    std::vector<Vec2> separationPlayers_;
+    std::vector<RealmPoint> separationPlayers_;
     std::vector<SeparationEntry> separationSet_;
     std::vector<std::uint32_t> separationSlot_;
     std::vector<Entity> separationCandidates_;

@@ -61,7 +61,7 @@ inline double renderClockMillis() {
 inline constexpr double kDefaultInterpolationAmount = 0.15;
 
 /// Beyond this gap an ease is a glide across the map rather than a smoothing.
-/// Respawns, portals and the maze at (200000, 200000) all produce it.
+/// Respawns, portals and a maze rotation all produce it.
 inline constexpr double kTeleportSnapDistance = 600.0;
 
 /// Below this the ease is invisible; settle exactly instead of asymptoting.

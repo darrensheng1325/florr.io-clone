@@ -342,13 +342,13 @@ Rarity SpawnSystem::rollNaturalRarity(int section, double luck, Rng& rng) {
 // ---------------------------------------------------------------------------
 
 Entity SpawnSystem::spawnMob(World& world, const Terrain& terrain, const ContentRegistry& content,
-                             std::uint16_t mobIndex, Rarity rarity, Vec2 position,
+                             std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                              double nowMillis, Rng& rng) {
-    return spawnMobAt(world, terrain, content, mobIndex, rarity, position, nowMillis, rng, 0);
+    return spawnMobAt(world, terrain, content, mobIndex, rarity, position, realm, nowMillis, rng, 0);
 }
 
 Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
-                               std::uint16_t mobIndex, Rarity rarity, Vec2 position,
+                               std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                                double nowMillis, Rng& rng, int depth) {
     if (mobIndex >= content.mobCount()) return NULL_ENTITY;
 
@@ -365,7 +365,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     // resolveCircle, not a blocked() test: the caller hands over a point and
     // the mob is a body, so a spot one unit from a wall is legal as a point and
     // embedded as a circle.
-    const Vec2 at = terrain.resolveCircle(position, radius);
+    const Vec2 at = terrain.resolveCircle(position, radius, realm);
 
     // Held rather than passed straight through: a centipede's body is laid out
     // along its head's facing, and the chain is built once the head is whole.
@@ -373,7 +373,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
 
     const Entity e = world.create();
     world.add<MobTag>(e);
-    world.add<Transform>(e, Transform{at, angle});
+    world.add<Transform>(e, Transform{at, angle, realm});
     world.add<Motion>(e);
     // Mass is area, but it is the TIER's area: the reference derives mass from
     // the config size and the rarity step alone, so a mob that rolled a big
@@ -422,10 +422,15 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     world.add<Replicated>(e, Replicated{net::EntityKind::Mob, 0, mobIndex, rarity, 0});
     if (netIds != nullptr) world.add<NetId>(e, NetId{netIds->next()});
 
-    ++census_.mobs;
-    ++census_.spawnedTotal;
-    const int section = sectionAt(at);
-    if (section >= 0) ++census_.perSection[static_cast<std::size_t>(section)];
+    // The census is the OVERWORLD's population. Another realm's mobs are
+    // counted by the spawner that fills it, and a maze coordinate would land
+    // in a section of a map it is not on.
+    if (realm == Realm::Overworld) {
+        ++census_.mobs;
+        ++census_.spawnedTotal;
+        const int section = sectionAt(at);
+        if (section >= 0) ++census_.perSection[static_cast<std::size_t>(section)];
+    }
 
     if (depth < kMaxNestDepth) {
         if (config.periodicSpawn.present) {
@@ -459,14 +464,14 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     // the rest of the same animal, so a centipede that is itself an escort
     // still arrives whole rather than as a floating head.
     if (chainHead) {
-        spawnBodyChain(world, terrain, content, e, config, rarity, at, angle, nowMillis, rng,
+        spawnBodyChain(world, terrain, content, e, config, rarity, at, realm, angle, nowMillis, rng,
                        depth + 1);
     }
     if (depth < kMaxNestDepth) {
         for (const std::uint16_t child : config.initialSpawns) {
             spawnEscort(world, terrain, content, child, rarity,
-                        escortRingPoint(at, radius, kInitialEscortGap, rng), e, nowMillis, rng,
-                        depth + 1);
+                        escortRingPoint(at, radius, kInitialEscortGap, rng), realm, e, nowMillis,
+                        rng, depth + 1);
         }
     }
 
@@ -476,7 +481,8 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
 void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
                                  const ContentRegistry& content, Entity head,
                                  const MobConfig& config, Rarity rarity, Vec2 headPosition,
-                                 double headAngle, double nowMillis, Rng& rng, int depth) {
+                                 Realm realm, double headAngle, double nowMillis, Rng& rng,
+                                 int depth) {
     // The body's own stats at the HEAD's tier: a mythic centipede is one long
     // mythic animal, not a big head towing a string of common beads.
     const MobStats bodyStats = content.mobStats(config.segmentBodyIndex, rarity);
@@ -495,7 +501,7 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
         if (census_.mobs >= mobCap) break;
         at = at + step;
         const Entity segment = spawnMobAt(world, terrain, content, config.segmentBodyIndex, rarity,
-                                          at, nowMillis, rng, depth);
+                                          at, realm, nowMillis, rng, depth);
         if (segment == NULL_ENTITY) break;
 
         BodySegment link;
@@ -512,11 +518,11 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
 }
 
 Entity SpawnSystem::spawnEscort(World& world, const Terrain& terrain, const ContentRegistry& content,
-                                std::uint16_t childIndex, Rarity nestRarity, Vec2 at, Entity parent,
-                                double nowMillis, Rng& rng, int depth) {
+                                std::uint16_t childIndex, Rarity nestRarity, Vec2 at, Realm realm,
+                                Entity parent, double nowMillis, Rng& rng, int depth) {
     if (census_.mobs >= mobCap) return NULL_ENTITY;
     const Entity child =
-        spawnMobAt(world, terrain, content, childIndex, nestRarity, at, nowMillis, rng, depth);
+        spawnMobAt(world, terrain, content, childIndex, nestRarity, at, realm, nowMillis, rng, depth);
     if (child == NULL_ENTITY || parent == NULL_ENTITY) return child;
 
     // The leash, on all three paths that put a child into the world. Dragged
@@ -537,7 +543,7 @@ Entity SpawnSystem::spawnEscort(World& world, const Terrain& terrain, const Cont
 // ---------------------------------------------------------------------------
 
 void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistry& content,
-                      const std::vector<Vec2>& players, Rng& rng, double nowMillis, double dt,
+                      const std::vector<RealmPoint>& players, Rng& rng, double nowMillis, double dt,
                       CommandBuffer& commands) {
     bind(world);
     rebuildCandidates(content);
@@ -562,12 +568,13 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
     runSpecialMobs(world, terrain, content, viewers_, rng, nowMillis);
 }
 
-void SpawnSystem::gatherViewers(World& world, const std::vector<Vec2>& players) {
-    // Every flower in the world, with the two facts a coordinate cannot carry.
-    // A client that reported nothing keeps the default box, exactly as the
+void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& players) {
+    // Every OVERWORLD flower, with the two facts a coordinate cannot carry. A
+    // client that reported nothing keeps the default box, exactly as the
     // reference's `player.viewportWidth || VIEWPORT_WIDTH` does.
     worldViewers_.clear();
     playerBodies_->each([&](Entity e, PlayerTag&, Transform& transform) {
+        if (transform.realm != Realm::Overworld) return;
         Viewer viewer;
         viewer.position = transform.position;
         if (const PlayerLocation* location = world.tryGet<PlayerLocation>(e)) {
@@ -586,7 +593,11 @@ void SpawnSystem::gatherViewers(World& world, const std::vector<Vec2>& players) 
     // the defaults above.
     viewers_.clear();
     viewers_.reserve(players.size());
-    for (const Vec2& position : players) {
+    realmOccupied_.fill(false);
+    for (const RealmPoint& player : players) {
+        realmOccupied_[realmIndex(player.realm)] = true;
+        if (player.realm != Realm::Overworld) continue;
+        const Vec2 position = player.position;
         Viewer viewer;
         viewer.position = position;
         double nearestDistSq = kViewerMatchRadius * kViewerMatchRadius;
@@ -632,6 +643,19 @@ void SpawnSystem::takeCensus(const ContentRegistry& content, const std::vector<V
 
     ambient_->each([&](Entity e, MobTag&, Transform& transform, Body& body, MobType& type,
                        AmbientMob& ambient) {
+        // An arena or maze mob is kept for as long as anyone is in its realm:
+        // those realms are populated whole rather than by viewport, and the
+        // reference exempts their mobs from the distance despawn on the same
+        // condition (mazeSpawner.ts hasMazePlayers). Once the realm empties
+        // the usual grace period runs and the population drains.
+        if (transform.realm != Realm::Overworld) {
+            if (realmOccupied_[realmIndex(transform.realm)]) {
+                ambient.lastNearPlayerMillis = nowMillis;
+            } else if (nowMillis - ambient.lastNearPlayerMillis >= kMobDespawnDelayMillis) {
+                doomed_.push_back(e);
+            }
+            return;
+        }
         bool nearAnyone = unattended;
         for (std::size_t i = 0; i < viewers.size(); ++i) {
             // Each flower's OWN box, not one 1920x1080 rectangle for everybody:
@@ -673,7 +697,7 @@ bool SpawnSystem::placementAllowed(const Terrain& terrain, const std::vector<Vie
     // The border band is refused outright, before anything else is asked about
     // the point.
     if (inBorderBand(position)) return false;
-    if (terrain.blocked(position)) return false;
+    if (terrain.blocked(position, Realm::Overworld)) return false;
     // A spawn rectangle owns its own population, at its own tier. The density
     // fill stays out of one entirely: letting it in is what fills a legendary
     // zone with commons, because this pass rolls the natural spread and knows
@@ -793,8 +817,8 @@ void SpawnSystem::fillNeighbourhoods(World& world, const Terrain& terrain,
                 finalStats.radius * sizeJitterCeiling(content.mob(type), rarity);
             if (crowdedAt(at, finalRadius, 0.0)) continue;
 
-            const Entity spawned = spawnMob(world, terrain, content, type, rarity,
-                                            at, nowMillis, rng);
+            const Entity spawned = spawnMob(world, terrain, content, type, rarity, at,
+                                            Realm::Overworld, nowMillis, rng);
             if (spawned == NULL_ENTITY) {
                 break;
             }
@@ -837,6 +861,7 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
         const Rarity childRarity = clampRarity(rarityIndex(type->rarity) + spawner->rarityOffset);
         const double lifetimeMillis = spawner->childLifetimeMillis;
         const Vec2 anchor = transform->position;
+        const Realm nestRealm = transform->realm;
         const double facing = transform->angle;
         const Body* body = world.tryGet<Body>(nest);
         const double anchorRadius = body != nullptr ? body->radius : kMobBaseRadius;
@@ -845,8 +870,8 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
         // never on a bearing of its own. Soldiers trailing her is the whole
         // read of the fight, and a random ring puts them in front of her.
         const Vec2 at = anchor - Vec2::fromAngle(facing, anchorRadius);
-        const Entity child = spawnEscort(world, terrain, content, childIndex, childRarity, at, nest,
-                                         nowMillis, rng, 1);
+        const Entity child = spawnEscort(world, terrain, content, childIndex, childRarity, at,
+                                         nestRealm, nest, nowMillis, rng, 1);
         if (child == NULL_ENTITY) continue;
         if (lifetimeMillis > 0.0) {
             world.add<Lifetime>(child, Lifetime{lifetimeMillis / 1000.0});
@@ -888,6 +913,7 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
         const double maxHealth = health->max > 0.0 ? health->max : 1.0;
         const Rarity nestRarity = type->rarity;
         const Vec2 anchor = transform->position;
+        const Realm nestRealm = transform->realm;
         const Body* body = world.tryGet<Body>(nest);
         const double anchorRadius = body != nullptr ? body->radius : kMobBaseRadius;
 
@@ -907,8 +933,8 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
             for (const std::uint16_t member : config.spawnWaves[static_cast<std::size_t>(index)]) {
                 const Entity child =
                     spawnEscort(world, terrain, content, member, nestRarity,
-                                escortRingPoint(anchor, anchorRadius, kWaveEscortGap, rng), nest,
-                                nowMillis, rng, 1);
+                                escortRingPoint(anchor, anchorRadius, kWaveEscortGap, rng),
+                                nestRealm, nest, nowMillis, rng, 1);
                 if (child == NULL_ENTITY) break;   // the global cap, nothing else
                 if (NestWaves* again = world.tryGet<NestWaves>(nest)) {
                     again->children.push_back(child);
@@ -1052,7 +1078,7 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
     for (int attempt = 0; attempt < kZonePlacementAttempts; ++attempt) {
         const Vec2 candidate = samplePointInRect(zone.bounds, rng);
         if (inBorderBand(candidate)) continue;
-        if (terrain.blocked(candidate)) continue;
+        if (terrain.blocked(candidate, Realm::Overworld)) continue;
         if (nearAnyPlayer(viewers, candidate, kMinSpawnDistance)) continue;
         if (crowdedAt(candidate, kPreliminarySpawnRadius, kMinMobSpawnSpacing)) continue;
         at = candidate;
@@ -1101,7 +1127,7 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
         return NULL_ENTITY;
     }
 
-    const Entity spawned = spawnMob(world, terrain, content, type, rarity, at, nowMillis, rng);
+    const Entity spawned = spawnMob(world, terrain, content, type, rarity, at, Realm::Overworld, nowMillis, rng);
     if (spawned == NULL_ENTITY) return NULL_ENTITY;
     // Counted straight away, so the rest of this pass spaces itself against
     // what it has just placed rather than against the last census alone.
@@ -1271,7 +1297,7 @@ Entity SpawnSystem::spawnSpecialMob(World& world, const Terrain& terrain,
         if (landing < 0 || (*superSections)[static_cast<std::size_t>(landing)]) return NULL_ENTITY;
     }
 
-    const Entity spawned = spawnMob(world, terrain, content, type, tier, at, nowMillis, rng);
+    const Entity spawned = spawnMob(world, terrain, content, type, tier, at, Realm::Overworld, nowMillis, rng);
     if (spawned == NULL_ENTITY) return NULL_ENTITY;
     if (const Transform* transform = world.tryGet<Transform>(spawned)) {
         const Body* body = world.tryGet<Body>(spawned);

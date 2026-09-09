@@ -98,6 +98,57 @@ Phase order, once per tick — later phases may rely on earlier ones having run:
 Deaths mark `Dead` rather than destroying, so everything later in the same tick
 still sees the entity. The reaper destroys them in phase 8.
 
+## Realms
+
+`shared/game/realm.h`. The overworld, the PVP arena and the daily maze are
+three **separate coordinate spaces**, each with its own origin at (0, 0). Every
+`Transform` carries the `Realm` its position is in, copied from whatever
+spawned the entity: a petal from its flower, a drop from its mob, a shot from
+its shooter, a nest's escort from the nest.
+
+The reference put the arena at (150000, 150000) and the maze at
+(200000, 200000) inside one world space and guarded every clamp, section
+lookup and grid individually. Here nothing in one realm can reach another by
+construction:
+
+* **Terrain** answers per realm. `Terrain::blocked/inWater/resolveCircle/
+  segmentBlocked/hasLineOfSight/findOpenSpawn` all take a `Realm` (no default,
+  on purpose): the overworld is the tile grid, the maze is `activeMaze()`'s
+  corridor lattice, the arena is open floor inside a ring.
+  `Terrain::clampInside` is the realm's closure — the world rectangle, the
+  maze square, or the ring's inside face — and replaces the old world clamp.
+* **Broadphase** — `SpatialGrid` keeps one layer per realm; `insert` files an
+  entity under its realm and `query` names the realm it asks about, so a
+  candidate list never crosses. The movement system's separation grid and the
+  petal attraction grid are the same class and follow the same rule.
+* **Replication** streams a viewer only its own realm, squadmates included;
+  positional events carry a realm and are filtered the same way.
+* **Player lists** are `RealmPoint`s (position + realm): the mob LOD gate, the
+  spawn census and the separation gate all pair a mob only with flowers in
+  its own space.
+* **Population** — `SpawnSystem` serves the overworld by viewport as before.
+  `ModeSpawner` (`server/systems/mode_spawning.*`) fills the arena (a crowd
+  that scales with the duellists, garden roster plus spider) and the maze
+  (the open world's density across every corridor, depth-zone tiers, two ultra
+  bosses in the deepest rooms) whole, while anyone is inside; the census keeps
+  those mobs alive on the same condition and drains them afterwards.
+* **Joining** — the spawn picker's `"pvp"` and `"maze"` are realm choices, not
+  biomes. `JoinAccepted` carries the realm and the maze day; `MazeInfo`
+  restates the day when `change-maze` rotates it. The client builds the same
+  walls from the day alone and draws the ground the realm calls for (tiles,
+  maze walls, or the arena ring), the maze minimap, and the arena scoreboard.
+* **The arena run** plays on a scratch `PlayerRecord` (`Session::arena`):
+  starter ring, empty bag, no talents, flat 100 health, players hostile to
+  each other (`Faction::friendlyFireEnabled`), XP earned doubling as
+  `ArenaScore`. `GameServer::liveRecord` is what every inventory and loadout
+  handler reads, so the account is never touched by a run; a quarter of the
+  run's loot reaches the account when the body leaves, and a death hands the
+  run to the killer.
+* **The maze track** — a maze body plays the account's loadout one rarity down
+  (orbiting slots still above mythic are benched), locked for the run, and its
+  XP and talents are `PlayerRecord::mazeTotalXp` / `mazeSkills`, never the
+  outside level.
+
 ## Networking
 
 `shared/net/`. `[u32 length][u8 type][payload]`, little-endian, no type tags

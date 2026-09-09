@@ -902,9 +902,13 @@ void WorldRenderer::update(double dt) {
 }
 
 void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera) const {
+    drawGroundTiles(canvas, camera, Rect{0, 0, kWorldSize, kWorldSize}, -1);
+}
+
+void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect world,
+                                    int fixedSection) const {
     const Rect visible = camera.visibleWorld(0);
     const double zoom = camera.zoom();
-    const Rect world{0, 0, kWorldSize, kWorldSize};
 
     // Anchored to the world origin, never to the camera: a tiling that moved
     // with the viewer would slide its pattern over the ground as you walk.
@@ -917,8 +921,10 @@ void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera) const {
         for (int i = 0; i <= tilesX; ++i) {
             const double tileX = startX + i * kGroundTileSize;
             const double tileY = startY + j * kGroundTileSize;
-            const int section = sectionAt({tileX + kGroundTileSize * 0.5,
-                                           tileY + kGroundTileSize * 0.5});
+            const int section = fixedSection >= 0
+                                    ? fixedSection
+                                    : sectionAt({tileX + kGroundTileSize * 0.5,
+                                                 tileY + kGroundTileSize * 0.5});
             // Outside the map there is no ground at all -- the void stays the
             // black the frame was cleared to.
             if (section < 0) continue;
@@ -958,6 +964,168 @@ void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera) const {
             canvas.restore();
         }
     }
+}
+
+namespace {
+
+/// Canvas start angle for the quarter-circle fillet, keyed by the corner
+/// code's (top, left) bits -- the mapping rrolf's RenderArena.c uses and the
+/// browser build's maze-render.ts copies.
+double filletStartAngle(int top, int left) {
+    if (top == 0 && left == 1) return kPi * 0.5;
+    if (top == 1 && left == 1) return kPi;
+    if (top == 1 && left == 0) return kPi * 1.5;
+    return 0.0;
+}
+
+/// Traces the wall shape of one rounded-corner cell (4-7 a convex floor
+/// corner, 12-15 a concave wall corner) into the current path, in screen
+/// space. The arc is one whole cell in radius and centred on the shared
+/// corner vertex, which is exactly the circle Maze::cellBlocksPoint tests, so
+/// what is drawn is what is collided with.
+void traceMazeCorner(Canvas& canvas, const Camera& camera, double x0, double y0, double g,
+                     int value) {
+    const int left = (value >> 1) & 1;
+    const int top = value & 1;
+    const int concave = (value >> 3) & 1;
+    const double cx = x0 + left * g;   // arc centre = the shared corner vertex
+    const double cy = y0 + top * g;
+    // A convex floor corner fills only the curved triangle at the vertex
+    // opposite the arc centre; a concave wall corner fills the whole cell
+    // minus that triangle. Both start their path accordingly.
+    const double sx = concave ? cx : x0 + (1 - left) * g;
+    const double sy = concave ? cy : y0 + (1 - top) * g;
+    const double a0 = filletStartAngle(top, left);
+    const Vec2 start = camera.worldToScreen({sx, sy});
+    const Vec2 centre = camera.worldToScreen({cx, cy});
+    canvas.moveTo(static_cast<float>(start.x), static_cast<float>(start.y));
+    canvas.arc(static_cast<float>(centre.x), static_cast<float>(centre.y),
+               static_cast<float>(g * camera.zoom()), static_cast<float>(a0),
+               static_cast<float>(a0 + kPi * 0.5), false);
+}
+
+/// The reference's arena palette (src/graphics/pvp-arena.ts): gardn's "???"
+/// zone, a plain grey floor with a faint dark grid, in a darker void.
+constexpr std::uint32_t kArenaFloor = 0x777777u;
+constexpr std::uint32_t kArenaVoid = 0x1A1A1Au;
+constexpr double kArenaGridCell = 50.0;
+
+} // namespace
+
+void WorldRenderer::drawMaze(Canvas& canvas, const Camera& camera) const {
+    // Beyond the maze's square there is nothing: the black the frame clears to.
+    ui::setFill(canvas, 0x000000u);
+    canvas.fillRect(0, 0, static_cast<float>(camera.viewportWidth()),
+                    static_cast<float>(camera.viewportHeight()));
+
+    const Maze& maze = activeMaze();
+    const double size = maze.worldSize();
+    const Rect square{kMazeOriginX, kMazeOriginY, size, size};
+    const Rect visible = camera.visibleWorld(0);
+    if (!visible.intersects(square)) return;
+
+    // 1. Ground: the biome's own tiles, the way that biome's overworld is
+    //    painted, clipped to the maze's square.
+    const int section = kMazeBiomeSections[static_cast<std::size_t>(maze.biome())];
+    drawGroundTiles(canvas, camera, square, section);
+
+    // 2. Walls: a single translucent black path, filled once. Filling cell by
+    //    cell at partial alpha leaves antialiased hairline seams along every
+    //    interior boundary of a contiguous wall mass; one nonzero fill
+    //    rasterises the union with full coverage across shared edges.
+    const double g = kMazeCellSize;
+    const double zoom = camera.zoom();
+    const int dim = maze.gridDim();
+    const int minGx = std::max(0, static_cast<int>(std::floor((visible.left() - kMazeOriginX) / g)));
+    const int maxGx = std::min(dim - 1, static_cast<int>(std::floor((visible.right() - kMazeOriginX) / g)));
+    const int minGy = std::max(0, static_cast<int>(std::floor((visible.top() - kMazeOriginY) / g)));
+    const int maxGy = std::min(dim - 1, static_cast<int>(std::floor((visible.bottom() - kMazeOriginY) / g)));
+
+    canvas.save();
+    clipWorldRect(canvas, camera, square);
+    ui::setFill(canvas, 0x000000u, 0.2);
+    canvas.beginPath();
+    for (int gy = minGy; gy <= maxGy; ++gy) {
+        for (int gx = minGx; gx <= maxGx; ++gx) {
+            const int v = maze.cellValue(gx, gy);
+            if (v == 1) continue;   // plain floor: nothing to draw
+            const double x0 = kMazeOriginX + gx * g;
+            const double y0 = kMazeOriginY + gy * g;
+            if (v == 0) {
+                const Vec2 at = camera.worldToScreen({x0, y0});
+                canvas.rect(static_cast<float>(at.x), static_cast<float>(at.y),
+                            static_cast<float>(g * zoom), static_cast<float>(g * zoom));
+            } else {
+                traceMazeCorner(canvas, camera, x0, y0, g, v);
+            }
+        }
+    }
+    canvas.fill();
+    canvas.restore();
+}
+
+void WorldRenderer::drawArena(Canvas& canvas, const Camera& camera) const {
+    const double zoom = camera.zoom();
+    const Vec2 centre = camera.worldToScreen(kArenaCentre);
+    const float radius = static_cast<float>(kArenaRadius * zoom);
+
+    // Dark void everywhere; the floor below paints over it inside the ring.
+    ui::setFill(canvas, kArenaVoid);
+    canvas.fillRect(0, 0, static_cast<float>(camera.viewportWidth()),
+                    static_cast<float>(camera.viewportHeight()));
+
+    canvas.save();
+    canvas.beginPath();
+    canvas.arc(static_cast<float>(centre.x), static_cast<float>(centre.y), radius, 0.0f,
+               static_cast<float>(kTau), false);
+    canvas.clip();
+
+    ui::setFill(canvas, kArenaFloor);
+    canvas.fillRect(0, 0, static_cast<float>(camera.viewportWidth()),
+                    static_cast<float>(camera.viewportHeight()));
+
+    // The grid is aligned to the arena's centre so its lines hold still as
+    // the camera moves. One screen pixel wide at every zoom, as the browser
+    // draws it (lineWidth 1 / zoomLevel inside the world transform).
+    const Rect visible = camera.visibleWorld(0);
+    const Rect arena{kArenaCentre.x - kArenaRadius, kArenaCentre.y - kArenaRadius,
+                     kArenaRadius * 2.0, kArenaRadius * 2.0};
+    const Rect span = intersection(visible, arena);
+    if (span.w > 0 && span.h > 0) {
+        ui::setStroke(canvas, 0x000000u, 0.18);
+        canvas.setLineWidth(1.0f);
+        canvas.beginPath();
+        const double firstX =
+            kArenaCentre.x + std::ceil((span.left() - kArenaCentre.x) / kArenaGridCell) * kArenaGridCell;
+        const double firstY =
+            kArenaCentre.y + std::ceil((span.top() - kArenaCentre.y) / kArenaGridCell) * kArenaGridCell;
+        for (double x = firstX; x <= span.right(); x += kArenaGridCell) {
+            const Vec2 a = camera.worldToScreen({x, span.top()});
+            const Vec2 b = camera.worldToScreen({x, span.bottom()});
+            canvas.moveTo(static_cast<float>(a.x), static_cast<float>(a.y));
+            canvas.lineTo(static_cast<float>(b.x), static_cast<float>(b.y));
+        }
+        for (double y = firstY; y <= span.bottom(); y += kArenaGridCell) {
+            const Vec2 a = camera.worldToScreen({span.left(), y});
+            const Vec2 b = camera.worldToScreen({span.right(), y});
+            canvas.moveTo(static_cast<float>(a.x), static_cast<float>(a.y));
+            canvas.lineTo(static_cast<float>(b.x), static_cast<float>(b.y));
+        }
+        canvas.stroke();
+    }
+    canvas.restore();
+
+    // The boundary: a hard red ring -- bodies are clamped to it -- with a
+    // paler line just inside.
+    canvas.save();
+    ui::setStroke(canvas, 0xFF3C3Cu, 0.65);
+    canvas.setLineWidth(static_cast<float>(12.0 * zoom));
+    canvas.strokeCircle(static_cast<float>(centre.x), static_cast<float>(centre.y), radius);
+    ui::setStroke(canvas, 0xFFC8C8u, 0.4);
+    canvas.setLineWidth(static_cast<float>(4.0 * zoom));
+    canvas.strokeCircle(static_cast<float>(centre.x), static_cast<float>(centre.y),
+                        static_cast<float>((kArenaRadius - 8.0) * zoom));
+    canvas.restore();
 }
 
 void WorldRenderer::drawSmoothedTileEdge(Canvas& canvas, const Camera& camera, int tileX,
@@ -2358,13 +2526,27 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
 void WorldRenderer::draw(Canvas& canvas, const WorldView& view, const Camera& camera,
                          Vec2 selfDrawn, double timeSeconds) const {
     selfNetId_ = view.self().netId;
+    realm_ = view.realm();
     draw(canvas, view.entities(), camera, selfDrawn, timeSeconds);
 }
 
 void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera& camera,
                          Vec2 selfDrawn, double timeSeconds) const {
-    drawTerrain(canvas, camera);
-    drawMapElements(canvas, camera, timeSeconds);
+    // What lies under the entities is the realm's business. The map's
+    // annotations -- teleporters, spawn-zone tints -- are the overworld's
+    // alone; the other two have no map.
+    switch (realm_) {
+        case Realm::Maze:
+            drawMaze(canvas, camera);
+            break;
+        case Realm::Arena:
+            drawArena(canvas, camera);
+            break;
+        case Realm::Overworld:
+            drawTerrain(canvas, camera);
+            drawMapElements(canvas, camera, timeSeconds);
+            break;
+    }
 
     const Rect visible = camera.visibleWorld(0);
     // A body is kept until its whole extent is off screen, and the margin grows

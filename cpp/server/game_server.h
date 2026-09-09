@@ -34,7 +34,15 @@ class MobAiSystem;
 class PetalSystem;
 class CombatSystem;
 class SpawnSystem;
+class ModeSpawner;
 class LootSystem;
+
+/// One loadout slot as the body in a given realm wears it: the account's
+/// petal, or the maze's shifted-and-benched version of it. See wornSlot().
+struct WornSlot {
+    std::uint16_t petalIndex = kNoPetal;
+    Rarity rarity = Rarity::Common;
+};
 
 /// Milliseconds since the first call, from a steady clock.
 ///
@@ -125,6 +133,9 @@ public:
     void serviceNetwork(int timeoutMillis);
 
     World& world() { return world_; }
+    /// The account store, for reading. Tests assert against it and the console
+    /// reports out of it; nothing outside this class writes to it.
+    const Database& database() const { return database_; }
     const Terrain& terrain() const { return *terrain_; }
     const MapData& mapData() const { return mapData_; }
     std::size_t playerCount() const;
@@ -316,6 +327,9 @@ private:
     /// Rotates the maze the server is playing. Returns the line the console
     /// prints, which is the reference's own answer for each case.
     std::string adminChangeMaze(const std::string& argument);
+    /// Tells one client, or every playing one, which maze the server is on.
+    void sendMazeInfo(net::Connection&);
+    void broadcastMazeInfo();
     /// How far the active maze has been pushed from the real UTC day by
     /// `change-maze`. Reported back so an operator can see they are off it.
     std::int64_t mazeDayOffset_ = 0;
@@ -400,6 +414,22 @@ private:
     // -- lifecycle ---------------------------------------------------------
     Entity spawnPlayer(Session&);
     void despawnPlayer(Session&, bool persist);
+    /// Which realm this session's next body belongs in, from its spawn choice.
+    Realm spawnRealmFor(const Session&) const;
+    /// The account state a session's body plays with: the arena run's scratch
+    /// record while there is one (see Session::arena), else the real account.
+    /// Every inventory and loadout handler goes through here, which is what
+    /// keeps a run in the ring from ever touching what the player owns.
+    PlayerRecord& liveRecord(Session&);
+    /// Builds the scratch account an arena run plays on: the fixed starter
+    /// ring, nothing in the bag, no talents, the real level.
+    std::unique_ptr<PlayerRecord> startArenaRun(const PlayerRecord& account) const;
+    /// Ends an arena run: a quarter of what was looted in the ring reaches the
+    /// real account and the scratch record is dropped.
+    void endArenaRun(Session&);
+    /// A flower died in the ring: its score and its whole arena bag go to the
+    /// flower that killed it, if that was another arena player.
+    void settleArenaDeath(Session& victim, Entity killer);
     /// Copies the live entity's progress back onto the account record. Called
     /// on leave, on death, and periodically -- a crash must not cost a session
     /// of progress.
@@ -679,15 +709,18 @@ private:
     std::unique_ptr<PetalSystem> petals_;
     std::unique_ptr<CombatSystem> combat_;
     std::unique_ptr<SpawnSystem> spawning_;
+    /// The arena's crowd and the maze's corridors, populated whole.
+    std::unique_ptr<ModeSpawner> modes_;
     std::unique_ptr<LootSystem> loot_;
 
-    /// Positions of every live flower, bots included, rebuilt each tick. The
-    /// mob LOD counts a bot as an observer, so this is the list it gets.
-    std::vector<Vec2> activePlayers_;
+    /// Positions of every live flower, bots included, each with the realm it
+    /// stands in, rebuilt each tick. The mob LOD counts a bot as an observer,
+    /// so this is the list it gets.
+    std::vector<RealmPoint> activePlayers_;
     /// The same, restricted to real connections. The spawner drives population
     /// and the unseen-despawn census off THIS one: bots must not each pull a
     /// neighbourhood of mobs into existence, nor keep the whole world alive.
-    std::vector<Vec2> humanPlayers_;
+    std::vector<RealmPoint> humanPlayers_;
 
     std::vector<Bot> bots_;
     /// Broadphase scratch for the bot controller, reused so a per-tick scan

@@ -102,8 +102,18 @@ struct Sim {
     Rng rng{0xC0FFEEu};
     double now = 0;
 
+    /// The tests speak in bare overworld coordinates; the system wants to know
+    /// which realm each one is in.
+    static std::vector<RealmPoint> overworld(const std::vector<Vec2>& players) {
+        std::vector<RealmPoint> points;
+        points.reserve(players.size());
+        for (const Vec2 p : players) points.push_back({p, Realm::Overworld});
+        return points;
+    }
+
     void tick(const std::vector<Vec2>& players) {
-        spawner.run(world, terrain, shipped(), players, rng, now, net::kTickSeconds, commands);
+        spawner.run(world, terrain, shipped(), overworld(players), rng, now, net::kTickSeconds,
+                    commands);
         commands.flush();
         now += net::kTickMillis;
     }
@@ -112,7 +122,7 @@ struct Sim {
     /// without paying for the thousand ticks in between.
     void jump(double millis, const std::vector<Vec2>& players) {
         now += millis;
-        spawner.run(world, terrain, shipped(), players, rng, now, 0.0, commands);
+        spawner.run(world, terrain, shipped(), overworld(players), rng, now, 0.0, commands);
         commands.flush();
     }
 
@@ -138,7 +148,7 @@ const Vec2 kCentre{30000.0, 30000.0};
 void rebuildGrid(World& world, SpatialGrid& grid) {
     grid.clear();
     Query<Transform, Body> bodies{world};
-    bodies.each([&](Entity e, Transform& t, Body& b) { grid.insert(e, t.position, b.radius); });
+    bodies.each([&](Entity e, Transform& t, Body& b) { grid.insert(e, Realm::Overworld, t.position, b.radius); });
 }
 
 Entity makePlayer(World& world, Vec2 position, double magnetism = 0.0, std::uint32_t netId = 0) {
@@ -273,19 +283,19 @@ TEST(a_direct_spawn_below_min_rarity_is_raised_to_it) {
     Sim sim;
     const std::uint16_t evil = shipped().mobIndex("evil_centipede");
     const Entity e = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), evil, Rarity::Common,
-                                          kCentre, 0.0, sim.rng);
+                                          kCentre, Realm::Overworld, 0.0, sim.rng);
     CHECK(e != NULL_ENTITY);
     CHECK_EQ(sim.world.get<MobType>(e).rarity, Rarity::Rare);
     // ...and a tier above it is left alone.
     const Entity high = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), evil,
-                                             Rarity::Legendary, kCentre, 0.0, sim.rng);
+                                             Rarity::Legendary, kCentre, Realm::Overworld, 0.0, sim.rng);
     CHECK_EQ(sim.world.get<MobType>(high).rarity, Rarity::Legendary);
 }
 
 TEST(an_unknown_mob_index_spawns_nothing) {
     Sim sim;
     CHECK_EQ(sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), kInvalidIndex, Rarity::Common,
-                                  kCentre, 0.0, sim.rng),
+                                  kCentre, Realm::Overworld, 0.0, sim.rng),
              NULL_ENTITY);
     CHECK_EQ(sim.world.size(), std::size_t(0));
 }
@@ -424,7 +434,7 @@ TEST(no_mob_is_placed_inside_a_wall) {
     int checked = 0;
     mobs.each([&](Entity, MobTag&, Transform& t) {
         ++checked;
-        CHECK(!sim.terrain.blocked(t.position));
+        CHECK(!sim.terrain.blocked(t.position, Realm::Overworld));
     });
     CHECK(checked > 0);
 
@@ -434,9 +444,9 @@ TEST(no_mob_is_placed_inside_a_wall) {
     for (int i = 0; i < 100; ++i) {
         const Vec2 inWall = Terrain::tileCenter(106, 100) + sim.rng.insideCircle(200.0);
         const Entity e = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), ant,
-                                              Rarity::Common, inWall, 0.0, sim.rng);
+                                              Rarity::Common, inWall, Realm::Overworld, 0.0, sim.rng);
         CHECK(e != NULL_ENTITY);
-        CHECK(!sim.terrain.blocked(sim.world.get<Transform>(e).position));
+        CHECK(!sim.terrain.blocked(sim.world.get<Transform>(e).position, Realm::Overworld));
     }
 }
 
@@ -444,7 +454,7 @@ TEST(a_spawned_mob_carries_everything_the_simulation_needs) {
     Sim sim;
     const std::uint16_t bee = shipped().mobIndex("bee");
     const Entity e = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), bee, Rarity::Rare,
-                                          kCentre, 1234.0, sim.rng);
+                                          kCentre, Realm::Overworld, 1234.0, sim.rng);
     CHECK(e != NULL_ENTITY);
     CHECK(sim.world.has<MobTag>(e));
     CHECK(sim.world.has<Motion>(e));
@@ -486,7 +496,7 @@ TEST(random_size_jitters_the_body_and_nothing_else) {
     bool sawLarge = false;
     for (int i = 0; i < 200; ++i) {
         const Entity e = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), sandstorm,
-                                              Rarity::Common, kCentre, 0.0, sim.rng);
+                                              Rarity::Common, kCentre, Realm::Overworld, 0.0, sim.rng);
         const double jitter = sim.world.get<MobType>(e).sizeJitter;
         CHECK(jitter >= lowest);
         CHECK(jitter <= highest);
@@ -504,7 +514,7 @@ TEST(random_size_jitters_the_body_and_nothing_else) {
 
     // A mob with no random_size gets exactly its configured size.
     const Entity bee = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(),
-                                            shipped().mobIndex("bee"), Rarity::Common, kCentre,
+                                            shipped().mobIndex("bee"), Rarity::Common, kCentre, Realm::Overworld,
                                             0.0, sim.rng);
     CHECK_NEAR(sim.world.get<MobType>(bee).sizeJitter, 1.0, 1e-12);
 }
@@ -520,7 +530,7 @@ TEST(a_nest_places_its_initial_escorts) {
     CHECK(config.initialSpawns.size() == std::size_t(6));
 
     const Entity nest = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), hole,
-                                             Rarity::Common, kCentre, 0.0, sim.rng);
+                                             Rarity::Common, kCentre, Realm::Overworld, 0.0, sim.rng);
     CHECK(nest != NULL_ENTITY);
     CHECK_EQ(sim.mobCount(), 1 + static_cast<int>(config.initialSpawns.size()));
     CHECK(sim.world.has<NestWaves>(nest));
@@ -537,7 +547,7 @@ TEST(a_nest_sends_its_waves_as_it_is_worn_down_and_holds_at_the_last) {
     const int lastWave = static_cast<int>(waveCount) - 1;
 
     const Entity nest = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), hole,
-                                             Rarity::Common, kCentre, 0.0, sim.rng);
+                                             Rarity::Common, kCentre, Realm::Overworld, 0.0, sim.rng);
     const std::vector<Vec2> players{kCentre};
     // Counted off the nest rather than off the world: the ambient filler is
     // running too, and its spawns are nothing to do with this hole.
@@ -599,7 +609,7 @@ TEST(a_periodic_nest_holds_its_escort_cap_and_expires_them) {
     CHECK(spec.lifetimeMillis > 0);
 
     const Entity nest = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), queen,
-                                             Rarity::Rare, kCentre, 0.0, sim.rng);
+                                             Rarity::Rare, kCentre, Realm::Overworld, 0.0, sim.rng);
     CHECK(sim.world.has<Spawner>(nest));
     const std::vector<Vec2> players{kCentre};
 
@@ -620,7 +630,7 @@ TEST(a_dead_nest_stops_producing) {
     Sim sim;
     const std::uint16_t queen = shipped().mobIndex("queen_ant");
     const Entity nest = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), queen,
-                                             Rarity::Rare, kCentre, 0.0, sim.rng);
+                                             Rarity::Rare, kCentre, Realm::Overworld, 0.0, sim.rng);
     sim.world.add<Dead>(nest, Dead{NULL_ENTITY});
 
     const std::vector<Vec2> players{kCentre};
@@ -809,7 +819,7 @@ TEST(a_non_contributor_can_never_take_an_eligible_players_drop) {
     const Entity fighter = makePlayer(world, kCentre + Vec2{4000, 0}, 0.0, 1);
     const Entity bystander = makePlayer(world, kCentre, 0.0, 2);
     (void)bystander;
-    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Rare, kCentre,
+    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Rare, kCentre, Realm::Overworld,
                                        {fighter}, 0.0);
     CHECK(drop != NULL_ENTITY);
 
@@ -839,7 +849,7 @@ TEST(a_contributor_may_take_a_reserved_drop_at_once) {
 
     const Entity fighter = makePlayer(world, kCentre, 0.0, 7);
     const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common,
-                                       kCentre, {fighter}, 0.0);
+                                       kCentre, Realm::Overworld, {fighter}, 0.0);
     // A wired allocator is what makes a drop visible to a client at all.
     CHECK(world.has<NetId>(drop));
     const std::uint32_t dropNetId = world.get<NetId>(drop).value;
@@ -867,7 +877,7 @@ TEST(an_unreserved_drop_is_free_for_anyone) {
     Rng rng(17);
 
     const Entity passerby = makePlayer(world, kCentre);
-    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre, {}, 0.0);
+    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre, Realm::Overworld, {}, 0.0);
     rebuildGrid(world, grid);
     loot.run(world, grid, shipped(), rng, 0.0, 0.0, commands, events);
     commands.flush();
@@ -886,7 +896,7 @@ TEST(each_player_can_take_an_unrestricted_drop_once) {
 
     makePlayer(world, kCentre, 0.0, 1);
     makePlayer(world, kCentre, 0.0, 2);
-    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre, {}, 0.0);
+    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre, Realm::Overworld, {}, 0.0);
 
     rebuildGrid(world, grid);
     loot.run(world, grid, shipped(), rng, 0.0, 0.0, commands, events);
@@ -910,7 +920,7 @@ TEST(magnetism_widens_the_pickup_radius_without_moving_the_drop) {
 
     const Vec2 dropAt = kCentre + Vec2{300.0, 0.0};
     const Entity player = makePlayer(world, kCentre, 0.0);
-    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, dropAt,
+    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, dropAt, Realm::Overworld,
                                        {player}, 0.0);
     CHECK(300.0 > kDropPickupRadius);
 
@@ -942,7 +952,7 @@ TEST(a_dead_player_picks_nothing_up) {
 
     const Entity player = makePlayer(world, kCentre);
     world.get<Health>(player).current = 0.0;
-    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre, {}, 0.0);
+    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre, Realm::Overworld, {}, 0.0);
 
     rebuildGrid(world, grid);
     loot.run(world, grid, shipped(), rng, 0.0, 0.0, commands, events);
@@ -958,7 +968,7 @@ TEST(drops_expire) {
     EventQueue events;
     Rng rng(21);
 
-    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre,
+    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common, kCentre, Realm::Overworld,
                                        {}, 0.0);
     constexpr double lifetime = kDropLifetimeByRarity[rarityIndex(Rarity::Common)];
     CHECK_NEAR(world.get<Lifetime>(drop).remainingSeconds, lifetime, 1e-12);
@@ -1024,7 +1034,7 @@ TEST(the_pickup_callback_sees_what_the_list_sees) {
     loot.onPickup = [&](const LootSystem::Pickup& p) { seen.push_back(p); };
 
     const Entity player = makePlayer(world, kCentre);
-    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Epic, kCentre, {}, 0.0);
+    loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Epic, kCentre, Realm::Overworld, {}, 0.0);
     rebuildGrid(world, grid);
     loot.run(world, grid, shipped(), rng, 0.0, 0.0, commands, events);
     commands.flush();
@@ -1204,10 +1214,10 @@ TEST(a_target_dummy_is_smaller_than_the_wild_mob_of_its_tier) {
     Rng rng(99);
     const Entity common =
         sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), dummy, Rarity::Common,
-                             kCentre, 0.0, rng);
+                             kCentre, Realm::Overworld, 0.0, rng);
     const Entity unique =
         sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), dummy, Rarity::Unique,
-                             kCentre + Vec2{4000.0, 0.0}, 0.0, rng);
+                             kCentre + Vec2{4000.0, 0.0}, Realm::Overworld, 0.0, rng);
     CHECK(common != NULL_ENTITY);
     CHECK(unique != NULL_ENTITY);
 

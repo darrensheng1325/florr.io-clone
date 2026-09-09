@@ -18,6 +18,7 @@
 
 #include "shared/core/types.h"
 #include "shared/game/constants.h"
+#include "shared/game/realm.h"
 
 namespace flix {
 
@@ -101,20 +102,22 @@ inline std::uint32_t tileColor(int section, Tile tile) {
 // Maze
 // ---------------------------------------------------------------------------
 //
-// A second world, far off the tile grid, that the daily maze mode plays in.
-// Nothing here touches Terrain's grid: the maze is a corridor lattice of
-// 1000-unit cells whose every corridor/void junction is rounded by a
-// quarter-circle fillet, and its walls are resolved by their own circle
-// solver. The tile grid does not cover these coordinates at all -- which is
-// exactly what the reference does, and why Terrain::blocked() answers "open"
-// there rather than "outside the map, therefore wall".
+// A second world in its own coordinate space (Realm::Maze), that the daily
+// maze mode plays in. Nothing here touches Terrain's grid: the maze is a
+// corridor lattice of 1000-unit cells whose every corridor/void junction is
+// rounded by a quarter-circle fillet, and its walls are resolved by their own
+// circle solver. Every Terrain query takes the realm it is asked about and
+// dispatches here for the maze, so no caller has to know the maze exists.
+//
+// The reference parks the maze at (200000, 200000) inside the one world
+// space; here it starts at (0, 0) in a space of its own. See realm.h.
 //
 // The layouts are authored, not generated. The day number only picks WHICH of
 // the three is active, so a client told nothing but the day builds the same
 // walls the server did, and no wall data ever goes over the wire.
 
-inline constexpr double kMazeOriginX = 200000.0;
-inline constexpr double kMazeOriginY = 200000.0;
+inline constexpr double kMazeOriginX = 0.0;
+inline constexpr double kMazeOriginY = 0.0;
 
 /// World units per grid cell, and therefore the corner fillet radius too.
 inline constexpr double kMazeCellSize = 1000.0;
@@ -159,7 +162,7 @@ public:
     /// Centres of the deepest rooms, where the mode places its bosses.
     const std::vector<Vec2>& bossSpots() const { return bossSpots_; }
 
-    /// True when a point is inside the maze's coordinate region at all.
+    /// True when a maze-space point lies inside the maze's square at all.
     bool contains(Vec2 p) const {
         const double span = worldSize();
         return p.x >= kMazeOriginX && p.x < kMazeOriginX + span &&
@@ -168,6 +171,14 @@ public:
 
     /// Cell value at grid coordinates; outside the grid reads as solid void.
     std::uint8_t cellValue(int gx, int gy) const;
+    /// Raw corner-coded grid and zone bands, row-major over gridDim() squared.
+    /// The renderer and the population target read them whole.
+    const std::vector<std::uint8_t>& values() const { return values_; }
+    const std::vector<std::uint8_t>& zones() const { return zones_; }
+    /// Difficulty band of a cell, or -1 for void.
+    int zoneOfCell(int gx, int gy) const;
+    /// Plain floor cells, the walkable area the maze's population is sized to.
+    int floorCellCount() const;
 
     /// Difficulty band at a world point, or -1 for void and for outside.
     int zoneAt(Vec2 p) const;
@@ -185,6 +196,12 @@ public:
     /// radially around the corner fillets. Iterated, like the tile resolver,
     /// so a corner settles instead of oscillating between its two faces.
     Vec2 resolveCircle(Vec2 position, double radius, bool* collided = nullptr) const;
+
+    /// The centre of the nearest plain floor cell to `p`, searched outward
+    /// ring by ring; the entrance when the grid has none. What a body the
+    /// resolver cannot free -- one placed deep inside the wall mass -- is
+    /// rescued to, the way the tile map rescues to its nearest open tile.
+    Vec2 nearestFloor(Vec2 p) const;
 
     /// Cheap circle-vs-cell overlap for projectiles. Reports the blocking
     /// cell's world rect, which is what a wall-hit effect is placed against.
@@ -217,8 +234,6 @@ void setActiveMazeDay(std::int64_t dayNumber);
 
 /// UTC day number, i.e. whole days since the epoch.
 std::int64_t currentMazeDay();
-
-inline bool isInMazeRegion(Vec2 p) { return activeMaze().contains(p); }
 
 // ---------------------------------------------------------------------------
 // Terrain
@@ -270,14 +285,32 @@ public:
 
     Tile at(Vec2 p) const { return atTile(toTileCoord(p.x), toTileCoord(p.y)); }
 
-    /// The maze region is deliberately absent from both answers. The
-    /// reference's wall grid does not cover those coordinates -- a read past
-    /// its bounds is air -- so every caller that asks the raw grid, the mob's
-    /// wander probe most of all, sees open ground inside the maze. Maze walls
-    /// are answered by resolveCircle() and hasLineOfSight(), which is exactly
-    /// where the reference asks them too.
-    bool blocked(Vec2 p) const { return !isInMazeRegion(p) && tileBlocks(at(p)); }
-    bool inWater(Vec2 p) const { return !isInMazeRegion(p) && tileIsWater(at(p)); }
+    /// Whether a point is inside something solid, in the given realm.
+    ///
+    /// Overworld: a blocking tile. Maze: wall, fillets included -- the
+    /// reference's wander probe saw open ground there because its wall grid
+    /// simply had no entry, and the maze here answers for itself instead.
+    /// Arena: outside the ring, which is the arena's one wall.
+    bool blocked(Vec2 p, Realm realm) const;
+    /// Water slows; only the overworld has any.
+    bool inWater(Vec2 p, Realm realm) const {
+        return realm == Realm::Overworld && tileIsWater(at(p));
+    }
+
+    // -- realm geometry -------------------------------------------------------
+
+    /// The square a realm's coordinates span, from (0, 0). The broadphase is
+    /// sized to it and a body is clamped inside it.
+    static double realmSize(Realm realm);
+
+    /// Keeps a body of `radius` inside its realm: the world rectangle, the
+    /// arena ring, or the maze square. The reference's PVP clamp
+    /// (src/server/playerState.ts:1989) is the arena case.
+    static Vec2 clampInside(Vec2 p, double radius, Realm realm);
+
+    /// True when a point has left its realm's playable area altogether. What
+    /// the loot system asks about a drop the resolver could not save.
+    static bool outside(Vec2 p, Realm realm);
 
     /// Which of the nine sections a point is in, or -1 outside the map.
     int sectionAt(Vec2 p) const { return flix::sectionAt(p); }
@@ -312,7 +345,7 @@ public:
     /// Inside the maze `unresolved` is always false, as it is in the reference:
     /// the maze resolver's result type has no such field, so a caller that
     /// refuses unresolved output never refuses a maze wall.
-    WallResolution resolveWall(Vec2 position, double radius) const;
+    WallResolution resolveWall(Vec2 position, double radius, Realm realm) const;
 
     /// Pushes a circle out of every solid tile it overlaps and returns the
     /// corrected centre, RESCUING a centre the four passes could not untangle
@@ -327,7 +360,7 @@ public:
     /// Robust by construction rather than by contract: absurd radii are
     /// clamped and non-finite input is replaced rather than propagated. Bad
     /// input upstream costs the caller a shove, never the tick.
-    Vec2 resolveCircle(Vec2 position, double radius) const;
+    Vec2 resolveCircle(Vec2 position, double radius, Realm realm) const;
 
     /// True when the segment crosses any blocking tile. An exact DDA walk: no
     /// allocation, and bounded even for nonsense endpoints.
@@ -336,7 +369,7 @@ public:
     /// hasLineOfSight() below -- the reference's sight test samples, and a
     /// sparse sample steps over a wall an exact walk stops at. Use this only
     /// where the question really is "does this segment touch solid".
-    bool segmentBlocked(Vec2 a, Vec2 b) const;
+    bool segmentBlocked(Vec2 a, Vec2 b, Realm realm) const;
 
     /// True when the straight path between two entity CENTRES touches any
     /// blocking tile, every tile grown by `eps` first.
@@ -349,7 +382,8 @@ public:
     /// anything is what catches it.
     ///
     /// Off-grid tiles are air here, exactly as in the reference's scan, so a
-    /// path outside the map -- the maze region included -- crosses nothing.
+    /// path outside the map crosses nothing. A tile question, so it is asked
+    /// of the overworld only: the maze and the arena have no tiles.
     bool segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps = kCenterPathInflation) const;
 
     /// The reference's sight test, sample for sample: endpoints closer than
@@ -362,12 +396,12 @@ public:
     /// Outside the grid reads as AIR here, not as wall: the reference's grid
     /// simply has no entry there, so a ray leaving the map is never blocked by
     /// having left it.
-    bool hasLineOfSight(Vec2 a, Vec2 b, int sampleCount = kLineOfSightSamples) const;
+    bool hasLineOfSight(Vec2 a, Vec2 b, Realm realm, int sampleCount = kLineOfSightSamples) const;
 
     /// A walkable point within `radius` of `around`, avoiding water when it
     /// can. Falls back to the nearest open tile, so it always returns
     /// something a body can stand in.
-    Vec2 findOpenSpawn(Rng& rng, Vec2 around, double radius) const;
+    Vec2 findOpenSpawn(Rng& rng, Vec2 around, double radius, Realm realm) const;
 
     /// The nearest tile a body can stand in, searched outward from `p`. False
     /// when everything within the search bound is solid.

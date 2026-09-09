@@ -53,6 +53,7 @@ public:
         std::uint32_t renderFlags = 0xFFFFFFFFu;
         std::uint16_t level = 0;      ///< 0 is not a valid level, forcing a first send
         std::uint8_t bestRarity = 0xFF;
+        std::uint32_t arenaScore = 0;
         bool seenThisTick = false;
     };
 
@@ -83,6 +84,10 @@ struct WireEvent {
     std::uint32_t otherNetId = 0;
     double amount = 0;
     Vec2 position;
+    /// The space `position` is in. A positional event is only sent to viewers
+    /// in the same realm: a damage number in the maze means nothing to a
+    /// flower in the overworld whose window happens to cover the same numbers.
+    Realm realm = Realm::Overworld;
     double radius = 0;
     std::uint8_t flag = 0;
 
@@ -100,32 +105,36 @@ public:
     /// `flags` is a net::DamageEventFlags mask. Poison is called out on the
     /// wire because the client colours and offsets a tick differently from a
     /// petal hit, and only the server knows which one landed.
-    void damage(std::uint32_t netId, double amount, Vec2 at, std::uint8_t flags = 0) {
+    void damage(std::uint32_t netId, double amount, Vec2 at, Realm realm,
+                std::uint8_t flags = 0) {
         WireEvent e;
         e.kind = net::EventKind::Damage;
         e.netId = netId;
         e.amount = amount;
         e.position = at;
+        e.realm = realm;
         e.flag = flags;
         e.positional = true;
         events_.push_back(e);
     }
 
-    void killed(std::uint32_t netId, Vec2 at) {
+    void killed(std::uint32_t netId, Vec2 at, Realm realm) {
         WireEvent e;
         e.kind = net::EventKind::Killed;
         e.netId = netId;
         e.position = at;
+        e.realm = realm;
         e.positional = true;
         events_.push_back(e);
     }
 
-    void pickedUp(std::uint32_t dropNetId, std::uint32_t byNetId, Vec2 at) {
+    void pickedUp(std::uint32_t dropNetId, std::uint32_t byNetId, Vec2 at, Realm realm) {
         WireEvent e;
         e.kind = net::EventKind::PickedUp;
         e.netId = dropNetId;
         e.otherNetId = byNetId;
         e.position = at;
+        e.realm = realm;
         e.positional = true;
         events_.push_back(e);
     }
@@ -209,6 +218,8 @@ struct PlayerVisualState {
     /// the viewer of a player rather than to the player being viewed.
     std::uint16_t level = 1;
     Rarity bestRarity = Rarity::Common;
+    /// The arena leaderboard's number; zero for anyone not in the ring.
+    std::uint32_t arenaScore = 0;
 };
 
 PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis);

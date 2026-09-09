@@ -84,8 +84,21 @@ struct PlayerRecord {
     /// One entry per loadout slot; an empty slot is a JSON null.
     std::vector<std::optional<StoredItem>> loadout;
 
-    /// Keys this build does not model, round-tripped verbatim (the maze
-    /// progression: mazeTotalXP, mazeTp, mazeSkills, mazeLoadout).
+    /// The maze's own progression track. XP earned inside the maze lands here
+    /// and its talents are bought from here, so a maze run can neither inflate
+    /// nor spend the outside level (src/server/playerManager.ts:231-245). The
+    /// same JSON shape as `totalXP`/`skills`, under `mazeTotalXP`/`mazeSkills`.
+    double mazeTotalXp = 0;
+    SkillSet mazeSkills;
+    /// Maze-tree branches this build does not know, round-tripped verbatim.
+    /// The outside tree drops unknown branches -- a tier only means something
+    /// to the code that applies it -- but the maze tree is also read by the
+    /// TypeScript server sharing this file, and its maze talents are not all
+    /// modelled here yet; losing them would strip a player's maze build.
+    Json mazeSkillsExtra = Json::object();
+
+    /// Keys this build does not model, round-tripped verbatim (`mazeLoadout`,
+    /// the reference's separately-authored maze preset).
     Json extra = Json::object();
 
     int itemCount(Rarity rarity, const std::string& itemType) const;
@@ -99,6 +112,8 @@ struct PlayerRecord {
 
     /// Unspent talent points, from the level this record's XP buys.
     int talentPoints() const;
+    /// The same, on the maze track.
+    int mazeTalentPoints() const;
 };
 
 /// A registered account. `passwordHash` is a bcrypt string; see verifyPassword

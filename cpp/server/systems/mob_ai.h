@@ -293,6 +293,8 @@ struct MobSpawnRequest {
     std::uint16_t configIndex = 0;
     Rarity rarity = Rarity::Common;
     Vec2 position;
+    /// The nest's own realm: an escort appears in the space its nest is in.
+    Realm realm = Realm::Overworld;
     /// 0 means the escort never expires on its own.
     double lifetimeMillis = 0;
 };
@@ -333,7 +335,7 @@ public:
     /// A nest's spawn and a volley both land as deferred commands, so
     /// `commands` must be flushed while this system is still alive.
     void run(World& world, const Terrain& terrain, const SpatialGrid& grid,
-             const std::vector<Vec2>& activePlayers,
+             const std::vector<RealmPoint>& activePlayers,
              double nowMillis, double dt, CommandBuffer& commands);
 
     /// Per-run counters. Reset at the top of every run(), so they describe the
@@ -382,6 +384,7 @@ private:
         Entity entity = NULL_ENTITY;
         Vec2 position;
         double score = 0;   ///< distance less the player's aggro bonus
+        Realm realm = Realm::Overworld;
     };
 
     Drive driveFor(std::uint16_t configIndex, Rarity rarity);
@@ -395,7 +398,8 @@ private:
     /// Always, within the active radius. Beyond it, one tick in kMobFarStride,
     /// offset by the mob's own slot so the far world does not decide in
     /// lockstep -- a shared stride would move the spike rather than remove it.
-    bool stepsThisTick(Entity self, Vec2 position, const std::vector<Vec2>& activePlayers) const;
+    bool stepsThisTick(Entity self, Vec2 position, Realm realm,
+                       const std::vector<RealmPoint>& activePlayers) const;
 
     /// What a far mob does on a tick it did not think.
     ///
@@ -431,7 +435,7 @@ private:
                         double dt);
     /// Drags every player within kSandstormSuckRange toward `from`, which is
     /// where the storm ends this tick rather than where it started it.
-    void suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, double dt);
+    void suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, Realm realm, double dt);
     /// True when the mob spent this tick walking back to whatever spawned it,
     /// with `desired` holding that walk. Crossing the retreat radius is also
     /// what makes it drop the target it was dragged out on.
@@ -445,7 +449,7 @@ private:
                          double nowMillis, Vec2& desired, CommandBuffer& commands);
 
     Entity acquireTarget(World& world, const Terrain& terrain, const SpatialGrid& grid,
-                         Entity self, Vec2 from, double range);
+                         Entity self, Vec2 from, Realm realm, double range);
     /// The PET a wild mob settles for when no flower is to be had. Distinct
     /// from acquirePetPrey() below, which is the wild mob a pet goes after.
     ///
@@ -453,14 +457,16 @@ private:
     /// broadphase: a player fields one or two summons, so the list is shorter
     /// than a single grid cell, and a world with no pets in it must not cost a
     /// query per hostile mob per tick.
-    Entity acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, double range);
+    Entity acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
+                            double range);
     Entity nearestAttacker(World& world, Entity self, Vec2 from, double radius) const;
-    bool targetHeld(World& world, const Terrain& terrain, Vec2 from, Entity target) const;
+    bool targetHeld(World& world, const Terrain& terrain, Vec2 from, Realm realm,
+                    Entity target) const;
     /// Whether a pet target still stands. Held on the mob's own aggro RANGE
     /// rather than the five viewports a flower is chased across: a summon is a
     /// target of opportunity, not a grudge.
-    bool petTargetHeld(World& world, const Terrain& terrain, Vec2 from, Entity target,
-                       double range) const;
+    bool petTargetHeld(World& world, const Terrain& terrain, Vec2 from, Realm realm,
+                       Entity target, double range) const;
 
     /// The player a NEUTRAL mob turns on this tick, or NULL_ENTITY.
     ///
@@ -498,14 +504,15 @@ private:
     /// The wild mob a pet is fighting: the cached one while it is still on the
     /// OWNER's screen and in sight, else the nearest one that is.
     Entity acquirePetPrey(World& world, const Terrain& terrain, const SpatialGrid& grid,
-                          Entity self, Vec2 from, MobAi& ai, bool hasOwner, Vec2 ownerPosition,
-                          double range);
+                          Entity self, Vec2 from, Realm realm, MobAi& ai, bool hasOwner,
+                          Vec2 ownerPosition, double range);
     /// Pops a pet onto a clear, visible ring position around its owner. False
     /// when nothing was clear and the pet stayed where it was.
     bool teleportPetToOwner(const Terrain& terrain, Transform& transform, Vec2 ownerPosition);
 
     void repairChains(World& world);
-    void followChains(World& world, const Terrain& terrain, const std::vector<Vec2>& activePlayers);
+    void followChains(World& world, const Terrain& terrain,
+                      const std::vector<RealmPoint>& activePlayers);
     void placeFollower(World& world, const Terrain& terrain, Entity self, Entity ahead);
     void driveSpawners(World& world, const Terrain& terrain, double nowMillis, CommandBuffer& commands);
 

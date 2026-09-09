@@ -61,7 +61,7 @@ struct Arena {
     void rebuildGrid() {
         grid.clear();
         collidable.each([&](Entity e, Transform& transform, Body& body) {
-            grid.insert(e, transform.position, body.radius);
+            grid.insert(e, Realm::Overworld, transform.position, body.radius);
         });
     }
 

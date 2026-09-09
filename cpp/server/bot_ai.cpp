@@ -564,7 +564,7 @@ bool GameServer::botRayHitsWall(Vec2 from, Vec2 to) const {
     const int steps = std::min(1024, static_cast<int>(std::ceil(dist / step)));
     for (int i = 1; i <= steps; ++i) {
         const double t = static_cast<double>(i) / steps;
-        if (terrain_->blocked(from + delta * t)) return true;
+        if (terrain_->blocked(from + delta * t, Realm::Overworld)) return true;
     }
     return false;
 }
@@ -586,7 +586,7 @@ Vec2 GameServer::botAvoidNearbyMobs(Vec2 at, Entity except) {
     // intent and leave it unable to reach a goal that happens to be guarded.
     Vec2 out{0, 0};
     botAvoidCandidates_.clear();
-    grid_.query(at, kBotMobAvoidQueryRadius, botAvoidCandidates_);
+    grid_.query(Realm::Overworld, at, kBotMobAvoidQueryRadius, botAvoidCandidates_);
     for (const Entity candidate : botAvoidCandidates_) {
         if (candidate == except) continue;
         if (!world_.isAlive(candidate) || world_.has<Dead>(candidate)) continue;
@@ -1659,7 +1659,7 @@ Entity GameServer::botPickTarget(const Bot& bot, const BotModeContext& mode, dou
     // Bosses reach much further and skip the tether, so they come from the
     // per-tick index instead of from the grid.
     botCandidates_.clear();
-    grid_.query(at, kBotHighTierAggroRange, botCandidates_);
+    grid_.query(Realm::Overworld, at, kBotHighTierAggroRange, botCandidates_);
     for (const Entity candidate : botCandidates_) {
         const MobType* type = world_.tryGet<MobType>(candidate);
         if (type != nullptr && isBotBossTier(type->rarity)) continue;
@@ -1682,7 +1682,7 @@ Entity GameServer::botFindInterceptingMob(Vec2 at, Vec2 direction, Entity except
     Entity best = NULL_ENTITY;
     double bestDist = std::numeric_limits<double>::max();
     botCandidates_.clear();
-    grid_.query(at, range, botCandidates_);
+    grid_.query(Realm::Overworld, at, range, botCandidates_);
     for (const Entity candidate : botCandidates_) {
         if (candidate == except) continue;
         if (!world_.isAlive(candidate) || world_.has<Dead>(candidate)) continue;
@@ -1727,7 +1727,7 @@ Entity GameServer::botFindPickup(const Bot& bot, const BotModeContext& mode, dou
     // has to be able to see it or the commitment silently expires at the range
     // gate instead of at the score.
     botCandidates_.clear();
-    grid_.query(at, kBotItemSeekRange + kBotPickupStickiness, botCandidates_);
+    grid_.query(Realm::Overworld, at, kBotItemSeekRange + kBotPickupStickiness, botCandidates_);
     for (const Entity candidate : botCandidates_) {
         if (!world_.isAlive(candidate)) continue;
         const DropItem* drop = world_.tryGet<DropItem>(candidate);
@@ -1767,7 +1767,7 @@ bool GameServer::botHasHighRarityMobNearby(const Bot& bot, double range) {
     const Vec2 at = transform->position;
     const double rangeSq = range * range;
     botCandidates_.clear();
-    grid_.query(at, range, botCandidates_);
+    grid_.query(Realm::Overworld, at, range, botCandidates_);
     for (const Entity candidate : botCandidates_) {
         if (!world_.isAlive(candidate) || world_.has<Dead>(candidate)) continue;
         if (!world_.has<MobTag>(candidate) || world_.has<Pet>(candidate)) continue;

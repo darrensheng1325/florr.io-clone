@@ -9,6 +9,7 @@ void WorldView::clear() {
     entities_.clear();
     events_.clear();
     self_ = SelfState{};
+    realm_ = Realm::Overworld;
     tick_ = 0;
     selfDrawnPosition_ = {};
     selfSnapPending_ = true;
@@ -98,6 +99,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         std::uint32_t renderFlags;
         std::uint16_t level;
         Rarity bestRarity;
+        std::uint32_t arenaScore;
         std::uint32_t ownerNetId;
         std::string name;
     };
@@ -123,6 +125,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
             s.renderFlags = reader.u32();
             s.level = reader.u16();
             s.bestRarity = clampRarity(reader.u8());
+            s.arenaScore = reader.u32();
         }
         if (s.kind == net::EntityKind::Petal) s.ownerNetId = reader.u32();
         if (s.flags & net::SpawnHasName) s.name = reader.str();
@@ -143,6 +146,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         std::uint32_t renderFlags;
         std::uint16_t level;
         Rarity bestRarity;
+        std::uint32_t arenaScore;
     };
     std::vector<Update> updates;
     updates.reserve(updateCount);
@@ -161,6 +165,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
             u.renderFlags = reader.u32();
             u.level = reader.u16();
             u.bestRarity = clampRarity(reader.u8());
+            u.arenaScore = reader.u32();
         }
         updates.push_back(u);
         if (!reader.ok()) return false;
@@ -231,6 +236,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         e.renderFlags = s.renderFlags;
         e.level = s.level;
         e.bestRarity = s.bestRarity;
+        e.arenaScore = s.arenaScore;
         e.ownerNetId = s.ownerNetId;
         if (s.flags & net::SpawnIsSelf) {
             self_.netId = s.netId;
@@ -273,6 +279,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
             e.renderFlags = u.renderFlags;
             e.level = u.level;
             e.bestRarity = u.bestRarity;
+            e.arenaScore = u.arenaScore;
         }
     }
 
@@ -325,8 +332,9 @@ bool playBack(const std::vector<RemoteEntity::Sample>& samples, double renderMil
 /// Eases `position` a fraction `t` of the way to `target`.
 ///
 /// `cut` asks for the flower rules: a gap wider than a teleport is a portal, a
-/// respawn or the maze at (200000, 200000) and must not be glided across, and
-/// a gap under the settle epsilon lands exactly instead of asymptoting.
+/// respawn or the maze's rotation moving everyone to the new entrance, and
+/// must not be glided across, and a gap under the settle epsilon lands exactly
+/// instead of asymptoting.
 void easeToward(Vec2& position, Vec2 target, double t, bool cut) {
     const Vec2 gap = target - position;
     if (cut && (gap.lengthSq() > kTeleportSnapDistance * kTeleportSnapDistance ||

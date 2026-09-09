@@ -195,6 +195,17 @@ private:
     void drawTerrain(Canvas&, const Camera&) const;
     /// The biome artwork, tiled every 400 world units from the world origin.
     void drawGround(Canvas&, const Camera&) const;
+    /// The tiling itself, over `area`. A negative `fixedSection` reads each
+    /// tile's biome off the map; the maze hands over the one section whose
+    /// ground it borrows.
+    void drawGroundTiles(Canvas&, const Camera&, Rect area, int fixedSection) const;
+    /// The maze realm: its biome's ground under rrolf-style walls, every
+    /// corridor junction rounded by a quarter-circle fillet, and the void
+    /// beyond its square left black.
+    void drawMaze(Canvas&, const Camera&) const;
+    /// The arena realm: a grey gridded floor inside the ring, dark void
+    /// outside it, and the red boundary the server clamps bodies to.
+    void drawArena(Canvas&, const Camera&) const;
     /// The shoreline a water tile grows where it meets air.
     void drawSmoothedTileEdge(Canvas&, const Camera&, int tileX, int tileY, int edge) const;
     /// Teleporters, and the spawn-zone tints while the rarity glow is held.
@@ -359,6 +370,9 @@ private:
     /// and used to decide whose petal ring follows the PREDICTED body rather
     /// than the interpolated one.
     mutable std::uint32_t selfNetId_ = 0;
+    /// Which realm the view being drawn is in; decides what goes under the
+    /// entities. Taken from the WorldView on each draw, like selfNetId_.
+    mutable Realm realm_ = Realm::Overworld;
 
     mutable SectionTiming timing_;
 

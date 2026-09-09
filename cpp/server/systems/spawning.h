@@ -297,8 +297,13 @@ public:
     /// never drains it keeps the newest announcements instead of growing.
     std::vector<BossSpawn> bossSpawns;
 
+    /// `players` is every connected flower with a body; the neighbourhood
+    /// fill, the zones and the boss pass serve the OVERWORLD ones, and the
+    /// census keeps a mob in another realm alive for as long as anyone is in
+    /// that realm at all -- the arena and the maze are populated by
+    /// ModeSpawner, whole, not by viewport.
     void run(World& world, const Terrain& terrain, const ContentRegistry& content,
-             const std::vector<Vec2>& players, Rng& rng, double nowMillis, double dt,
+             const std::vector<RealmPoint>& players, Rng& rng, double nowMillis, double dt,
              CommandBuffer& commands);
 
     /// Places one mob, with its nest escorts if it has any, and returns it.
@@ -308,8 +313,8 @@ public:
     /// before use, so a caller may hand over a point in a wall and still get a
     /// mob standing somewhere legal.
     Entity spawnMob(World& world, const Terrain& terrain, const ContentRegistry& content,
-                    std::uint16_t mobIndex, Rarity rarity, Vec2 position, double nowMillis,
-                    Rng& rng);
+                    std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
+                    double nowMillis, Rng& rng);
 
     /// The weighted type roll for one section: spawn_weight over the mobs whose
     /// `section` list contains it. kInvalidIndex when the section has none.
@@ -361,7 +366,7 @@ private:
     /// Pairs each position the caller handed over with the flower standing on
     /// it. The list stays the caller's -- it decides WHO drives the population
     /// -- and this only fills in what a bare coordinate cannot say.
-    void gatherViewers(World& world, const std::vector<Vec2>& players);
+    void gatherViewers(World& world, const std::vector<RealmPoint>& players);
 
     void takeCensus(const ContentRegistry& content, const std::vector<Viewer>& viewers,
                     double nowMillis, CommandBuffer& commands);
@@ -448,8 +453,8 @@ private:
                           Vec2 position, int& sectionOut) const;
 
     Entity spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
-                      std::uint16_t mobIndex, Rarity rarity, Vec2 position, double nowMillis,
-                      Rng& rng, int depth);
+                      std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
+                      double nowMillis, Rng& rng, int depth);
 
     /// Lays a centipede's body out behind its head, each segment linked to the
     /// one in front. Driven from spawnMobAt so that every path to a head --
@@ -457,15 +462,15 @@ private:
     /// caller can produce a lone head.
     void spawnBodyChain(World& world, const Terrain& terrain, const ContentRegistry& content,
                         Entity head, const MobConfig& config, Rarity rarity, Vec2 headPosition,
-                        double headAngle, double nowMillis, Rng& rng, int depth);
+                        Realm realm, double headAngle, double nowMillis, Rng& rng, int depth);
 
     /// One escort at an already-chosen spot, leashed to `parent`. Where that
     /// spot is belongs to the caller: a hole's guards and its waves stand off
     /// it on a bearing of their own, while a queen's soldiers come out
     /// directly behind her.
     Entity spawnEscort(World& world, const Terrain& terrain, const ContentRegistry& content,
-                       std::uint16_t childIndex, Rarity nestRarity, Vec2 at, Entity parent,
-                       double nowMillis, Rng& rng, int depth);
+                       std::uint16_t childIndex, Rarity nestRarity, Vec2 at, Realm realm,
+                       Entity parent, double nowMillis, Rng& rng, int depth);
 
     void rebuildCandidates(const ContentRegistry& content);
 
@@ -511,6 +516,10 @@ private:
     /// few times.
     std::vector<Viewer> viewers_;
     std::vector<Viewer> worldViewers_;
+    /// Whether anyone at all stands in each realm this pass. What keeps an
+    /// arena or maze mob alive: those realms are populated whole, so "near a
+    /// player" there means "someone is in here".
+    std::array<bool, kRealmCount> realmOccupied_{};
     std::vector<int> neighbours_;
     struct MobPlacement { Vec2 position; double radius = 0; };
     std::vector<MobPlacement> mobPlacements_;

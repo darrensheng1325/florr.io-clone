@@ -296,8 +296,8 @@ TEST(events_are_scoped_to_what_the_client_can_see) {
     f.tick(client, 1, 1000);
     client.events().clear();
 
-    f.events.damage(netIdOf(f.world, mob), 37, {1100, 1000});
-    f.events.damage(999, 12, {50000, 50000});   // far away
+    f.events.damage(netIdOf(f.world, mob), 37, {1100, 1000}, Realm::Overworld);
+    f.events.damage(999, 12, {50000, 50000}, Realm::Overworld);   // far away
     f.tick(client, 2, 1040);
 
     CHECK_EQ(client.events().size(), std::size_t(1));

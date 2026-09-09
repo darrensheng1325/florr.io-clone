@@ -1209,7 +1209,15 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
                     const double radius = rng_.range(0.0, 40.0 + 8.0 * static_cast<double>(i));
                     at = {x + std::cos(angle) * radius, y + std::sin(angle) * radius};
                 }
-                spawning_->spawnMob(world_, *terrain_, content(), mobIndex, rarity, at,
+                // Into the realm the admin is standing in: a spawn typed from
+                // inside the maze lands in the maze, in maze coordinates.
+                Realm realm = Realm::Overworld;
+                if (session.playing()) {
+                    if (const Transform* mine = world_.tryGet<Transform>(session.entity)) {
+                        realm = mine->realm;
+                    }
+                }
+                spawning_->spawnMob(world_, *terrain_, content(), mobIndex, rarity, at, realm,
                                     monotonicMillis(), rng_);
             }
         }

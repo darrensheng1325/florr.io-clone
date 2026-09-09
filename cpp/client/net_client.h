@@ -448,6 +448,7 @@ private:
     void handleAuthResult(ByteReader&);
     void handleProfile(ByteReader&);
     void handleJoinAccepted(ByteReader&);
+    void handleMazeInfo(ByteReader&);
     void handleChat(ByteReader&);
     void handleNotice(ByteReader&);
     /// Appends one line and trims the transcript to its cap.

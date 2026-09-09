@@ -59,8 +59,8 @@ const double kInfinity = std::numeric_limits<double>::infinity();
 TEST(fresh_terrain_is_open_ground) {
     Terrain t;
     CHECK_EQ(t.at(Vec2{kWorldHalf, kWorldHalf}), Tile::Ground);
-    CHECK(!t.blocked(Vec2{kWorldHalf, kWorldHalf}));
-    CHECK(!t.inWater(Vec2{kWorldHalf, kWorldHalf}));
+    CHECK(!t.blocked(Vec2{kWorldHalf, kWorldHalf}, Realm::Overworld));
+    CHECK(!t.inWater(Vec2{kWorldHalf, kWorldHalf}, Realm::Overworld));
     CHECK_EQ(t.openTileCount(), kTilesPerAxis * kTilesPerAxis);
     CHECK(t.isConnected());
 }
@@ -76,10 +76,10 @@ TEST(out_of_bounds_reads_are_wall) {
     CHECK_EQ(t.atTile(-100000, 100000), Tile::Wall);
     CHECK_EQ(t.at(Vec2{-1.0, kWorldHalf}), Tile::Wall);
     CHECK_EQ(t.at(Vec2{kWorldSize, kWorldHalf}), Tile::Wall);
-    CHECK(t.blocked(Vec2{-50000, -50000}));
-    CHECK(t.blocked(Vec2{1e30, 1e30}));
+    CHECK(t.blocked(Vec2{-50000, -50000}, Realm::Overworld));
+    CHECK(t.blocked(Vec2{1e30, 1e30}, Realm::Overworld));
     // NaN has no tile; answering Wall is the closed-world answer.
-    CHECK(t.blocked(Vec2{kQuietNan, kQuietNan}));
+    CHECK(t.blocked(Vec2{kQuietNan, kQuietNan}, Realm::Overworld));
 }
 
 TEST(tile_coordinates_clamp_instead_of_overflowing) {
@@ -141,7 +141,7 @@ TEST(generated_map_is_fully_connected) {
         Terrain t;
         t.generate(seed);
         CHECK(t.isConnected());
-        CHECK(!t.blocked(t.spawnPoint()));
+        CHECK(!t.blocked(t.spawnPoint(), Realm::Overworld));
     }
 }
 
@@ -185,7 +185,7 @@ TEST(walling_off_a_pocket_breaks_connectivity) {
 TEST(resolve_circle_leaves_a_free_circle_untouched) {
     Terrain t;
     const Vec2 p{kWorldHalf, kWorldHalf};
-    const Vec2 out = t.resolveCircle(p, kPlayerBaseRadius);
+    const Vec2 out = t.resolveCircle(p, kPlayerBaseRadius, Realm::Overworld);
     CHECK_NEAR(out.x, p.x, 1e-9);
     CHECK_NEAR(out.y, p.y, 1e-9);
 }
@@ -197,14 +197,14 @@ TEST(resolve_circle_pushes_a_circle_out_of_a_wall) {
 
     // Overlapping the wall's left face by 50 units.
     const Vec2 start{wall.left() - 50.0, wall.top() + kTileSize * 0.5};
-    const Vec2 out = t.resolveCircle(start, 100.0);
+    const Vec2 out = t.resolveCircle(start, 100.0, Realm::Overworld);
     CHECK(out.x <= wall.left() - 100.0);
     CHECK(out.x >= wall.left() - 100.0 - 20.1);
     CHECK_NEAR(out.y, start.y, 1e-9);
     CHECK(!overlapsWall(t, out, 100.0));
 
     // And a circle that never touched it does not move.
-    const Vec2 clear = t.resolveCircle(Vec2{wall.left() - 500.0, start.y}, 100.0);
+    const Vec2 clear = t.resolveCircle(Vec2{wall.left() - 500.0, start.y}, 100.0, Realm::Overworld);
     CHECK_NEAR(clear.x, wall.left() - 500.0, 1e-9);
 }
 
@@ -216,12 +216,12 @@ TEST(resolve_circle_escapes_a_wall_it_is_buried_in) {
     // Dead centre of a 5x5 block: no tile offers a push direction, so this is
     // the case that jitters forever if ejection is missing.
     const Vec2 buried = Terrain::tileCenter(22, 22);
-    const Vec2 out = t.resolveCircle(buried, kPlayerBaseRadius);
-    CHECK(!t.blocked(out));
+    const Vec2 out = t.resolveCircle(buried, kPlayerBaseRadius, Realm::Overworld);
+    CHECK(!t.blocked(out, Realm::Overworld));
     CHECK(!overlapsWall(t, out, kPlayerBaseRadius));
     // Idempotent: resolving an already-resolved position is a no-op, which is
     // what stops a body vibrating between two walls every tick.
-    const Vec2 again = t.resolveCircle(out, kPlayerBaseRadius);
+    const Vec2 again = t.resolveCircle(out, kPlayerBaseRadius, Realm::Overworld);
     CHECK_NEAR(again.x, out.x, 1e-9);
     CHECK_NEAR(again.y, out.y, 1e-9);
 }
@@ -233,7 +233,7 @@ TEST(resolve_circle_ejects_a_shallow_embed_without_teleporting) {
     // ejection path runs, but the answer must still be two units back out and
     // not a jump to the middle of the neighbouring tile.
     const Vec2 start{10 * kTileSize + 2.0, 10 * kTileSize + 150.0};
-    const Vec2 out = t.resolveCircle(start, 12.0);
+    const Vec2 out = t.resolveCircle(start, 12.0, Realm::Overworld);
     CHECK(out.x <= 10 * kTileSize - 12.0);
     CHECK(out.x >= 10 * kTileSize - 12.0 - 20.1);
     CHECK_NEAR(out.y, start.y, 1e-9);
@@ -248,7 +248,7 @@ TEST(resolve_circle_settles_in_a_concave_corner) {
     t.setTile(10, 11, Tile::Wall);
     // Just inside the free tile's top-left corner, overlapping all three.
     const Vec2 start{11 * kTileSize + 5.0, 11 * kTileSize + 5.0};
-    const Vec2 out = t.resolveCircle(start, 60.0);
+    const Vec2 out = t.resolveCircle(start, 60.0, Realm::Overworld);
     CHECK(out.x >= 11 * kTileSize + 60.0 - 1e-6);
     CHECK(out.y >= 11 * kTileSize + 60.0 - 1e-6);
     CHECK(!overlapsWall(t, out, 60.0));
@@ -256,13 +256,13 @@ TEST(resolve_circle_settles_in_a_concave_corner) {
 
 TEST(resolve_circle_pushes_a_body_back_inside_the_world) {
     Terrain t;
-    const Vec2 out = t.resolveCircle(Vec2{-5000.0, kWorldHalf}, 25.0);
+    const Vec2 out = t.resolveCircle(Vec2{-5000.0, kWorldHalf}, 25.0, Realm::Overworld);
     CHECK(out.x >= 0.0);
     CHECK(out.x <= kWorldSize);
-    CHECK(!t.blocked(out));
-    const Vec2 far = t.resolveCircle(Vec2{kWorldSize + 90000.0, kWorldHalf}, 25.0);
+    CHECK(!t.blocked(out, Realm::Overworld));
+    const Vec2 far = t.resolveCircle(Vec2{kWorldSize + 90000.0, kWorldHalf}, 25.0, Realm::Overworld);
     CHECK(far.x <= kWorldSize);
-    CHECK(!t.blocked(far));
+    CHECK(!t.blocked(far, Realm::Overworld));
 }
 
 TEST(resolve_circle_survives_nonsense_input) {
@@ -277,7 +277,7 @@ TEST(resolve_circle_survives_nonsense_input) {
     const double radii[] = {-5.0, 0.0, kQuietNan, kInfinity, 1e9, 1e-12};
     for (const Vec2& p : cases) {
         for (const double r : radii) {
-            const Vec2 out = t.resolveCircle(p, r);
+            const Vec2 out = t.resolveCircle(p, r, Realm::Overworld);
             CHECK(std::isfinite(out.x));
             CHECK(std::isfinite(out.y));
             CHECK(out.x >= 0.0 && out.x <= kWorldSize);
@@ -294,9 +294,9 @@ TEST(resolve_circle_never_leaves_a_walkable_start_overlapping) {
     int checked = 0;
     for (int i = 0; i < 400; ++i) {
         const Vec2 p{rng.range(0, kWorldSize), rng.range(0, kWorldSize)};
-        if (t.blocked(p)) continue;
-        const Vec2 out = t.resolveCircle(p, kPlayerBaseRadius);
-        CHECK(!t.blocked(out));
+        if (t.blocked(p, Realm::Overworld)) continue;
+        const Vec2 out = t.resolveCircle(p, kPlayerBaseRadius, Realm::Overworld);
+        CHECK(!t.blocked(out, Realm::Overworld));
         CHECK(!overlapsWall(t, out, kPlayerBaseRadius));
         ++checked;
     }
@@ -311,13 +311,13 @@ TEST(segment_blocked_sees_a_wall_across_the_line) {
     Terrain t;
     for (int ty = 0; ty < kTilesPerAxis; ++ty) t.setTile(30, ty, Tile::Wall);
     const double y = 40 * kTileSize + 17.0;
-    CHECK(t.segmentBlocked(Vec2{25 * kTileSize, y}, Vec2{35 * kTileSize, y}));
-    CHECK(!t.segmentBlocked(Vec2{20 * kTileSize, y}, Vec2{29.9 * kTileSize, y}));
+    CHECK(t.segmentBlocked(Vec2{25 * kTileSize, y}, Vec2{35 * kTileSize, y}, Realm::Overworld));
+    CHECK(!t.segmentBlocked(Vec2{20 * kTileSize, y}, Vec2{29.9 * kTileSize, y}, Realm::Overworld));
     // Stopping exactly at the wall's near face is still clear; entering it is
     // not. Off-by-one here is the difference between shooting through a wall
     // and being unable to shoot along one.
-    CHECK(!t.segmentBlocked(Vec2{25 * kTileSize, y}, Vec2{30 * kTileSize - 1e-6, y}));
-    CHECK(t.segmentBlocked(Vec2{25 * kTileSize, y}, Vec2{30 * kTileSize + 1.0, y}));
+    CHECK(!t.segmentBlocked(Vec2{25 * kTileSize, y}, Vec2{30 * kTileSize - 1e-6, y}, Realm::Overworld));
+    CHECK(t.segmentBlocked(Vec2{25 * kTileSize, y}, Vec2{30 * kTileSize + 1.0, y}, Realm::Overworld));
 }
 
 TEST(segment_blocked_handles_degenerate_and_nonsense_endpoints) {
@@ -325,14 +325,14 @@ TEST(segment_blocked_handles_degenerate_and_nonsense_endpoints) {
     t.setTile(10, 10, Tile::Wall);
     const Vec2 inWall = Terrain::tileCenter(10, 10);
     const Vec2 open = Terrain::tileCenter(0, 0);
-    CHECK(t.segmentBlocked(inWall, inWall));       // zero length inside a wall
-    CHECK(!t.segmentBlocked(open, open));
-    CHECK(t.segmentBlocked(open, inWall));
-    CHECK(t.segmentBlocked(inWall, open));         // blocked at the first tile
-    CHECK(t.segmentBlocked(Vec2{kQuietNan, 0}, open));
-    CHECK(t.segmentBlocked(open, Vec2{0, kInfinity}));
+    CHECK(t.segmentBlocked(inWall, inWall, Realm::Overworld));       // zero length inside a wall
+    CHECK(!t.segmentBlocked(open, open, Realm::Overworld));
+    CHECK(t.segmentBlocked(open, inWall, Realm::Overworld));
+    CHECK(t.segmentBlocked(inWall, open, Realm::Overworld));         // blocked at the first tile
+    CHECK(t.segmentBlocked(Vec2{kQuietNan, 0}, open, Realm::Overworld));
+    CHECK(t.segmentBlocked(open, Vec2{0, kInfinity}, Realm::Overworld));
     // Out of the map is wall, so nothing can see out of it.
-    CHECK(t.segmentBlocked(open, Vec2{-9999, -9999}));
+    CHECK(t.segmentBlocked(open, Vec2{-9999, -9999}, Realm::Overworld));
 }
 
 TEST(segment_blocked_agrees_with_sampling_the_line) {
@@ -342,13 +342,13 @@ TEST(segment_blocked_agrees_with_sampling_the_line) {
     for (int i = 0; i < 500; ++i) {
         const Vec2 a{rng.range(0, kWorldSize), rng.range(0, kWorldSize)};
         const Vec2 b = a + Vec2::fromAngle(rng.angle(), rng.range(50.0, 3000.0));
-        const bool dda = t.segmentBlocked(a, b);
+        const bool dda = t.segmentBlocked(a, b, Realm::Overworld);
         // Dense sampling can miss a tile the line only clips at a corner, so
         // the implication runs one way: anything sampling can see, the DDA
         // must also have seen.
         bool sampledBlock = false;
         for (int s = 0; s <= 600 && !sampledBlock; ++s) {
-            sampledBlock = t.blocked(a + (b - a) * (s / 600.0));
+            sampledBlock = t.blocked(a + (b - a) * (s / 600.0), Realm::Overworld);
         }
         if (sampledBlock) CHECK(dda);
         if (!dda) {
@@ -365,7 +365,7 @@ TEST(segment_blocked_is_symmetric) {
     for (int i = 0; i < 400; ++i) {
         const Vec2 a{rng.range(100, kWorldSize - 100), rng.range(100, kWorldSize - 100)};
         const Vec2 b{rng.range(100, kWorldSize - 100), rng.range(100, kWorldSize - 100)};
-        CHECK_EQ(t.segmentBlocked(a, b), t.segmentBlocked(b, a));
+        CHECK_EQ(t.segmentBlocked(a, b, Realm::Overworld), t.segmentBlocked(b, a, Realm::Overworld));
     }
 }
 
@@ -378,8 +378,8 @@ TEST(find_open_spawn_lands_somewhere_walkable) {
     Rng rng(5);
     for (int i = 0; i < 200; ++i) {
         const Vec2 around{rng.range(0, kWorldSize), rng.range(0, kWorldSize)};
-        const Vec2 p = t.findOpenSpawn(rng, around, 2000.0);
-        CHECK(!t.blocked(p));
+        const Vec2 p = t.findOpenSpawn(rng, around, 2000.0, Realm::Overworld);
+        CHECK(!t.blocked(p, Realm::Overworld));
         CHECK(p.x >= 0.0 && p.x <= kWorldSize);
         CHECK(p.y >= 0.0 && p.y <= kWorldSize);
     }
@@ -387,8 +387,8 @@ TEST(find_open_spawn_lands_somewhere_walkable) {
     Terrain solid;
     solid.fill(Tile::Wall);
     solid.setTile(0, 0, Tile::Ground);
-    const Vec2 p = solid.findOpenSpawn(rng, Terrain::tileCenter(5, 5), 0.0);
-    CHECK(!solid.blocked(p));
+    const Vec2 p = solid.findOpenSpawn(rng, Terrain::tileCenter(5, 5), 0.0, Realm::Overworld);
+    CHECK(!solid.blocked(p, Realm::Overworld));
 }
 
 TEST(nearest_open_tile_gives_up_on_a_solid_map) {
@@ -436,12 +436,12 @@ TEST(spatial_grid_finds_what_was_inserted) {
     SpatialGrid grid;
     std::vector<Entity> out;
     const Entity e = makeEntity(1, 1);
-    grid.insert(e, Vec2{1000, 1000}, 10);
+    grid.insert(e, Realm::Overworld, Vec2{1000, 1000}, 10);
     CHECK_EQ(grid.size(), std::size_t(1));
-    grid.query(Vec2{1000, 1000}, 50, out);
+    grid.query(Realm::Overworld, Vec2{1000, 1000}, 50, out);
     CHECK_EQ(countOf(out, e), 1);
     // A query that shares no cell finds nothing at all.
-    grid.query(Vec2{50000, 50000}, 100, out);
+    grid.query(Realm::Overworld, Vec2{50000, 50000}, 100, out);
     CHECK_EQ(out.size(), std::size_t(0));
     CHECK(!grid.empty());
 }
@@ -451,23 +451,23 @@ TEST(spatial_grid_finds_a_fat_entity_from_every_cell_it_covers) {
     const Entity big = makeEntity(7, 1);
     const Vec2 center{5000, 5000};
     const double radius = 1500;
-    grid.insert(big, center, radius);
+    grid.insert(big, Realm::Overworld, center, radius);
 
     std::vector<Entity> out;
-    const int x0 = grid.cellX(center.x - radius);
-    const int x1 = grid.cellX(center.x + radius);
-    const int y0 = grid.cellY(center.y - radius);
-    const int y1 = grid.cellY(center.y + radius);
+    const int x0 = grid.cellX(Realm::Overworld, center.x - radius);
+    const int x1 = grid.cellX(Realm::Overworld, center.x + radius);
+    const int y0 = grid.cellY(Realm::Overworld, center.y - radius);
+    const int y1 = grid.cellY(Realm::Overworld, center.y + radius);
     CHECK(x1 > x0);   // otherwise this proves nothing about fat insertion
     for (int cy = y0; cy <= y1; ++cy) {
         for (int cx = x0; cx <= x1; ++cx) {
             const Vec2 probe{(cx + 0.5) * grid.cellSize(), (cy + 0.5) * grid.cellSize()};
-            grid.query(probe, 1.0, out);
+            grid.query(Realm::Overworld, probe, 1.0, out);
             CHECK_EQ(countOf(out, big), 1);
         }
     }
     // And once, not once per cell, when the query spans all of them.
-    grid.query(center, radius * 2, out);
+    grid.query(Realm::Overworld, center, radius * 2, out);
     CHECK_EQ(countOf(out, big), 1);
     CHECK_EQ(out.size(), std::size_t(1));
 }
@@ -485,14 +485,14 @@ TEST(spatial_grid_query_returns_a_complete_candidate_set) {
         const double r = rng.range(5.0, 400.0);
         positions.push_back(p);
         radii.push_back(r);
-        grid.insert(makeEntity(static_cast<std::uint32_t>(i + 1), 1), p, r);
+        grid.insert(makeEntity(static_cast<std::uint32_t>(i + 1), 1), Realm::Overworld, p, r);
     }
 
     std::vector<Entity> out;
     for (int q = 0; q < 100; ++q) {
         const Vec2 c{rng.range(0, kWorldSize), rng.range(0, kWorldSize)};
         const double qr = rng.range(10.0, 1200.0);
-        grid.query(c, qr, out);
+        grid.query(Realm::Overworld, c, qr, out);
         for (std::size_t i = 0; i < positions.size(); ++i) {
             if (distance(positions[i], c) > qr + radii[i]) continue;
             CHECK_EQ(countOf(out, makeEntity(static_cast<std::uint32_t>(i + 1), 1)), 1);
@@ -505,15 +505,15 @@ TEST(spatial_grid_clear_retires_the_previous_tick) {
     std::vector<Entity> out;
     const Entity oldEntity = makeEntity(3, 1);
     const Entity newEntity = makeEntity(4, 1);
-    grid.insert(oldEntity, Vec2{2000, 2000}, 100);
+    grid.insert(oldEntity, Realm::Overworld, Vec2{2000, 2000}, 100);
 
     grid.clear();
     CHECK_EQ(grid.size(), std::size_t(0));
-    grid.query(Vec2{2000, 2000}, 200, out);
+    grid.query(Realm::Overworld, Vec2{2000, 2000}, 200, out);
     CHECK_EQ(out.size(), std::size_t(0));   // stale bucket contents stay hidden
 
-    grid.insert(newEntity, Vec2{2000, 2000}, 100);
-    grid.query(Vec2{2000, 2000}, 200, out);
+    grid.insert(newEntity, Realm::Overworld, Vec2{2000, 2000}, 100);
+    grid.query(Realm::Overworld, Vec2{2000, 2000}, 200, out);
     CHECK_EQ(out.size(), std::size_t(1));
     CHECK_EQ(countOf(out, newEntity), 1);
 }
@@ -522,39 +522,39 @@ TEST(spatial_grid_query_rect_matches_its_bounds) {
     SpatialGrid grid;
     std::vector<Entity> out;
     const Entity e = makeEntity(9, 1);
-    grid.insert(e, Vec2{3000, 3000}, 0);
+    grid.insert(e, Realm::Overworld, Vec2{3000, 3000}, 0);
 
-    grid.queryRect(Vec2{2900, 2900}, Vec2{3100, 3100}, out);
+    grid.queryRect(Realm::Overworld, Vec2{2900, 2900}, Vec2{3100, 3100}, out);
     CHECK_EQ(countOf(out, e), 1);
     // Inverted corners describe the same rectangle.
-    grid.queryRect(Vec2{3100, 3100}, Vec2{2900, 2900}, out);
+    grid.queryRect(Realm::Overworld, Vec2{3100, 3100}, Vec2{2900, 2900}, out);
     CHECK_EQ(countOf(out, e), 1);
-    grid.queryRect(Rect{2900, 2900, 200, 200}, out);
+    grid.queryRect(Realm::Overworld, Rect{2900, 2900, 200, 200}, out);
     CHECK_EQ(countOf(out, e), 1);
-    grid.queryRect(Vec2{20000, 20000}, Vec2{21000, 21000}, out);
+    grid.queryRect(Realm::Overworld, Vec2{20000, 20000}, Vec2{21000, 21000}, out);
     CHECK_EQ(out.size(), std::size_t(0));
 }
 
 TEST(spatial_grid_rejects_nonsense_input) {
     SpatialGrid grid;
     std::vector<Entity> out;
-    grid.insert(NULL_ENTITY, Vec2{100, 100}, 10);
-    grid.insert(makeEntity(2, 1), Vec2{kQuietNan, 100}, 10);
-    grid.insert(makeEntity(3, 1), Vec2{100, kInfinity}, 10);
+    grid.insert(NULL_ENTITY, Realm::Overworld, Vec2{100, 100}, 10);
+    grid.insert(makeEntity(2, 1), Realm::Overworld, Vec2{kQuietNan, 100}, 10);
+    grid.insert(makeEntity(3, 1), Realm::Overworld, Vec2{100, kInfinity}, 10);
     CHECK_EQ(grid.size(), std::size_t(0));
 
     // A non-finite radius degrades to a point insertion rather than filing the
     // entity into every bucket on the map.
     const Entity e = makeEntity(4, 1);
-    grid.insert(e, Vec2{100, 100}, kInfinity);
+    grid.insert(e, Realm::Overworld, Vec2{100, 100}, kInfinity);
     CHECK_EQ(grid.size(), std::size_t(1));
-    grid.query(Vec2{100, 100}, 10, out);
+    grid.query(Realm::Overworld, Vec2{100, 100}, 10, out);
     CHECK_EQ(countOf(out, e), 1);
-    grid.query(Vec2{40000, 40000}, 10, out);
+    grid.query(Realm::Overworld, Vec2{40000, 40000}, 10, out);
     CHECK_EQ(out.size(), std::size_t(0));
 
     out.push_back(makeEntity(77, 1));
-    grid.query(Vec2{kQuietNan, 0}, 10, out);
+    grid.query(Realm::Overworld, Vec2{kQuietNan, 0}, 10, out);
     CHECK_EQ(out.size(), std::size_t(0));   // cleared even on the reject path
 }
 
@@ -564,31 +564,51 @@ TEST(spatial_grid_clamps_positions_outside_its_bounds) {
     SpatialGrid grid;
     std::vector<Entity> out;
     const Entity e = makeEntity(11, 1);
-    grid.insert(e, Vec2{-5000, -5000}, 10);
-    grid.query(Vec2{10, 10}, 10, out);
+    grid.insert(e, Realm::Overworld, Vec2{-5000, -5000}, 10);
+    grid.query(Realm::Overworld, Vec2{10, 10}, 10, out);
     CHECK_EQ(countOf(out, e), 1);
 
     const Entity beyond = makeEntity(12, 1);
-    grid.insert(beyond, Vec2{kWorldSize + 5000, kWorldSize + 5000}, 10);
-    grid.query(Vec2{kWorldSize - 10, kWorldSize - 10}, 10, out);
+    grid.insert(beyond, Realm::Overworld, Vec2{kWorldSize + 5000, kWorldSize + 5000}, 10);
+    grid.query(Realm::Overworld, Vec2{kWorldSize - 10, kWorldSize - 10}, 10, out);
     CHECK_EQ(countOf(out, beyond), 1);
 }
 
-TEST(spatial_grid_honours_its_own_origin_and_cell_size) {
-    // A detached region (the arena) gets its own grid over its own coordinate
-    // space; one grid spanning both would clamp arena entities onto the
-    // overworld's border cells and collide them with whatever lives there.
-    SpatialGrid arena(200.0, Vec2{150000.0, 150000.0}, Vec2{5000.0, 5000.0});
-    CHECK_NEAR(arena.cellSize(), 200.0, 1e-12);
-    CHECK_EQ(arena.cols(), 25);
-    CHECK_EQ(arena.rows(), 25);
+TEST(spatial_grid_keeps_each_realm_in_its_own_layer) {
+    // Every realm's coordinates start at (0, 0), so the same numbers name
+    // three different places. An entity is filed under its realm and a query
+    // names the realm it asks about, so a candidate list never crosses: a
+    // maze mob at (3000, 3000) is simply not in the layer an overworld flower
+    // at (3000, 3000) queries.
+    SpatialGrid grid(200.0);
+    CHECK_NEAR(grid.cellSize(), 200.0, 1e-12);
+    CHECK_EQ(grid.cols(Realm::Arena), static_cast<int>(std::ceil(kArenaWorldSize / 200.0)));
+    CHECK_EQ(grid.rows(Realm::Arena), grid.cols(Realm::Arena));
+    CHECK(grid.cols(Realm::Overworld) > grid.cols(Realm::Arena));
 
     std::vector<Entity> out;
-    const Entity e = makeEntity(21, 1);
-    arena.insert(e, Vec2{151000, 152000}, 30);
-    arena.query(Vec2{151050, 152050}, 100, out);
-    CHECK_EQ(countOf(out, e), 1);
-    arena.query(Vec2{153000, 152000}, 100, out);
+    const Entity overworld = makeEntity(21, 1);
+    const Entity arena = makeEntity(22, 1);
+    const Entity maze = makeEntity(23, 1);
+    grid.insert(overworld, Realm::Overworld, Vec2{3000, 3000}, 30);
+    grid.insert(arena, Realm::Arena, Vec2{3000, 3000}, 30);
+    grid.insert(maze, Realm::Maze, Vec2{3000, 3000}, 30);
+    CHECK_EQ(grid.size(), std::size_t(3));
+
+    grid.query(Realm::Overworld, Vec2{3050, 3050}, 100, out);
+    CHECK_EQ(out.size(), std::size_t(1));
+    CHECK_EQ(countOf(out, overworld), 1);
+    grid.query(Realm::Arena, Vec2{3050, 3050}, 100, out);
+    CHECK_EQ(out.size(), std::size_t(1));
+    CHECK_EQ(countOf(out, arena), 1);
+    grid.query(Realm::Maze, Vec2{3050, 3050}, 100, out);
+    CHECK_EQ(out.size(), std::size_t(1));
+    CHECK_EQ(countOf(out, maze), 1);
+
+    // clear() retires every layer at once.
+    grid.clear();
+    CHECK(grid.empty());
+    grid.query(Realm::Arena, Vec2{3050, 3050}, 100, out);
     CHECK_EQ(out.size(), std::size_t(0));
 
     // A degenerate cell size falls back rather than asking for four billion
@@ -596,8 +616,8 @@ TEST(spatial_grid_honours_its_own_origin_and_cell_size) {
     SpatialGrid degenerate(0.0);
     CHECK_NEAR(degenerate.cellSize(), SpatialGrid::kDefaultCellSize, 1e-12);
     SpatialGrid tiny(1.5);
-    CHECK(tiny.cols() <= 512);
-    CHECK(tiny.rows() <= 512);
+    CHECK(tiny.cols(Realm::Overworld) <= 512);
+    CHECK(tiny.rows(Realm::Maze) <= 512);
 }
 
 TEST(spatial_grid_does_not_allocate_once_warm) {
@@ -614,11 +634,12 @@ TEST(spatial_grid_does_not_allocate_once_warm) {
             Rng inner(1234);
             for (int i = 0; i < 500; ++i) {
                 const Vec2 p{inner.range(0, kWorldSize), inner.range(0, kWorldSize)};
-                grid.insert(makeEntity(static_cast<std::uint32_t>(i + 1), 1), p, inner.range(5, 300));
+                grid.insert(makeEntity(static_cast<std::uint32_t>(i + 1), 1), Realm::Overworld, p,
+                            inner.range(5, 300));
             }
             Rng probe(999);
             for (int q = 0; q < 100; ++q) {
-                grid.query(Vec2{probe.range(0, kWorldSize), probe.range(0, kWorldSize)}, 800.0, out);
+                grid.query(Realm::Overworld, Vec2{probe.range(0, kWorldSize), probe.range(0, kWorldSize)}, 800.0, out);
             }
         }
     };

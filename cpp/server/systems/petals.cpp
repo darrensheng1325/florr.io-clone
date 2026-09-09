@@ -265,7 +265,7 @@ void dashPlayer(Transform& owner, Vec2 velocity, double distance, double radius,
         const Vec2 attempted = velocity * (stepLength / (speed > 0.0 ? speed : 1.0));
 
         const Vec2 trial = owner.position + attempted;
-        const Vec2 resolved = terrain ? terrain->resolveCircle(trial, radius) : trial;
+        const Vec2 resolved = terrain ? terrain->resolveCircle(trial, radius, owner.realm) : trial;
         const Vec2 applied = resolved - owner.position;
         owner.position = resolved;
         remaining -= stepLength;
@@ -365,14 +365,14 @@ void PetalSystem::rebuildAttractionGrid(World& world) {
     // Filed under the mob's own radius, so a boss whose edge reaches a petal
     // is a candidate for it even though its centre is cells away.
     mobs_->each([&](Entity mob, MobTag&, Transform& transform, Body& body) {
-        attractionGrid_.insert(mob, transform.position, body.radius);
+        attractionGrid_.insert(mob, transform.realm, transform.position, body.radius);
     });
 }
 
-bool PetalSystem::findAttractionTarget(World& world, Vec2 at, double radius,
+bool PetalSystem::findAttractionTarget(World& world, Vec2 at, Realm realm, double radius,
                                        AttractionTarget& out) {
     if (!(radius > 0.0)) return false;
-    attractionGrid_.query(at, radius, attractionCandidates_);
+    attractionGrid_.query(realm, at, radius, attractionCandidates_);
 
     Entity closest = NULL_ENTITY;
     double closestDistanceSq = 0;
@@ -721,8 +721,8 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     world.add<PetalTag>(petal);
     // Born ON the flower and flown out over the spawn glide below, which is
     // what makes a reload read as the petal coming back out rather than
-    // reappearing on the ring.
-    world.add<Transform>(petal, Transform{origin, 0.0});
+    // reappearing on the ring. In the flower's own space, of course.
+    world.add<Transform>(petal, Transform{origin, 0.0, ownerTransform->realm});
     // Deliberately no Motion and no Knockback: the ring dictates a petal's
     // position every tick, so integrating or pushing it would be overwritten,
     // and the movement system would be doing work it cannot keep.
@@ -902,8 +902,14 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         body->radius = playerRadiusForLevel(level) * sizeScale;
     }
     if (Health* health = world.tryGet<Health>(player)) {
-        const double newMax = std::round(maxHealthForLevel(level) *
-                                         aggregate.modifiers.maxHealthScale);
+        // In the ring the pool is flat and no petal or talent moves it
+        // (src/server/playerManager.ts:823); everywhere else the level's pool
+        // takes the petal scale.
+        const Transform* at = world.tryGet<Transform>(player);
+        const bool arena = at != nullptr && at->realm == Realm::Arena;
+        const double newMax = arena ? kArenaMaxHealth
+                                    : std::round(maxHealthForLevel(level) *
+                                                 aggregate.modifiers.maxHealthScale);
         if (newMax > 0.0 && newMax != health->max) {
             const double fraction = health->max > 0.0 ? health->current / health->max : 1.0;
             health->max = newMax;
@@ -1086,7 +1092,8 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         if (config.wallCollide && terrain != nullptr) {
             const double radius =
                 registry.petalStats(instance->configIndex, instance->rarity).radius;
-            const Vec2 resolved = terrain->resolveCircle(transform->position, radius);
+            const Vec2 resolved =
+                terrain->resolveCircle(transform->position, radius, transform->realm);
             if (!(resolved == transform->position)) {
                 transform->position = resolved;
                 instance->ringVelocity = Vec2{};
@@ -1112,7 +1119,7 @@ void PetalSystem::stepPetalPhysics(World& world, const ContentRegistry& registry
     // up when a mob is 30 units from where the petal is about to swing past.
     AttractionTarget locked;
     const bool captured = !instance.homing &&
-                          findAttractionTarget(world, orbit, attractionRadius, locked);
+                          findAttractionTarget(world, orbit, transform.realm, attractionRadius, locked);
     if (captured) {
         instance.attractedTo = locked.mob;
     } else if (instance.attractedTo != NULL_ENTITY) {
@@ -1495,6 +1502,8 @@ bool PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
     // the petal happened to be.
     const Motion* ownerMotion = world.tryGet<Motion>(player);
     const Vec2 inherited = ownerMotion != nullptr ? ownerMotion->velocity : Vec2{};
+    const Transform* ownerAt = world.tryGet<Transform>(player);
+    const Realm realm = ownerAt != nullptr ? ownerAt->realm : Realm::Overworld;
 
     // The pool that makes a shot penetrate. It is the petal's own health,
     // graded at the tier it was fired at, so nothing new has to be tuned: a
@@ -1511,7 +1520,7 @@ bool PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
         const double angle = wrapAngle(first + spec.spreadAngle * i);
         const Entity shot = world.create();
         world.add<ProjectileTag>(shot);
-        world.add<Transform>(shot, Transform{from, angle});
+        world.add<Transform>(shot, Transform{from, angle, realm});
         world.add<Motion>(shot, Motion{Vec2::fromAngle(angle, spec.speed) + inherited});
         // Mass is area on the same scale a mob's is, so the shove a shot
         // delivers grows with the square of the flower that grew it.
@@ -1556,9 +1565,11 @@ void PetalSystem::emitGroundEffect(World& world, Entity player, Vec2 at, GroundE
                                    Rarity rarity, double lifetimeSeconds,
                                    double damagePerHit, double damageIntervalMillis) {
     if (radius <= 0.0 || lifetimeSeconds <= 0.0) return;
+    const Transform* ownerAt = world.tryGet<Transform>(player);
     const Entity effect = world.create();
     world.add<GroundEffectTag>(effect);
-    world.add<Transform>(effect, Transform{at, 0.0});
+    world.add<Transform>(effect,
+                         Transform{at, 0.0, ownerAt != nullptr ? ownerAt->realm : Realm::Overworld});
     world.add<GroundEffect>(effect, GroundEffect{kind, player, radius, damagePerSecond,
                                                  slowFactor, rarity, damagePerHit,
                                                  damageIntervalMillis});
@@ -1732,9 +1743,11 @@ void PetalSystem::emitDamageBurst(World& world, Entity player, Vec2 at, double r
     //
     // Deliberately not replicated: the wire has no strike or explosion effect,
     // and dressing one up as a poison cloud would draw a lie.
+    const Transform* ownerAt = world.tryGet<Transform>(player);
     const Entity burst = world.create();
     world.add<GroundEffectTag>(burst);
-    world.add<Transform>(burst, Transform{at, 0.0});
+    world.add<Transform>(burst,
+                         Transform{at, 0.0, ownerAt != nullptr ? ownerAt->realm : Realm::Overworld});
     world.add<GroundEffect>(burst, GroundEffect{GroundEffectKind::Poison, player, radius, 0.0,
                                                 1.0, Rarity::Common, damage, 0.0});
     world.add<Lifetime>(burst, Lifetime{net::kTickSeconds * 1.5});
@@ -2049,6 +2062,8 @@ void PetalSystem::summonPets(World& world, const ContentRegistry& registry, Enti
     // added first and the fallback only covers a pet that still has none.
     const double range = mob.aggroRange + rarityIndex(rarity) * kPetAggroRangePerRarity;
     const double aggroRange = range > 0.0 ? range : kEnemyChaseRange;
+    const Transform* ownerAt = world.tryGet<Transform>(player);
+    const Realm realm = ownerAt != nullptr ? ownerAt->realm : Realm::Overworld;
 
     // Counted once and carried, because the summons below are what change it.
     int owned = countOwnedPets(world, state);
@@ -2059,7 +2074,7 @@ void PetalSystem::summonPets(World& world, const ContentRegistry& registry, Enti
         const Vec2 spawnAt = at + rng_.insideCircle(mob.radius * 2.0 + kPlayerBaseRadius);
         const Entity pet = world.create();
         world.add<MobTag>(pet);
-        world.add<Transform>(pet, Transform{spawnAt, rng_.angle()});
+        world.add<Transform>(pet, Transform{spawnAt, rng_.angle(), realm});
         world.add<Motion>(pet);
         world.add<Knockback>(pet);
         world.add<Body>(pet, Body{mob.radius, mob.mass});

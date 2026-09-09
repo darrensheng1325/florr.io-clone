@@ -38,11 +38,12 @@ bool entityUsable(World& world, Entity e) {
 /// nobody connected there is nothing to save the work for, and a caller that
 /// forgot to pass its players gets unmodified behaviour rather than a world
 /// silently running at a fifth speed.
-bool mobActive(Vec2 position, const std::vector<Vec2>& activePlayers) {
+bool mobActive(Vec2 position, Realm realm, const std::vector<RealmPoint>& activePlayers) {
     if (activePlayers.empty()) return true;
     const double reachSq = kMobActiveRadius * kMobActiveRadius;
-    for (const Vec2 player : activePlayers) {
-        if (distanceSq(position, player) <= reachSq) return true;
+    for (const RealmPoint& player : activePlayers) {
+        if (player.realm != realm) continue;
+        if (distanceSq(position, player.position) <= reachSq) return true;
     }
     return false;
 }
@@ -102,6 +103,8 @@ struct VolleyShot {
     /// The shooter's own velocity at the moment of firing, added to the launch
     /// vector. A mob strafing across a flower leads its own volley.
     Vec2 inherited;
+    /// The shooter's realm; the shot is born into the same space.
+    Realm realm = Realm::Overworld;
     Entity owner = NULL_ENTITY;
     Entity creditTo = NULL_ENTITY;
     Faction faction;
@@ -119,7 +122,7 @@ struct VolleyShot {
 void spawnShot(World& world, const VolleyShot& shot) {
     const Entity e = world.create();
     world.add<ProjectileTag>(e);
-    world.add<Transform>(e, Transform{shot.from, shot.angle});
+    world.add<Transform>(e, Transform{shot.from, shot.angle, shot.realm});
     world.add<Motion>(e, Motion{Vec2::fromAngle(shot.angle, shot.speed) + shot.inherited});
     // Mass is area on the same scale a mob's body uses, so a bigger shooter's
     // bigger shot shoves proportionally harder instead of only looking heavier.
@@ -276,10 +279,10 @@ void MobAiSystem::equipBehaviour(World& world, Entity self, const Drive& drive, 
 // ---------------------------------------------------------------------------
 
 Entity MobAiSystem::acquireTarget(World& world, const Terrain& terrain, const SpatialGrid& grid,
-                                  Entity self, Vec2 from, double range) {
+                                  Entity self, Vec2 from, Realm realm, double range) {
     ++stats_.targetScans;
 
-    grid.query(from, range + maxAggroBonus_, gridScratch_);
+    grid.query(realm, from, range + maxAggroBonus_, gridScratch_);
     candidates_.clear();
     for (const Entity candidate : gridScratch_) {
         if (candidate == self) continue;
@@ -308,12 +311,12 @@ Entity MobAiSystem::acquireTarget(World& world, const Terrain& terrain, const Sp
     const std::size_t rays = std::min<std::size_t>(candidates_.size(),
                                                    static_cast<std::size_t>(kTargetLosRayCap));
     for (std::size_t i = 0; i < rays; ++i) {
-        if (!terrain.segmentBlocked(from, candidates_[i].position)) return candidates_[i].entity;
+        if (!terrain.segmentBlocked(from, candidates_[i].position, realm)) return candidates_[i].entity;
     }
     return NULL_ENTITY;
 }
 
-Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from,
+Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
                                      double range) {
     if (petList_.empty()) return NULL_ENTITY;
 
@@ -324,6 +327,7 @@ Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 f
     candidates_.clear();
     for (const Candidate& pet : petList_) {
         if (pet.entity == self) continue;
+        if (pet.realm != realm) continue;
         // Strictly inside, and with no aggro bonus applied: a bonus is
         // something a FLOWER carries to make itself conspicuous, and a summon
         // carries none of it.
@@ -339,7 +343,7 @@ Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 f
     const std::size_t rays = std::min<std::size_t>(candidates_.size(),
                                                    static_cast<std::size_t>(kTargetLosRayCap));
     for (std::size_t i = 0; i < rays; ++i) {
-        if (!terrain.segmentBlocked(from, candidates_[i].position)) return candidates_[i].entity;
+        if (!terrain.segmentBlocked(from, candidates_[i].position, realm)) return candidates_[i].entity;
     }
     return NULL_ENTITY;
 }
@@ -372,7 +376,8 @@ Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, double
     return best;
 }
 
-bool MobAiSystem::targetHeld(World& world, const Terrain& terrain, Vec2 from, Entity target) const {
+bool MobAiSystem::targetHeld(World& world, const Terrain& terrain, Vec2 from, Realm realm,
+                             Entity target) const {
     if (!entityUsable(world, target)) return false;
     const Transform* transform = world.tryGet<Transform>(target);
     if (transform == nullptr) return false;
@@ -385,11 +390,12 @@ bool MobAiSystem::targetHeld(World& world, const Terrain& terrain, Vec2 from, En
         kMobTargetRetainRadius * kMobTargetRetainRadius) {
         return false;
     }
-    return !terrain.segmentBlocked(from, transform->position);
+    if (transform->realm != realm) return false;
+    return !terrain.segmentBlocked(from, transform->position, realm);
 }
 
-bool MobAiSystem::petTargetHeld(World& world, const Terrain& terrain, Vec2 from, Entity target,
-                                double range) const {
+bool MobAiSystem::petTargetHeld(World& world, const Terrain& terrain, Vec2 from, Realm realm,
+                                Entity target, double range) const {
     if (!world.has<Pet>(target)) return false;
     if (!entityUsable(world, target)) return false;
     const Transform* transform = world.tryGet<Transform>(target);
@@ -399,7 +405,8 @@ bool MobAiSystem::petTargetHeld(World& world, const Terrain& terrain, Vec2 from,
     // across. A summon that walks out of range is simply forgotten, and the
     // mob goes back to looking for the player it would rather have.
     if (!(distanceSq(from, transform->position) < range * range)) return false;
-    return !terrain.segmentBlocked(from, transform->position);
+    if (transform->realm != realm) return false;
+    return !terrain.segmentBlocked(from, transform->position, realm);
 }
 
 void MobAiSystem::collectChain(World& world, Entity self, std::vector<Entity>& out) const {
@@ -520,6 +527,7 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
 
     VolleyShot shot;
     shot.from = from;
+    if (const Transform* shooterAt = world.tryGet<Transform>(shooter)) shot.realm = shooterAt->realm;
     shot.speed = speed;
     // The shot's calibre comes off the ammunition petal's `size` stat, then is
     // scaled by the SHOOTER's body on its own divisor -- reach and size grow at
@@ -732,13 +740,14 @@ Vec2 MobAiSystem::steerSandstorm(World& world, const SpatialGrid& grid, Entity s
     // Measured from where the storm ENDS this tick, which is the order the
     // reference resolves the two in: it takes its own step and then drags.
     if (rarityIndex(type.rarity) >= rarityIndex(kSandstormSuckRarity)) {
-        suckPlayers(world, grid, transform.position + blow * dt, dt);
+        suckPlayers(world, grid, transform.position + blow * dt, transform.realm, dt);
     }
     return blow;
 }
 
-void MobAiSystem::suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, double dt) {
-    grid.query(from, kSandstormSuckRange, gridScratch_);
+void MobAiSystem::suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, Realm realm,
+                              double dt) {
+    grid.query(realm, from, kSandstormSuckRange, gridScratch_);
     for (const Entity candidate : gridScratch_) {
         if (!world.has<PlayerTag>(candidate)) continue;
         if (!entityUsable(world, candidate)) continue;
@@ -838,8 +847,8 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
     if (ai.target != NULL_ENTITY) {
         const bool held =
             world.has<Pet>(ai.target)
-                ? petTargetHeld(world, terrain, transform.position, ai.target, range)
-                : targetHeld(world, terrain, transform.position, ai.target);
+                ? petTargetHeld(world, terrain, transform.position, transform.realm, ai.target, range)
+                : targetHeld(world, terrain, transform.position, transform.realm, ai.target);
         if (!held) ai.target = NULL_ENTITY;
     }
     // A neutral mob never goes looking: it only ever has the target that hurt it.
@@ -848,14 +857,14 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
         // outranks a summon, so it takes the mob over the moment one comes
         // into range rather than waiting for the pet to die or walk off.
         if (ai.target == NULL_ENTITY || world.has<Pet>(ai.target)) {
-            const Entity player =
-                acquireTarget(world, terrain, grid, self, transform.position, range);
+            const Entity player = acquireTarget(world, terrain, grid, self, transform.position,
+                                                transform.realm, range);
             if (player != NULL_ENTITY) ai.target = player;
         }
         // A pet is what is left when no player is in range, which is what lets
         // a summon soak the aggro it was sent out to soak.
         if (ai.target == NULL_ENTITY) {
-            ai.target = acquirePetTarget(terrain, self, transform.position, range);
+            ai.target = acquirePetTarget(terrain, self, transform.position, transform.realm, range);
         }
     }
     if (ai.target == NULL_ENTITY) return false;
@@ -886,9 +895,9 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
 // Level of detail
 // ---------------------------------------------------------------------------
 
-bool MobAiSystem::stepsThisTick(Entity self, Vec2 position,
-                                const std::vector<Vec2>& activePlayers) const {
-    if (mobActive(position, activePlayers)) return true;
+bool MobAiSystem::stepsThisTick(Entity self, Vec2 position, Realm realm,
+                                const std::vector<RealmPoint>& activePlayers) const {
+    if (mobActive(position, realm, activePlayers)) return true;
     return (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) == 0;
 }
 
@@ -1009,7 +1018,7 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
 // ---------------------------------------------------------------------------
 
 Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const SpatialGrid& grid,
-                                   Entity self, Vec2 from, MobAi& ai, bool hasOwner,
+                                   Entity self, Vec2 from, Realm realm, MobAi& ai, bool hasOwner,
                                    Vec2 ownerPosition, double range) {
     // With a living owner the pet sees exactly what the owner's SCREEN shows,
     // not what its own aggro range reaches. An ownerless pet has no screen to
@@ -1024,8 +1033,8 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
         const Transform* at = world.tryGet<Transform>(ai.target);
         if (at != nullptr && world.has<MobTag>(ai.target) && !world.has<Pet>(ai.target) &&
             entityUsable(world, ai.target) &&
-            visible(at->position, distanceSq(from, at->position)) &&
-            !terrain.segmentBlocked(from, at->position)) {
+            at->realm == realm && visible(at->position, distanceSq(from, at->position)) &&
+            !terrain.segmentBlocked(from, at->position, realm)) {
             return ai.target;
         }
         ai.target = NULL_ENTITY;
@@ -1040,7 +1049,7 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
                              ? std::sqrt(kPetViewHalfWidth * kPetViewHalfWidth +
                                          kPetViewHalfHeight * kPetViewHalfHeight)
                              : range;
-    grid.query(centre, reach, gridScratch_);
+    grid.query(realm, centre, reach, gridScratch_);
     candidates_.clear();
     for (const Entity candidate : gridScratch_) {
         if (candidate == self) continue;
@@ -1061,7 +1070,7 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
     const std::size_t rays = std::min<std::size_t>(candidates_.size(),
                                                    static_cast<std::size_t>(kTargetLosRayCap));
     for (std::size_t i = 0; i < rays; ++i) {
-        if (!terrain.segmentBlocked(from, candidates_[i].position)) return candidates_[i].entity;
+        if (!terrain.segmentBlocked(from, candidates_[i].position, realm)) return candidates_[i].entity;
     }
     return NULL_ENTITY;
 }
@@ -1073,14 +1082,14 @@ bool MobAiSystem::teleportPetToOwner(const Terrain& terrain, Transform& transfor
     // put it.
     for (int i = 0; i < 8; ++i) {
         const Vec2 at = ownerPosition + Vec2::fromAngle(kPi * 0.25 * i, kPetTeleportDistance);
-        if (terrain.blocked(at)) continue;
-        if (terrain.segmentBlocked(at, ownerPosition)) continue;
+        if (terrain.blocked(at, transform.realm)) continue;
+        if (terrain.segmentBlocked(at, ownerPosition, transform.realm)) continue;
         transform.position = at;
         return true;
     }
     // Nothing on the ring was clear: the owner's own tile will do, and if even
     // that is blocked the pet stays where it is and tries again next tick.
-    if (!terrain.blocked(ownerPosition)) {
+    if (!terrain.blocked(ownerPosition, transform.realm)) {
         transform.position = ownerPosition;
         return true;
     }
@@ -1133,7 +1142,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
                 ownerMotion->velocity.length() > kOwnerMovingSpeed) {
                 desired = ownerMotion->velocity * kSandstormPetSpeedFactor;
             }
-        } else if (!terrain.segmentBlocked(transform.position, ownerPosition)) {
+        } else if (!terrain.segmentBlocked(transform.position, ownerPosition, transform.realm)) {
             // Follows directly, with no distance limit at all while sight holds.
             const Vec2 toOwner = ownerPosition - transform.position;
             const double gap = toOwner.length();
@@ -1146,8 +1155,8 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
         }
 
         if (attacks && speed > 0.0) {
-            ai.target = acquirePetPrey(world, terrain, grid, self, transform.position, ai, true,
-                                       ownerPosition, range);
+            ai.target = acquirePetPrey(world, terrain, grid, self, transform.position,
+                                       transform.realm, ai, true, ownerPosition, range);
             if (ai.target != NULL_ENTITY) {
                 if (const Transform* prey = world.tryGet<Transform>(ai.target)) {
                     // Charging the target REPLACES the follow step rather than
@@ -1165,8 +1174,8 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
         // Owner dead or gone: wander, straight at the destination.
         ai.target = NULL_ENTITY;
         if (attacks && drive.shoots && speed > 0.0) {
-            ai.target = acquirePetPrey(world, terrain, grid, self, transform.position, ai, false,
-                                       Vec2{0, 0}, range);
+            ai.target = acquirePetPrey(world, terrain, grid, self, transform.position,
+                                       transform.realm, ai, false, Vec2{0, 0}, range);
         }
         if (WanderTarget* wander = world.tryGet<WanderTarget>(self)) {
             desired = wanderToPoint(*wander, transform.position, body, speed, nowMillis);
@@ -1257,7 +1266,7 @@ void MobAiSystem::repairChains(World& world) {
 }
 
 void MobAiSystem::followChains(World& world, const Terrain& terrain,
-                               const std::vector<Vec2>& activePlayers) {
+                               const std::vector<RealmPoint>& activePlayers) {
     visited_.clear();
 
     for (const Entity head : chainHeads_) {
@@ -1271,7 +1280,8 @@ void MobAiSystem::followChains(World& world, const Terrain& terrain,
         // gets the same positions out of it, because a follower re-placed
         // against a head that has not moved lands where it already was.
         const bool active = headTransform != nullptr &&
-                            stepsThisTick(head, headTransform->position, activePlayers);
+                            stepsThisTick(head, headTransform->position, headTransform->realm,
+                                          activePlayers);
 
         visited_.insert(head);
         Entity ahead = head;
@@ -1329,7 +1339,10 @@ void MobAiSystem::placeFollower(World& world, const Terrain& terrain, Entity sel
                                ? back.normalized()
                                : Vec2::fromAngle(leader->angle + kPi);
 
-    const Vec2 placed = terrain.resolveCircle(leader->position + direction * spacing, radius);
+    // A segment lives in its leader's space, whatever it was born into.
+    transform->realm = leader->realm;
+    const Vec2 placed =
+        terrain.resolveCircle(leader->position + direction * spacing, radius, leader->realm);
     transform->position = placed;
     // The follower is carried, not driven. Leaving a velocity on it would have
     // the movement phase integrate it a second time this tick.
@@ -1387,7 +1400,8 @@ void MobAiSystem::driveSpawners(World& world, const Terrain& terrain, double now
         request.rarity = clampRarity(rarityIndex(type.rarity) + nest.rarityOffset);
         const Body* body = world.tryGet<Body>(self);
         const double margin = (body != nullptr ? body->radius : 0.0) + kNestSpawnMargin;
-        request.position = terrain.findOpenSpawn(rng_, transform.position, margin);
+        request.position = terrain.findOpenSpawn(rng_, transform.position, margin, transform.realm);
+        request.realm = transform.realm;
         request.lifetimeMillis = nest.childLifetimeMillis;
         ++stats_.spawnRequests;
 
@@ -1409,7 +1423,7 @@ void MobAiSystem::driveSpawners(World& world, const Terrain& terrain, double now
 // ---------------------------------------------------------------------------
 
 void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& grid,
-                      const std::vector<Vec2>& activePlayers,
+                      const std::vector<RealmPoint>& activePlayers,
                       double nowMillis, double dt, CommandBuffer& commands) {
     stats_ = Stats{};
     // Written as a failed > so a NaN step takes this branch too. A zero step
@@ -1439,7 +1453,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
     petList_.clear();
     pets_.each([&](Entity self, Pet&, Transform& transform, Motion&, Body&, MobType&, MobAi&) {
         if (!entityUsable(world, self)) return;
-        petList_.push_back(Candidate{self, transform.position, 0.0});
+        petList_.push_back(Candidate{self, transform.position, 0.0, transform.realm});
     });
 
     // Collected rather than walked in place: a mob is handed the behaviour
@@ -1458,7 +1472,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         const Transform* at = world.tryGet<Transform>(self);
         const MobType* type = world.tryGet<MobType>(self);
         if (at == nullptr || type == nullptr) continue;
-        if (!stepsThisTick(self, at->position, activePlayers)) {
+        if (!stepsThisTick(self, at->position, at->realm, activePlayers)) {
             ++stats_.skipped;
             driftUnwatched(world, self, nowMillis, dt);
             continue;

@@ -127,18 +127,24 @@ PlayerRecord playerFromJson(const Json& value) {
 
     if (value["inventory"].isObject()) record.inventory = value["inventory"];
     if (value["mobKills"].isObject()) record.mobKills = value["mobKills"];
-    if (value["skills"].isObject()) {
-        // Branches this build does not know are dropped rather than kept as
-        // raw JSON: a tier only means something to the code that applies it,
-        // and round-tripping one would let it silently reappear as a bonus.
-        const Json& skills = value["skills"];
+    // Branches this build does not know are dropped rather than kept as raw
+    // JSON: a tier only means something to the code that applies it, and
+    // round-tripping one would let it silently reappear as a bonus.
+    const auto readSkills = [](const Json& skills, SkillSet& out, Json* unknown) {
+        if (!skills.isObject()) return;
         for (const std::string& key : skills.keys()) {
             const SkillId id = skillFromKey(key);
-            if (id == SkillId::Count) continue;
+            if (id == SkillId::Count) {
+                if (unknown != nullptr) (*unknown)[key] = skills[key];
+                continue;
+            }
             const int tier = rarityIndex(parseRarity(skills[key].asString()));
-            if (tier < skillTierCount(id)) record.skills.set(id, tier);
+            if (tier < skillTierCount(id)) out.set(id, tier);
         }
-    }
+    };
+    readSkills(value["skills"], record.skills, nullptr);
+    record.mazeTotalXp = value["mazeTotalXP"].asDouble(0);
+    readSkills(value["mazeSkills"], record.mazeSkills, &record.mazeSkillsExtra);
     if (value["loadout"].isArray()) {
         for (const Json& slot : value["loadout"].items()) {
             if (slot.isObject()) record.loadout.push_back(StoredItem::fromJson(slot));
@@ -147,7 +153,8 @@ PlayerRecord playerFromJson(const Json& value) {
     }
 
     collectExtras(value, {"totalXP", "stars", "dailyStreak", "lastStreakDate", "renderFlags",
-                          "equippedSkinId", "inventory", "mobKills", "loadout", "skills", "tp"},
+                          "equippedSkinId", "inventory", "mobKills", "loadout", "skills", "tp",
+                          "mazeTotalXP", "mazeSkills", "mazeTp"},
                   record.extra);
     return record;
 }
@@ -164,17 +171,28 @@ Json playerToJson(const PlayerRecord& record) {
         out["loadout"] = slots;
     }
     if (record.mobKills.isObject() && record.mobKills.size() > 0) out["mobKills"] = record.mobKills;
-    Json skills = Json::object();
-    for (int i = 0; i < kSkillCount; ++i) {
-        const int tier = record.skills.tier[static_cast<std::size_t>(i)];
-        if (tier < 0) continue;
-        skills[kSkillKeys[static_cast<std::size_t>(i)]] = std::string(rarityName(clampRarity(tier)));
-    }
+    const auto writeSkills = [](const SkillSet& set, Json skills) {
+        for (int i = 0; i < kSkillCount; ++i) {
+            const int tier = set.tier[static_cast<std::size_t>(i)];
+            if (tier < 0) continue;
+            skills[kSkillKeys[static_cast<std::size_t>(i)]] =
+                std::string(rarityName(clampRarity(tier)));
+        }
+        return skills;
+    };
+    const Json skills = writeSkills(record.skills, Json::object());
     if (skills.size() > 0) {
         out["skills"] = skills;
         // `tp` is derived here and never read back, but the TypeScript build
         // and every backup tool expect to find it beside `skills`.
         out["tp"] = record.talentPoints();
+    }
+    // The maze track, on the same terms and only when it carries anything.
+    if (record.mazeTotalXp != 0) out["mazeTotalXP"] = record.mazeTotalXp;
+    const Json mazeSkills = writeSkills(record.mazeSkills, record.mazeSkillsExtra);
+    if (mazeSkills.size() > 0) {
+        out["mazeSkills"] = mazeSkills;
+        out["mazeTp"] = record.mazeTalentPoints();
     }
     // Optional fields are written only when they carry information. A missing
     // key and an explicit 0/false read identically to every consumer, and this
@@ -330,6 +348,10 @@ void PlayerRecord::recordKill(const std::string& mobType, Rarity rarity) {
 
 int PlayerRecord::talentPoints() const {
     return availableTalentPoints(levelFromTotalXp(totalXp).level, skills);
+}
+
+int PlayerRecord::mazeTalentPoints() const {
+    return availableTalentPoints(levelFromTotalXp(mazeTotalXp).level, mazeSkills);
 }
 
 // ---------------------------------------------------------------------------

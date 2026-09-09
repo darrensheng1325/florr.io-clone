@@ -22,6 +22,7 @@
 #include "shared/core/types.h"
 #include "shared/game/constants.h"
 #include "shared/game/rarity.h"
+#include "shared/game/realm.h"
 #include "shared/game/skills.h"
 #include "shared/net/protocol.h"
 
@@ -52,6 +53,10 @@ struct Dead {
 struct Transform {
     Vec2 position;
     double angle = 0;      ///< facing, radians
+    /// Which coordinate space `position` is in. Copied from whatever an entity
+    /// is spawned by -- a petal from its flower, a drop from its mob -- so a
+    /// thing never appears in a realm other than the one that made it.
+    Realm realm = Realm::Overworld;
 };
 
 struct Motion {
@@ -341,6 +346,14 @@ struct PlayerAccount {
 /// buys a tier, at which point the owner writes this component too.
 struct PlayerSkillTree {
     SkillSet skills;
+};
+
+/// The arena scoreboard. Only a flower fighting in the PVP ring carries one:
+/// the score is the XP it has earned since it walked in, plus whatever a
+/// flower it killed had built up (src/server/playerManager.ts:929,
+/// src/server/playerState.ts:1354). It is what the arena leaderboard ranks.
+struct ArenaScore {
+    double score = 0;
 };
 
 struct PlayerProgress {
@@ -718,6 +731,7 @@ FLIX_COMPONENT(flix::PlayerInput);
 FLIX_COMPONENT(flix::PlayerAccount);
 FLIX_COMPONENT(flix::PlayerSkillTree);
 FLIX_COMPONENT(flix::PlayerProgress);
+FLIX_COMPONENT(flix::ArenaScore);
 FLIX_COMPONENT(flix::PlayerVisuals);
 FLIX_COMPONENT(flix::PlayerModifiers);
 FLIX_COMPONENT(flix::PlayerLocation);

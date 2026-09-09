@@ -21,6 +21,7 @@
 #include "client/web/reload.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
+#include "shared/game/terrain.h"
 
 namespace flix {
 
@@ -1540,7 +1541,13 @@ void App::updateLobby(double dt) {
 }
 
 void App::startGame() {
-    net_.joinGame(window_.width(), window_.height(), menus_.settings().spawnBiome, playerName_);
+    // A scripted --spawn overrides the picker for this join only. It is
+    // deliberately NOT written back to the settings: the file is the player's,
+    // and a screenshot run that left "maze" in it would send their next
+    // ordinary game to the maze.
+    const std::string& where =
+        config_.autoSpawn.empty() ? menus_.settings().spawnBiome : config_.autoSpawn;
+    net_.joinGame(window_.width(), window_.height(), where, playerName_);
 }
 
 void App::sendInputFrame(double dt) {
@@ -2626,6 +2633,21 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
 }
 
 void App::drawMinimap(Canvas& canvas) {
+    // The corner belongs to whichever realm the flower is in: the maze draws
+    // its own layout there, and the arena -- which has no map worth showing --
+    // puts its scoreboard there instead, as the reference does.
+    const bool altHeldNow = window_.keyDown(Key::LeftAlt) || window_.keyDown(Key::RightAlt);
+    switch (net_.view().realm()) {
+        case Realm::Maze:
+            drawMazeMinimap(canvas, altHeldNow);
+            return;
+        case Realm::Arena:
+            drawArenaLeaderboard(canvas);
+            return;
+        case Realm::Overworld:
+            break;
+    }
+
     const double x = canvas.width() - kMinimapSize - kMinimapPadding;
     const double y = kMinimapPadding;
     const double scale = kMinimapSize / kSectionSize;
@@ -2721,6 +2743,299 @@ void App::drawMinimap(Canvas& canvas) {
     caption.align = Align::Centre;
     caption.baseline = Baseline::Alphabetic;
     text(canvas, biomeOf(section).name, x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
+}
+
+namespace {
+
+/// Depth-band tints over the maze corridors, common through mythic, in the
+/// game's rarity palette at the alpha the browser build uses (maze-render.ts).
+constexpr std::array<std::uint32_t, kMazeZoneCount> kMazeZoneTints = {
+    0x7EEF6Du, 0xFFE65Du, 0x4D52E3u, 0x861FDEu, 0x1FDBDEu, 0xDE1F65u,
+};
+constexpr double kMazeZoneTintAlpha = 0.30;
+
+const char* mazeBiomeLabel(MazeBiome biome) {
+    switch (biome) {
+        case MazeBiome::Garden: return "Garden";
+        case MazeBiome::Desert: return "Desert";
+        case MazeBiome::Ocean: return "Ocean";
+    }
+    return "Maze";
+}
+
+/// The scoreboard's number: "1.2k", "3M", or the plain count (pvp-arena.ts
+/// formatScore).
+std::string arenaScoreLabel(double score) {
+    char buffer[32];
+    if (score >= 1e6) {
+        std::snprintf(buffer, sizeof buffer, score >= 1e7 ? "%.0fM" : "%.1fM", score / 1e6);
+        return buffer;
+    }
+    if (score >= 1e3) {
+        std::snprintf(buffer, sizeof buffer, score >= 1e4 ? "%.0fk" : "%.1fk", score / 1e3);
+        return buffer;
+    }
+    return std::to_string(static_cast<long long>(std::floor(score)));
+}
+
+} // namespace
+
+const Canvas* App::mazeMinimapStatic() {
+    const Maze& maze = activeMaze();
+    const double density = window_.uiScale();
+    if (mazeMinimapStatic_ && mazeMinimapBaked_ && mazeMinimapDay_ == maze.day() &&
+        mazeMinimapDensity_ == density) {
+        return mazeMinimapStatic_.get();
+    }
+    const int dim = maze.gridDim();
+    if (dim <= 0) return nullptr;
+
+    const int bakeSide = std::max(1, static_cast<int>(std::lround(kMinimapSize * density)));
+    auto baked = std::make_unique<Canvas>(Canvas::createVirtual(bakeSide, bakeSide));
+    Canvas& map = *baked;
+    map.scale(static_cast<float>(density), static_cast<float>(density));
+    const double s = kMinimapSize / dim;   // design units per maze cell
+
+    // Dark backdrop: the walls.
+    setFill(map, 0x141419u, 0.9);
+    map.fillRect(0, 0, static_cast<float>(kMinimapSize), static_cast<float>(kMinimapSize));
+
+    // Walkable shapes in white, corner cells with the same fillet geometry
+    // the world view draws -- the complement of the wall shape: a quarter-disc
+    // around the corner vertex for a convex floor corner, the carved curved
+    // triangle for a concave wall cell.
+    setFill(map, 0xFFFFFFu, 0.92);
+    for (int gy = 0; gy < dim; ++gy) {
+        for (int gx = 0; gx < dim; ++gx) {
+            const int v = maze.cellValue(gx, gy);
+            if (v == 0) continue;
+            const double x0 = gx * s;
+            const double y0 = gy * s;
+            map.beginPath();
+            if (v == 1) {
+                map.rect(static_cast<float>(x0), static_cast<float>(y0),
+                         static_cast<float>(s + 0.5), static_cast<float>(s + 0.5));
+                map.fill();
+                continue;
+            }
+            const int left = (v >> 1) & 1;
+            const int top = v & 1;
+            const int concave = (v >> 3) & 1;
+            const double cx = x0 + left * s;
+            const double cy = y0 + top * s;
+            const double sx = concave ? x0 + (1 - left) * s : cx;
+            const double sy = concave ? y0 + (1 - top) * s : cy;
+            double a0 = 0.0;
+            if (top == 0 && left == 1) a0 = kPi * 0.5;
+            else if (top == 1 && left == 1) a0 = kPi;
+            else if (top == 1 && left == 0) a0 = kPi * 1.5;
+            map.moveTo(static_cast<float>(sx), static_cast<float>(sy));
+            map.arc(static_cast<float>(cx), static_cast<float>(cy), static_cast<float>(s),
+                    static_cast<float>(a0), static_cast<float>(a0 + kPi * 0.5), false);
+            map.fill();
+        }
+    }
+
+    // Depth-zone tint over the corridors; walls carry none.
+    for (int gy = 0; gy < dim; ++gy) {
+        for (int gx = 0; gx < dim; ++gx) {
+            const int v = maze.cellValue(gx, gy);
+            if (v == 0 || (v >= 12 && v <= 15)) continue;
+            const int zone = maze.zoneOfCell(gx, gy);
+            if (zone < 0 || zone >= kMazeZoneCount) continue;
+            setFill(map, kMazeZoneTints[static_cast<std::size_t>(zone)], kMazeZoneTintAlpha);
+            map.fillRect(static_cast<float>(gx * s), static_cast<float>(gy * s),
+                         static_cast<float>(s + 0.5), static_cast<float>(s + 0.5));
+        }
+    }
+
+    mazeMinimapStatic_ = std::move(baked);
+    mazeMinimapDay_ = maze.day();
+    mazeMinimapBaked_ = true;
+    mazeMinimapDensity_ = density;
+    return mazeMinimapStatic_.get();
+}
+
+void App::drawMazeMinimap(Canvas& canvas, bool altHeld) {
+    const Maze& maze = activeMaze();
+    const double x = canvas.width() - kMinimapSize - kMinimapPadding;
+    const double y = kMinimapPadding;
+    const double size = maze.worldSize();
+    if (!(size > 0.0)) return;
+    const double scale = kMinimapSize / size;
+
+    if (const Canvas* baked = mazeMinimapStatic()) {
+        canvas.drawCanvas(*baked, static_cast<float>(x), static_cast<float>(y),
+                          static_cast<float>(kMinimapSize), static_cast<float>(kMinimapSize));
+    }
+
+    canvas.save();
+    canvas.beginPath();
+    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(kMinimapSize),
+                static_cast<float>(kMinimapSize));
+    canvas.clip();
+    // Player dots under the same rules as the section map: self always,
+    // squadmates always, everyone else only while ALT is held.
+    const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined) {
+        const double dx = x + (world.x - kMazeOriginX) * scale;
+        const double dy = y + (world.y - kMazeOriginY) * scale;
+        setFill(canvas, fill);
+        canvas.fillCircle(static_cast<float>(dx), static_cast<float>(dy),
+                          static_cast<float>(radius));
+        if (!outlined) return;
+        setStroke(canvas, kInk);
+        canvas.setLineWidth(1.0f);
+        canvas.strokeCircle(static_cast<float>(dx), static_cast<float>(dy),
+                            static_cast<float>(radius));
+    };
+    const SquadState& squad = net_.squad();
+    for (const auto& entry : net_.view().entities()) {
+        const RemoteEntity& entity = entry.second;
+        if (entity.kind != net::EntityKind::Player || entity.isSelf()) continue;
+        const bool squadmate = squad.contains(entry.first);
+        if (!squadmate && !altHeld) continue;
+        if (squadmate) dot(entity.position, 4.0, 0xFF69B4u, true);
+        else dot(entity.position, 4.0, kInk, false);
+    }
+    dot(net_.view().selfDrawnPosition(), 3.0, 0x0000FFu, true);
+    canvas.restore();
+
+    canvas.save();
+    setStroke(canvas, 0xFFD700u);
+    canvas.setLineWidth(2.0f);
+    canvas.setLineJoin("miter");
+    canvas.beginPath();
+    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(kMinimapSize),
+                static_cast<float>(kMinimapSize));
+    canvas.stroke();
+    canvas.restore();
+
+    TextStyle caption;
+    caption.size = 14.0;
+    caption.strokeWidth = 3.0;
+    caption.align = Align::Centre;
+    caption.baseline = Baseline::Alphabetic;
+    text(canvas, std::string("Maze \xE2\x80\x94 ") + mazeBiomeLabel(maze.biome()),
+         x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
+}
+
+void App::drawArenaLeaderboard(Canvas& canvas) {
+    // Every flower in the ring, best score first. Only arena players are ever
+    // streamed to an arena client, so the entity table IS the roster.
+    struct Row {
+        std::string name;
+        double score = 0;
+    };
+    std::vector<Row> rows;
+    for (const auto& entry : net_.view().entities()) {
+        const RemoteEntity& entity = entry.second;
+        if (entity.kind != net::EntityKind::Player) continue;
+        rows.push_back({entity.name.empty() ? std::string("Unnamed") : entity.name,
+                        static_cast<double>(entity.arenaScore)});
+    }
+    if (rows.empty()) return;
+    std::stable_sort(rows.begin(), rows.end(),
+                     [](const Row& a, const Row& b) { return a.score > b.score; });
+    const std::size_t shown = std::min<std::size_t>(rows.size(), 10);
+    const double maxScore = std::max(1.0, rows.front().score);
+
+    // gardn's proportions, as the browser build lays them out: a green pill
+    // header with the flower count, a dark container, and a dark pill per row
+    // with a flower-coloured progress bar behind centred "Name - Score".
+    constexpr double kRowW = 200.0;
+    constexpr double kRowH = 20.0;
+    constexpr double kRowGap = 4.0;
+    constexpr double kHeaderH = 36.0;
+    constexpr double kHeaderPadX = 14.0;
+    constexpr double kPanelPad = 10.0;
+    constexpr double kBorder = 5.0;
+    constexpr double kRadius = 7.0;
+
+    const double headerW = kRowW + kHeaderPadX * 2.0;
+    const double panelW = headerW + kPanelPad * 2.0;
+    const double rowsH = shown * kRowH + (shown > 0 ? shown - 1 : 0) * kRowGap;
+    const double panelH = kHeaderH + kPanelPad * 2.0 + rowsH + kPanelPad;
+    const double x = canvas.width() - panelW - 20.0;
+    const double y = 20.0;
+
+    canvas.save();
+    canvas.setLineJoin("round");
+
+    setFill(canvas, 0x555555u);
+    setStroke(canvas, 0x454545u);
+    canvas.setLineWidth(static_cast<float>(kBorder));
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(panelW),
+                     static_cast<float>(panelH), static_cast<float>(kRadius));
+    canvas.stroke();
+    canvas.fill();
+
+    const double headerX = x + (panelW - headerW) * 0.5;
+    const double headerY = y + kPanelPad;
+    setFill(canvas, 0x55BB55u);
+    setStroke(canvas, 0x469646u);
+    canvas.setLineWidth(static_cast<float>(kBorder));
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(headerX), static_cast<float>(headerY),
+                     static_cast<float>(headerW), static_cast<float>(kHeaderH),
+                     static_cast<float>(kRadius));
+    canvas.stroke();
+    canvas.fill();
+
+    TextStyle header;
+    header.size = 18.0;
+    header.bold = true;
+    header.fill = 0xFFFFFFu;
+    header.stroke = 0x222222u;
+    header.strokeWidth = 18.0 * 0.18;
+    header.align = Align::Centre;
+    header.baseline = Baseline::Middle;
+    text(canvas, rows.size() == 1 ? std::string("1 Flower") : std::to_string(rows.size()) + " Flowers",
+         headerX + headerW * 0.5, headerY + kHeaderH * 0.5, header);
+
+    const double rowsX = x + (panelW - kRowW) * 0.5;
+    const double rowsY = headerY + kHeaderH + kPanelPad;
+    const double rowFont = kRowH * 0.75;
+    TextStyle rowStyle;
+    rowStyle.size = rowFont;
+    rowStyle.bold = true;
+    rowStyle.fill = 0xFFFFFFu;
+    rowStyle.stroke = 0x222222u;
+    rowStyle.strokeWidth = rowFont * 0.18;
+    rowStyle.align = Align::Centre;
+    rowStyle.baseline = Baseline::Middle;
+
+    canvas.setLineCap("round");
+    for (std::size_t i = 0; i < shown; ++i) {
+        const Row& row = rows[i];
+        const double rowY = rowsY + i * (kRowH + kRowGap);
+        const double cy = rowY + kRowH * 0.5;
+        const double ratio = clamp(row.score / maxScore, 0.0, 1.0);
+        const double inset = kRowH * 0.5;
+
+        // The dark track, as a thick rounded line.
+        setStroke(canvas, 0x222222u);
+        canvas.setLineWidth(static_cast<float>(kRowH));
+        canvas.beginPath();
+        canvas.moveTo(static_cast<float>(rowsX + inset), static_cast<float>(cy));
+        canvas.lineTo(static_cast<float>(rowsX + kRowW - inset), static_cast<float>(cy));
+        canvas.stroke();
+
+        // The flower-coloured fill, a little narrower so the track shows.
+        if (ratio > 0.0) {
+            setStroke(canvas, 0xFFE763u);
+            canvas.setLineWidth(static_cast<float>(kRowH * 0.8));
+            const double segment = (kRowW - kRowH) * ratio;
+            canvas.beginPath();
+            canvas.moveTo(static_cast<float>(rowsX + inset), static_cast<float>(cy));
+            canvas.lineTo(static_cast<float>(rowsX + inset + segment), static_cast<float>(cy));
+            canvas.stroke();
+        }
+
+        text(canvas, row.name + " - " + arenaScoreLabel(row.score), rowsX + kRowW * 0.5, cy,
+             rowStyle);
+    }
+    canvas.restore();
 }
 
 void App::updateTextSelection(Canvas& canvas) {

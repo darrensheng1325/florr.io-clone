@@ -193,7 +193,7 @@ public:
     /// Places one drop and returns it. `eligible` may be empty, which means
     /// anyone may take it immediately.
     Entity spawnDrop(World& world, std::uint16_t petalIndex, Rarity rarity, Vec2 position,
-                     const std::vector<Entity>& eligible, double nowMillis);
+                     Realm realm, const std::vector<Entity>& eligible, double nowMillis);
 
     /// Apply the TypeScript drop rarity pipeline to one authored table row.
     static Rarity rollDropRarity(Rarity authoredRarity, Rarity mobRarity, Rng& rng);

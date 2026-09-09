@@ -21,7 +21,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 15;
+inline constexpr std::uint16_t kProtocolVersion = 16;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -108,7 +108,12 @@ enum class ServerMessage : std::uint8_t {
     AuthResult,         ///< u8 status(AuthStatus), str token, str username, str reason
     Profile,            ///< full account state: xp, level, stars, inventory, loadout,
                         ///< skins, the talent tree and the mob-kill ledger
-    JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, u16 tileCount, u8 tiles[]
+    JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, u8 realm, i64 mazeDay,
+                        ///< u16 tileCount, u8 tiles[]. `realm` is the coordinate
+                        ///< space the body was put in (realm.h) and decides what
+                        ///< the client draws under it; `mazeDay` is the maze the
+                        ///< server is playing, so the client builds the same
+                        ///< walls without any of them going over the wire.
     Snapshot,           ///< see below
     Chat,               ///< u8 channel, str author, str text
     Notice,             ///< u8 severity, str text
@@ -160,6 +165,10 @@ enum class ServerMessage : std::uint8_t {
                         ///< somebody is authenticated. The browser's payload
                         ///< also carries heapTotal; nothing draws it, so it is
                         ///< not on this wire.
+    MazeInfo,           ///< i64 dayNumber -- the maze the server is playing now.
+                        ///< Sent when it rotates; JoinAccepted carries the same
+                        ///< number for a client that has just arrived. The
+                        ///< browser's `mazeInfo {day}`.
 };
 
 /// What a notification announces. The stripe down a card's left edge is the
@@ -280,7 +289,8 @@ enum class EntityKind : std::uint8_t {
 /// Immutable per-entity facts, sent once when an entity first enters view.
 ///
 /// A Player record additionally carries u8 face flags, u8 equipment flags,
-/// u32 render flags, u16 level and u8 best-loadout rarity; a Petal record
+/// u32 render flags, u16 level, u8 best-loadout rarity and u32 arena score
+/// (zero outside the PVP ring, where nothing keeps one); a Petal record
 /// carries the u32 net id of the flower it orbits, which is what lets the
 /// client anchor a ring to the DRAWN owner rather than to a snapshot-old one.
 enum SpawnFlags : std::uint8_t {
@@ -301,8 +311,8 @@ enum UpdateFields : std::uint8_t {
     FieldState    = 1 << 3,   ///< u8 EntityState bits
     FieldSize     = 1 << 4,   ///< f32 radius; changes only on level-up or growth
     /// u8 face flags, u8 equipment flags, u32 render/skin flags, u16 level,
-    /// u8 best loadout rarity. Set only for players; the payload remains
-    /// self-contained for decoding.
+    /// u8 best loadout rarity, u32 arena score. Set only for players; the
+    /// payload remains self-contained for decoding.
     FieldPlayerVisuals = 1 << 5,
 };
 

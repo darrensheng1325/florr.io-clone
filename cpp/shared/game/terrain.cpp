@@ -792,21 +792,37 @@ bool Terrain::nearestOpenTile(Vec2 p, int& outTx, int& outTy) const {
     return false;
 }
 
-Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius) const {
+Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius, Realm realm) const {
     WallResolution result;
 
     // Garbage in must not become an unbounded loop or a NaN out. A teleport
     // bug upstream costs the body a shove, never the tick.
-    if (!std::isfinite(position.x) || !std::isfinite(position.y)) position = spawnPoint();
+    if (!std::isfinite(position.x) || !std::isfinite(position.y)) {
+        position = realm == Realm::Overworld ? spawnPoint()
+                 : realm == Realm::Arena     ? kArenaSpawn
+                                             : activeMaze().spawn();
+    }
     if (!std::isfinite(radius) || radius < 0.0) radius = 0.0;
     radius = std::min(radius, kMaxResolveRadius);
 
-    // The maze is a second world with its own walls, and the tile grid does
-    // not reach it. Answering here, before the clamps below, is what keeps a
-    // body inside the maze instead of being dragged 140000 units back to the
-    // edge of the tile map.
-    if (isInMazeRegion(position)) {
-        result.position = activeMaze().resolveCircle(position, radius, &result.collided);
+    // The maze and the arena are worlds of their own with their own walls,
+    // and the tile grid has nothing to say about either. Each answers for
+    // itself, closure included: a body is kept inside its realm's square or
+    // ring here, never dragged towards the tile map's edge.
+    if (realm == Realm::Maze) {
+        const Maze& maze = activeMaze();
+        result.position = maze.resolveCircle(position, radius, &result.collided);
+        const Vec2 closed = clampInside(result.position, radius, realm);
+        if (closed.x != result.position.x || closed.y != result.position.y) result.collided = true;
+        result.position = closed;
+        // Deep inside the wall mass no face is within one push. Reported, as
+        // the tile resolver reports its own failure; resolveCircle rescues.
+        result.unresolved = maze.blocksPoint(result.position);
+        return result;
+    }
+    if (realm == Realm::Arena) {
+        result.position = clampInside(position, radius, realm);
+        result.collided = result.position.x != position.x || result.position.y != position.y;
         return result;
     }
 
@@ -843,15 +859,16 @@ Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius) const
     return result;
 }
 
-Vec2 Terrain::resolveCircle(Vec2 position, double radius) const {
+Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
     if (!std::isfinite(radius) || radius < 0.0) radius = 0.0;
     radius = std::min(radius, kMaxResolveRadius);
 
-    const WallResolution wall = resolveWall(position, radius);
+    const WallResolution wall = resolveWall(position, radius, realm);
     position = wall.position;
-    // The maze answers for itself, rescue and world clamps included: its walls
-    // are 140000 units from anything the tile grid knows about.
-    if (isInMazeRegion(position)) return position;
+    // The maze and the arena answer for themselves, rescue and closure
+    // included; everything below is tile arithmetic.
+    if (realm == Realm::Maze && wall.unresolved) return activeMaze().nearestFloor(position);
+    if (realm != Realm::Overworld) return position;
 
     // Spawners and admin teleports can place a centre deep inside several
     // blocking tiles. TypeScript's per-movement caller refuses an unresolved
@@ -883,11 +900,55 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius) const {
     return position;
 }
 
-bool Terrain::segmentBlocked(Vec2 a, Vec2 b) const {
+bool Terrain::blocked(Vec2 p, Realm realm) const {
+    switch (realm) {
+        case Realm::Maze:  return activeMaze().blocksPoint(p);
+        case Realm::Arena: return !insideArena(p);
+        case Realm::Overworld: break;
+    }
+    return tileBlocks(at(p));
+}
+
+double Terrain::realmSize(Realm realm) {
+    switch (realm) {
+        case Realm::Maze:  return activeMaze().worldSize();
+        case Realm::Arena: return kArenaWorldSize;
+        case Realm::Overworld: break;
+    }
+    return kWorldSize;
+}
+
+Vec2 Terrain::clampInside(Vec2 p, double radius, Realm realm) {
+    if (!std::isfinite(radius) || radius < 0.0) radius = 0.0;
+    if (realm == Realm::Arena) {
+        // Radially, onto the ring's inside face: the reference's PVP clamp
+        // (src/server/playerState.ts:1989-1996) with the body's own radius
+        // where it wrote PLAYER_SIZE / 2.
+        const double maxR = std::max(0.0, kArenaRadius - radius);
+        const Vec2 offset = p - kArenaCentre;
+        const double distSq = offset.lengthSq();
+        if (!std::isfinite(distSq)) return kArenaCentre;
+        if (distSq <= maxR * maxR) return p;
+        const double dist = std::sqrt(distSq);
+        return kArenaCentre + offset * (maxR / dist);
+    }
+    const double size = realmSize(realm);
+    const double margin = std::min(radius, size * 0.25);
+    return {clamp(p.x, margin, size - margin), clamp(p.y, margin, size - margin)};
+}
+
+bool Terrain::outside(Vec2 p, Realm realm) {
+    if (realm == Realm::Arena) return !insideArena(p);
+    const double size = realmSize(realm);
+    return p.x < 0.0 || p.x >= size || p.y < 0.0 || p.y >= size;
+}
+
+bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
     if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) {
         return true;
     }
-    if (isInMazeRegion(a) || isInMazeRegion(b)) return activeMaze().blocksLine(a, b);
+    if (realm == Realm::Maze) return activeMaze().blocksLine(a, b);
+    if (realm == Realm::Arena) return false;   // open floor, edge to edge
 
     int tx = toTileCoord(a.x);
     int ty = toTileCoord(a.y);
@@ -965,7 +1026,7 @@ bool Terrain::segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps) const {
     return false;
 }
 
-bool Terrain::hasLineOfSight(Vec2 a, Vec2 b, int sampleCount) const {
+bool Terrain::hasLineOfSight(Vec2 a, Vec2 b, Realm realm, int sampleCount) const {
     const double dx = b.x - a.x;
     const double dy = b.y - a.y;
     const double distance = std::sqrt(dx * dx + dy * dy);
@@ -975,7 +1036,8 @@ bool Terrain::hasLineOfSight(Vec2 a, Vec2 b, int sampleCount) const {
     // world the endpoints are in.
     if (distance < 10.0) return true;
 
-    if (isInMazeRegion(a) || isInMazeRegion(b)) return !activeMaze().blocksLine(a, b);
+    if (realm == Realm::Maze) return !activeMaze().blocksLine(a, b);
+    if (realm == Realm::Arena) return true;
 
     const int samples = std::max(1, sampleCount);
     for (int i = 0; i <= samples; ++i) {
@@ -990,7 +1052,27 @@ bool Terrain::hasLineOfSight(Vec2 a, Vec2 b, int sampleCount) const {
     return true;
 }
 
-Vec2 Terrain::findOpenSpawn(Rng& rng, Vec2 around, double radius) const {
+Vec2 Terrain::findOpenSpawn(Rng& rng, Vec2 around, double radius, Realm realm) const {
+    if (realm == Realm::Arena) {
+        if (!std::isfinite(around.x) || !std::isfinite(around.y)) around = kArenaSpawn;
+        radius = std::isfinite(radius) ? clamp(radius, 0.0, kArenaRadius) : 0.0;
+        return clampInside(around + rng.insideCircle(radius), kPlayerBaseRadius, realm);
+    }
+    if (realm == Realm::Maze) {
+        const Maze& maze = activeMaze();
+        if (!std::isfinite(around.x) || !std::isfinite(around.y)) around = maze.spawn();
+        radius = std::isfinite(radius) ? clamp(radius, 0.0, maze.worldSize()) : 0.0;
+        for (int attempt = 0; attempt < 24; ++attempt) {
+            const Vec2 p = around + rng.insideCircle(radius);
+            if (!maze.isFloor(p)) continue;
+            if (distanceSq(maze.resolveCircle(p, kPlayerBaseRadius), p) < 1.0) return p;
+        }
+        // Nothing open nearby: the nearest floor the resolver can reach from
+        // the request, or failing that the entrance, which is always floor.
+        const Vec2 pushed = maze.resolveCircle(around, kPlayerBaseRadius);
+        return maze.isFloor(pushed) ? pushed : maze.spawn();
+    }
+
     if (!std::isfinite(around.x) || !std::isfinite(around.y)) around = spawnPoint();
     radius = std::isfinite(radius) ? clamp(radius, 0.0, kWorldSize) : 0.0;
 
@@ -1000,7 +1082,7 @@ Vec2 Terrain::findOpenSpawn(Rng& rng, Vec2 around, double radius) const {
         if (tileBlocks(t) || tileIsWater(t)) continue;
         // Reject pockets a body would immediately be squeezed out of: landing
         // in a one-tile gap between boulders reads as spawning inside a wall.
-        if (distanceSq(resolveCircle(p, kPlayerBaseRadius), p) < 1.0) return p;
+        if (distanceSq(resolveCircle(p, kPlayerBaseRadius, realm), p) < 1.0) return p;
     }
 
     int tx = 0, ty = 0;
@@ -1253,6 +1335,20 @@ bool Maze::cellBlocksPoint(int gx, int gy, Vec2 world) const {
     return value >= 12 ? withinArc : !withinArc;
 }
 
+int Maze::zoneOfCell(int gx, int gy) const {
+    if (gx < 0 || gy < 0 || gx >= gridDim_ || gy >= gridDim_) return -1;
+    const std::uint8_t zone = zones_[static_cast<std::size_t>(gy) * gridDim_ + gx];
+    return zone == 255 ? -1 : static_cast<int>(zone);
+}
+
+int Maze::floorCellCount() const {
+    int count = 0;
+    for (const std::uint8_t v : values_) {
+        if (v == 1 || (v >= 4 && v <= 7)) ++count;
+    }
+    return count;
+}
+
 int Maze::zoneAt(Vec2 p) const {
     if (!contains(p)) return -1;
     const int gx = static_cast<int>(std::floor((p.x - kMazeOriginX) / kMazeCellSize));
@@ -1389,6 +1485,33 @@ bool Maze::resolveOnce(Vec2 position, double radius, Vec2& out) const {
         if (curveCheck(c.ox, c.oy, c.inverse, out)) return true;
     }
     return false;
+}
+
+Vec2 Maze::nearestFloor(Vec2 p) const {
+    if (gridDim_ <= 0) return spawn_;
+    const int cx = clamp(static_cast<int>(std::floor((p.x - kMazeOriginX) / kMazeCellSize)), 0,
+                         gridDim_ - 1);
+    const int cy = clamp(static_cast<int>(std::floor((p.y - kMazeOriginY) / kMazeCellSize)), 0,
+                         gridDim_ - 1);
+    for (int ring = 0; ring < gridDim_; ++ring) {
+        Vec2 best;
+        double bestDistSq = -1.0;
+        for (int gy = cy - ring; gy <= cy + ring; ++gy) {
+            for (int gx = cx - ring; gx <= cx + ring; ++gx) {
+                if (std::abs(gx - cx) != ring && std::abs(gy - cy) != ring) continue;
+                if (cellValue(gx, gy) != 1) continue;
+                const Vec2 centre{kMazeOriginX + (gx + 0.5) * kMazeCellSize,
+                                  kMazeOriginY + (gy + 0.5) * kMazeCellSize};
+                const double d = distanceSq(centre, p);
+                if (bestDistSq < 0.0 || d < bestDistSq) {
+                    bestDistSq = d;
+                    best = centre;
+                }
+            }
+        }
+        if (bestDistSq >= 0.0) return best;
+    }
+    return spawn_;
 }
 
 Vec2 Maze::resolveCircle(Vec2 position, double radius, bool* collided) const {

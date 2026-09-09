@@ -40,10 +40,14 @@ constexpr double kMinProjectileSpeed = 1e-3;
 /// anything drawable and far above any residual the arithmetic can leave.
 constexpr double kSpentRangeEpsilon = 1e-6;
 
-Vec2 sanitizePosition(Vec2 p) {
+Vec2 sanitizePosition(Vec2 p, Realm realm) {
     // A body that arrived here non-finite has already lost its place in the
-    // world; putting it at the centre is recoverable, propagating NaN is not.
-    if (!std::isfinite(p.x) || !std::isfinite(p.y)) return {kWorldHalf, kWorldHalf};
+    // world; putting it at the centre of its realm is recoverable, propagating
+    // NaN is not.
+    if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
+        const double half = Terrain::realmSize(realm) * 0.5;
+        return {half, half};
+    }
     return p;
 }
 
@@ -65,11 +69,6 @@ double substepLength(double sanitizedRadius) {
     // fails every comparison) lands on the floor and not on the cap.
     if (!(sanitizedRadius > kMinSubstepLength)) return kMinSubstepLength;
     return sanitizedRadius < kMaxSubstepLength ? sanitizedRadius : kMaxSubstepLength;
-}
-
-Vec2 clampToWorld(Vec2 p, double sanitizedRadius) {
-    return {clamp(p.x, sanitizedRadius, kWorldSize - sanitizedRadius),
-            clamp(p.y, sanitizedRadius, kWorldSize - sanitizedRadius)};
 }
 
 /// Liang-Barsky: does the segment a->b touch the axis-aligned rect?
@@ -180,13 +179,13 @@ Vec2 sanitizeMovementVelocity(Vec2 velocity) {
     return velocity.clampedLength(kMaxMovementSpeed);
 }
 
-StepOutcome stepCollide(const Terrain& terrain, Vec2& position, Vec2 velocity,
+StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec2 velocity,
                         double radius, double dt, bool collideTerrain,
                         bool refuseWallCrossing) {
     StepOutcome out;
     const double r = sanitizeCollisionRadius(radius);
     const double hull = r > kMinCollisionRadius ? r : kMinCollisionRadius;
-    const Vec2 start = sanitizePosition(position);
+    const Vec2 start = sanitizePosition(position, realm);
     position = start;
 
     Vec2 delta = sanitizeMovementVelocity(velocity) * (dt > 0.0 ? dt : 0.0);
@@ -212,14 +211,17 @@ StepOutcome stepCollide(const Terrain& terrain, Vec2& position, Vec2 velocity,
     for (int i = 0; i < steps; ++i) {
         const Vec2 from = position;
         const Vec2 want = from + stepDelta;
-        Vec2 got = collideTerrain ? terrain.resolveCircle(want, hull) : want;
+        Vec2 got = collideTerrain ? terrain.resolveCircle(want, hull, realm) : want;
 
-        if (refuseWallCrossing && collideTerrain
+        // The containment guard is a TILE question, so it is only asked of the
+        // overworld: the maze's resolver slides along its own geometry and the
+        // arena has nothing to cross.
+        if (refuseWallCrossing && collideTerrain && realm == Realm::Overworld
             && distanceSq(got, want) > kContactEpsilon * kContactEpsilon
             // A centre already inside a blocking tile is exempt: the
             // resolver's output is its only way out, arbitrary as the
             // direction may be.
-            && !terrain.blocked(from)
+            && !terrain.blocked(from, realm)
             && centerPathCrossesWall(terrain, from, got)) {
             // The ejection would carry the centre across solid. Refuse it and
             // end the tick's movement where this substep started.
@@ -227,7 +229,7 @@ StepOutcome stepCollide(const Terrain& terrain, Vec2& position, Vec2 velocity,
             break;
         }
 
-        got = clampToWorld(got, hull);
+        got = Terrain::clampInside(got, hull, realm);
         if (distanceSq(got, want) > kContactEpsilon * kContactEpsilon) out.blocked = true;
         position = got;
     }
@@ -323,7 +325,7 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // writer refuses any victim without a mob kind -- so a flower standing
         // in a web keeps full speed even where an orphaned field can still
         // stamp an Afflictions onto it.
-        if (terrain.inWater(transform.position)) maxSpeed *= kWaterSpeedScale;
+        if (terrain.inWater(transform.position, transform.realm)) maxSpeed *= kWaterSpeedScale;
 
         MoveState state{transform.position, motion.velocity};
         integrateVelocity(state, desiredVelocity(input.current.moveAngle,
@@ -336,7 +338,8 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // take the resolver's word for it. A player arrives here from a
         // contact knockback that already overlapped wall geometry often
         // enough that without it, diagonal seams are passable.
-        stepCollide(terrain, transform.position, velocity, body.radius, dt, true, true);
+        stepCollide(terrain, transform.realm, transform.position, velocity, body.radius, dt, true,
+                    true);
         // TypeScript's stepPlayerMovement returns the friction-integrated
         // velocity unchanged when wall resolution alters the position. Keeping
         // the attempted velocity is observable on the following tick (the
@@ -355,6 +358,8 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
     for (const Entity e : teleportPlayers_) {
         Transform* transform = world.tryGet<Transform>(e);
         if (!transform) continue;
+        // The pads are map annotations, and the map is the overworld.
+        if (transform->realm != Realm::Overworld) continue;
         // The state is per flower and starts empty, so it is created on the
         // first tick this runs for a player rather than by the prefab -- one
         // more component on every flower for a feature eight pads use.
@@ -385,12 +390,13 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         // it would compound every tick the AI left the velocity alone, and a mob
         // that paused in a river would never get out of it.
         double envScale = 1.0;
-        if (terrain.inWater(transform.position)) envScale *= kMobWaterSpeedScale;
+        if (terrain.inWater(transform.position, transform.realm)) envScale *= kMobWaterSpeedScale;
         // Slow already scales the desired speed in MobAiSystem. Applying it
         // again here squares the factor (a 0.5 web becomes 0.25 speed).
 
         const Vec2 attempted = velocity * envScale;
-        const StepOutcome out = stepCollide(terrain, transform.position, attempted, body.radius, dt);
+        const StepOutcome out = stepCollide(terrain, transform.realm, transform.position, attempted,
+                                            body.radius, dt);
 
         // No friction is applied here. The AI phase runs the shared
         // integrateVelocity() against its desired heading and so owns a mob's
@@ -443,7 +449,8 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
         double radius = 0.0;
         if (const Body* body = world.tryGet<Body>(e)) radius = body->radius;
 
-        const StepOutcome out = stepCollide(terrain, transform.position, attempted, radius, dt);
+        const StepOutcome out =
+            stepCollide(terrain, transform.realm, transform.position, attempted, radius, dt);
         projectile.remainingDistance -= out.displacement.length();
         if (!(projectile.remainingDistance > kSpentRangeEpsilon)) projectile.remainingDistance = 0.0;
 
@@ -556,14 +563,15 @@ Vec2 MovementSystem::aimAtLaunch(World& world, Entity self, Vec2 position,
 // Mob separation
 // ---------------------------------------------------------------------------
 
-bool MovementSystem::activeForSeparation(Vec2 position) const {
+bool MovementSystem::activeForSeparation(Vec2 position, Realm realm) const {
     // Nobody connected is the PERMISSIVE case, as it is in the reference's
     // activity field: with no observer there is nothing to save the work for,
     // and a bench or a test that never adds a player sees the unmodified rule.
     if (separationPlayers_.empty()) return true;
     const double reachSq = kMobActiveRadius * kMobActiveRadius;
-    for (const Vec2 player : separationPlayers_) {
-        if (distanceSq(position, player) <= reachSq) return true;
+    for (const RealmPoint& player : separationPlayers_) {
+        if (player.realm != realm) continue;
+        if (distanceSq(position, player.position) <= reachSq) return true;
     }
     return false;
 }
@@ -572,7 +580,7 @@ void MovementSystem::buildSeparationSet(World& world) {
     separationPlayers_.clear();
     queries_->playerPositions.each([&](Entity, PlayerTag&, Transform& transform) {
         if (!std::isfinite(transform.position.x) || !std::isfinite(transform.position.y)) return;
-        separationPlayers_.push_back(transform.position);
+        separationPlayers_.push_back({transform.position, transform.realm});
     });
 
     // Retire last pass's slots before the set they index is dropped. The table
@@ -597,11 +605,12 @@ void MovementSystem::buildSeparationSet(World& world) {
         // Far from every flower: sit this tick out, the same LOD rule the AI
         // phase applies. A shove nobody is near enough to see is missed
         // outright rather than applied one-sided.
-        if (!activeForSeparation(position)) return;
+        if (!activeForSeparation(position, transform.realm)) return;
 
         SeparationEntry entry;
         entry.entity = e;
         entry.position = position;
+        entry.realm = transform.realm;
         entry.radius = sanitizeCollisionRadius(body.radius);
         if (const BodySegment* segment = world.tryGet<BodySegment>(e)) {
             entry.chainHead = segment->chainHead;
@@ -616,7 +625,7 @@ void MovementSystem::buildSeparationSet(World& world) {
         }
         separationSlot_[index] = static_cast<std::uint32_t>(separationSet_.size());
         separationSet_.push_back(entry);
-        separationGrid_.insert(e, position, entry.radius);
+        separationGrid_.insert(e, transform.realm, position, entry.radius);
     });
 }
 
@@ -633,7 +642,7 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
         // The grid files a mob under every cell its own circle touches, so a
         // query of this mob's radius plus the buffer already returns every
         // neighbour that can be inside the sum of the two radii.
-        separationGrid_.query(self.position, self.radius + kMobCollisionBuffer,
+        separationGrid_.query(self.realm, self.position, self.radius + kMobCollisionBuffer,
                               separationCandidates_);
 
         for (const Entity candidate : separationCandidates_) {
@@ -669,8 +678,8 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
         if (!transform) continue;
         // Separation must not shove a mob into a wall. This runs after the
         // wall pass, so a violation would be on screen for a whole tick.
-        transform->position =
-            terrain.resolveCircle(entry.position + entry.push.clampedLength(cap), entry.radius);
+        transform->position = terrain.resolveCircle(
+            entry.position + entry.push.clampedLength(cap), entry.radius, entry.realm);
     }
 }
 

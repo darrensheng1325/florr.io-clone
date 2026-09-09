@@ -96,7 +96,7 @@ struct Sim {
     Query<Transform> placed;
     Query<PlayerTag, Transform> players;
 
-    std::vector<Vec2> active;
+    std::vector<RealmPoint> active;
     /// The clock starts well after zero on purpose: MobAi::lastAttackMillis and
     /// nextDecisionMillis both default to 0, and a clock that also starts at 0
     /// would make "never attacked" indistinguishable from "attacked just now".
@@ -167,14 +167,16 @@ struct Sim {
         grid.clear();
         placed.each([&](Entity e, Transform& transform) {
             const Body* body = world.tryGet<Body>(e);
-            grid.insert(e, transform.position, body != nullptr ? body->radius : 0.0);
+            grid.insert(e, Realm::Overworld, transform.position, body != nullptr ? body->radius : 0.0);
         });
     }
 
     void refreshActive() {
         if (!autoActive) return;
         active.clear();
-        players.each([&](Entity, PlayerTag&, Transform& transform) { active.push_back(transform.position); });
+        players.each([&](Entity, PlayerTag&, Transform& transform) {
+            active.push_back({transform.position, transform.realm});
+        });
     }
 
     void accumulate() {

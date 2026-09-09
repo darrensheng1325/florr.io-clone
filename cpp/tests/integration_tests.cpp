@@ -326,12 +326,12 @@ TEST(the_drawn_flower_tracks_the_server_without_ever_stepping_backwards) {
     if (body != NULL_ENTITY) {
         Vec2 open = world.get<Transform>(body).position;
         for (int attempt = 0; attempt < 400; ++attempt) {
-            if (!h.server.terrain().blocked(open) &&
-                !h.server.terrain().segmentBlocked(open, open + heading)) {
+            if (!h.server.terrain().blocked(open, Realm::Overworld) &&
+                !h.server.terrain().segmentBlocked(open, open + heading, Realm::Overworld)) {
                 break;
             }
             open = h.server.terrain().findOpenSpawn(h.probeRng, {kWorldHalf * 0.2, kWorldHalf * 0.6},
-                                                    4000.0);
+                                                    4000.0, Realm::Overworld);
         }
         world.get<Transform>(body).position = open;
     }

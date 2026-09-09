@@ -67,6 +67,11 @@ struct AppConfig {
     /// which is the only way to photograph the title screen of a client that
     /// has credentials -- otherwise it joins before the first frame is drawn.
     bool autoJoin = true;
+    /// Where a scripted join lands: a biome name, or "pvp"/"maze" for the two
+    /// realms that are destinations rather than places on the map. Empty means
+    /// the beginner ground. The only way a --screenshot run can photograph the
+    /// arena or the maze, which no scripted run can otherwise walk to.
+    std::string autoSpawn;
     /// Ignore any stored session and start on the login form. The only way to
     /// photograph the auth screen once a machine has logged in once.
     bool forceLogin = false;
@@ -195,6 +200,15 @@ private:
     /// The 200x200 section map in the top-right corner, its gold border and
     /// its biome caption.
     void drawMinimap(Canvas&);
+    /// The maze realm's map: the whole layout rasterised, corridors light and
+    /// tinted by depth band, walls dark, with the same player dots the
+    /// overworld map draws. Replaces the section minimap inside the maze.
+    void drawMazeMinimap(Canvas&, bool altHeld);
+    /// The arena realm has no map to show; the reference puts the live
+    /// scoreboard in the minimap's corner instead.
+    void drawArenaLeaderboard(Canvas&);
+    /// The maze minimap's baked static layer, rebuilt when the maze rotates.
+    const Canvas* mazeMinimapStatic();
     /// The static layers of the minimap -- background, ALT spawn bands, wall
     /// tiles, teleporter dots -- baked once per section rather than rescanned
     /// every frame. `rarityGlow` is part of the key, not just the paint: the
@@ -456,6 +470,13 @@ private:
     /// the key: a bitmap baked for a 1x display and shown on a Retina one is
     /// the single blocky rectangle on an otherwise crisp screen.
     double minimapDensity_ = 0.0;
+
+    /// The maze minimap's bake, keyed on the day it was built for and the
+    /// density it was rasterised at, for the same reasons as the section one.
+    std::unique_ptr<Canvas> mazeMinimapStatic_;
+    std::int64_t mazeMinimapDay_ = 0;
+    bool mazeMinimapBaked_ = false;
+    double mazeMinimapDensity_ = 0.0;
 
     // -- scene wipe ----------------------------------------------------------
     /// The iris that covers a scene change. `Covered` holds the outgoing frame

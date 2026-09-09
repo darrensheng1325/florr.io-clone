@@ -94,6 +94,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::GuildUpdate:         return "guildUpdate";
         case net::ServerMessage::GuildInviteReceived: return "guildInvite";
         case net::ServerMessage::DebugStats:          return "debugStats";
+        case net::ServerMessage::MazeInfo:            return "mazeInfo";
     }
     return "unknown";
 }
@@ -533,6 +534,7 @@ void NetClient::onMessage(net::Connection&, ByteReader& reader) {
         case net::ServerMessage::GuildUpdate:   handleGuildUpdate(reader); break;
         case net::ServerMessage::GuildInviteReceived: handleGuildInviteReceived(reader); break;
         case net::ServerMessage::DebugStats:    handleDebugStats(reader); break;
+        case net::ServerMessage::MazeInfo:      handleMazeInfo(reader); break;
         default:
             // An unknown id means the server is newer than this build. The
             // frame is already fully buffered, so skipping it is safe and
@@ -791,6 +793,8 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     const std::uint32_t selfNetId = reader.u32();
     const Vec2 spawn = reader.position();
     reader.u32();   // tick, informational
+    const Realm realm = realmFromByte(reader.u8());
+    const std::int64_t mazeDay = reader.i64();
     const std::uint16_t tileCount = reader.u16();
     std::vector<std::uint8_t> tiles;
     tiles.reserve(tileCount);
@@ -808,6 +812,17 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     status_ = Status::Playing;
     dead_ = false;
     view_.clear();
+    // After the clear, which resets it: the realm is the one thing about the
+    // new body the snapshot stream never restates. The maze is built from the
+    // server's day number so the walls drawn are the walls collided with.
+    view_.setRealm(realm);
+    setActiveMazeDay(mazeDay);
+}
+
+void NetClient::handleMazeInfo(ByteReader& reader) {
+    const std::int64_t day = reader.i64();
+    if (!reader.ok()) return;
+    setActiveMazeDay(day);
 }
 
 void NetClient::pushChat(net::ChatChannel channel, std::string author, std::string text) {

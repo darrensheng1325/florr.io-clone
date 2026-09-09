@@ -252,12 +252,12 @@ bool LootSystem::mayPickUp(const DropItem& drop, Entity player, double nowMillis
 // ---------------------------------------------------------------------------
 
 Entity LootSystem::spawnDrop(World& world, std::uint16_t petalIndex, Rarity rarity, Vec2 position,
-                             const std::vector<Entity>& eligible, double nowMillis) {
+                             Realm realm, const std::vector<Entity>& eligible, double nowMillis) {
     if (petalIndex == kNoPetal) return NULL_ENTITY;
 
     const Entity e = world.create();
     world.add<DropTag>(e);
-    world.add<Transform>(e, Transform{position, 0.0});
+    world.add<Transform>(e, Transform{position, 0.0, realm});
     // No Motion: a drop is furniture. The body is here only so the broadphase
     // files it and the pickup query can find it.
     world.add<Body>(e, Body{kDropBodyRadius, 1.0});
@@ -279,16 +279,6 @@ Entity LootSystem::spawnDrop(World& world, std::uint16_t petalIndex, Rarity rari
 // ---------------------------------------------------------------------------
 
 namespace {
-
-/// Outside the playable rectangle, where nothing can ever be reached.
-///
-/// The reference exempts the PVP arena and the maze, which sit outside the
-/// world rect on purpose; this build has neither, so the rectangle is the whole
-/// rule. Tested after the wall push, which is what normally pulls an escaping
-/// drop back inside -- what reaches here is a drop the resolver could not save.
-bool outsideWorld(Vec2 p) {
-    return p.x < 0.0 || p.x >= kWorldSize || p.y < 0.0 || p.y >= kWorldSize;
-}
 
 /// How far a flower reaches for loot.
 ///
@@ -341,10 +331,16 @@ void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
         // rock, a wall or water ever becomes reachable again. Pickup is a plain
         // distance test, and a tile face is far wider than its reach.
         if (terrain != nullptr) {
-            transform.position = terrain->resolveCircle(transform.position, kDropWallRadius);
+            transform.position =
+                terrain->resolveCircle(transform.position, kDropWallRadius, transform.realm);
         }
         lifetime.remainingSeconds -= dt;
-        if (lifetime.remainingSeconds <= 0.0 || outsideWorld(transform.position)) {
+        // Outside its realm's playable area, where nothing can ever reach it.
+        // Tested after the wall push, which is what normally pulls an escaping
+        // drop back inside -- what reaches here is a drop the resolver could
+        // not save.
+        if (lifetime.remainingSeconds <= 0.0 ||
+            Terrain::outside(transform.position, transform.realm)) {
             expired_.push_back(e);
         }
     });
@@ -358,7 +354,7 @@ void LootSystem::collectPickups(World& world, const SpatialGrid& grid, CommandBu
         if (health != nullptr && !health->alive()) return;
 
         const double reach = pickupReach(world, player, mods);
-        grid.query(transform.position, reach, candidates_);
+        grid.query(transform.realm, transform.position, reach, candidates_);
         for (const Entity candidate : candidates_) {
             tryCollect(world, player, transform.position, reach * reach, candidate, commands,
                        events, nowMillis);
@@ -398,7 +394,7 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, do
     const NetId* dropId = world.tryGet<NetId>(candidate);
     const NetId* playerId = world.tryGet<NetId>(player);
     if (dropId != nullptr && playerId != nullptr) {
-        events.pickedUp(dropId->value, playerId->value, at->position);
+        events.pickedUp(dropId->value, playerId->value, at->position, at->realm);
     }
     drop->pickedUpBy.push_back(player);
     bool finished = false;
@@ -509,7 +505,8 @@ void LootSystem::awardDeaths(World& world, Rng& rng, double nowMillis) {
                 // the sweep below tests the scattered position, as the
                 // reference's same-step pickup does.
                 const Entity dropped =
-                    spawnDrop(world, petalIndex, rarity, at + scatter, eligible_, nowMillis);
+                    spawnDrop(world, petalIndex, rarity, at + scatter, transform->realm, eligible_,
+                              nowMillis);
                 if (dropped != NULL_ENTITY) fresh_.push_back(dropped);
             }
         }

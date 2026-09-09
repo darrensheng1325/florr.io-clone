@@ -194,7 +194,7 @@ TEST(water_blocks_a_player_like_a_wall) {
     fx.step(200);
 
     const Vec2 at = fx.positionOf(player);
-    CHECK(!fx.terrain.blocked(at));
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
     CHECK(at.x <= 3000.0 - kPlayerBaseRadius + 1e-6);
     CHECK(at.x >= 3000.0 - kPlayerBaseRadius - 20.1);
     // TypeScript resolves position but keeps the attempted velocity while the
@@ -314,7 +314,7 @@ TEST(a_player_driven_at_a_wall_stops_against_it) {
     fx.step(200);
 
     const Vec2 at = fx.positionOf(player);
-    CHECK(!fx.terrain.blocked(at));
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
     // Resting against the same deterministic jagged face TypeScript draws.
     CHECK(at.x <= 3000.0 - kPlayerBaseRadius + 1e-6);
     CHECK(at.x >= 3000.0 - kPlayerBaseRadius - 20.1);
@@ -328,7 +328,7 @@ TEST(a_wall_removes_only_the_velocity_that_points_into_it) {
     fx.drive(player, kPi * 0.25, 1.0);       // hard into the wall, and +y
     fx.step(60);
 
-    CHECK(!fx.terrain.blocked(fx.positionOf(player)));
+    CHECK(!fx.terrain.blocked(fx.positionOf(player), Realm::Overworld));
     CHECK(fx.positionOf(player).x <= 3000.0 - kPlayerBaseRadius + 1e-6);
     // Sliding: the tangential half of the input survives the contact.
     CHECK(fx.positionOf(player).y > 5100.0);
@@ -342,7 +342,7 @@ TEST(a_body_spawned_inside_a_wall_is_ejected_without_gaining_speed) {
     fx.step(1);
 
     const Vec2 at = fx.positionOf(mob);
-    CHECK(!fx.terrain.blocked(at));
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
     // The ejection is a correction, not a launch: it must not be read back as
     // velocity, or the mob rockets away from every wall it clips.
     CHECK_NEAR(fx.velocityOf(mob).length(), 0.0, 1e-9);
@@ -359,7 +359,7 @@ TEST(an_absurd_velocity_cannot_tunnel_through_a_wall) {
         fx.world.get<Motion>(mob).velocity = {100000.0, 0};
         fx.step(1);
         const Vec2 at = fx.positionOf(mob);
-        CHECK(!fx.terrain.blocked(at));
+        CHECK(!fx.terrain.blocked(at, Realm::Overworld));
         CHECK(at.x <= 3000.0 - 20.0 + 1e-6);
     }
     // It did travel -- the cap slows it, it does not freeze it.
@@ -394,7 +394,7 @@ TEST(a_zero_or_nan_radius_terminates_and_stays_out_of_walls) {
     }
 
     CHECK(std::isfinite(fx.positionOf(pointBody).x));
-    CHECK(!fx.terrain.blocked(fx.positionOf(pointBody)));
+    CHECK(!fx.terrain.blocked(fx.positionOf(pointBody), Realm::Overworld));
     CHECK(fx.positionOf(pointBody).x < 3000.0);
     // A NaN velocity is dropped, so the body never left its start.
     CHECK(std::isfinite(fx.positionOf(nanBody).x));
@@ -409,7 +409,7 @@ TEST(a_nan_position_is_replaced_rather_than_propagated) {
     fx.step(1);
     CHECK(std::isfinite(fx.positionOf(mob).x));
     CHECK(std::isfinite(fx.positionOf(mob).y));
-    CHECK(!fx.terrain.blocked(fx.positionOf(mob)));
+    CHECK(!fx.terrain.blocked(fx.positionOf(mob), Realm::Overworld));
 }
 
 TEST(everything_is_clamped_inside_the_world) {
@@ -471,7 +471,7 @@ TEST(water_blocks_a_mob_like_a_wall) {
     }
 
     const Vec2 at = fx.positionOf(mob);
-    CHECK(!fx.terrain.blocked(at));
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
     CHECK(at.x <= 3000.0 - 20.0 + 1e-6);
 }
 
@@ -599,7 +599,7 @@ TEST(a_projectile_that_hits_terrain_is_spent_where_it_hit) {
     CHECK_NEAR(fx.world.get<Projectile>(shot).remainingDistance, 0.0, 1e-12);
     CHECK(fx.world.has<Dead>(shot));
     CHECK(fx.positionOf(shot).x < 3000.0);
-    CHECK(!fx.terrain.blocked(fx.positionOf(shot)));
+    CHECK(!fx.terrain.blocked(fx.positionOf(shot), Realm::Overworld));
 }
 
 TEST(a_guided_shot_re_aims_once_at_launch_and_then_flies_straight) {
@@ -741,7 +741,7 @@ TEST(a_zero_dt_tick_changes_nothing_but_still_resolves_geometry) {
     // ...but a body sitting in geometry is still pushed out of it.
     const Entity stuck = fx.spawnMob({3150, 5000});
     fx.step(1, 0.0);
-    CHECK(!fx.terrain.blocked(fx.positionOf(stuck)));
+    CHECK(!fx.terrain.blocked(fx.positionOf(stuck), Realm::Overworld));
 }
 
 TEST(step_collide_is_usable_without_a_world) {
@@ -749,11 +749,11 @@ TEST(step_collide_is_usable_without_a_world) {
     for (int ty = 0; ty < Terrain::tilesPerAxis(); ++ty) terrain.setTile(10, ty, Tile::Wall);
 
     Vec2 position{2900, 5000};
-    const StepOutcome open = stepCollide(terrain, position, {100, 0}, 20.0, 0.04);
+    const StepOutcome open = stepCollide(terrain, Realm::Overworld, position, {100, 0}, 20.0, 0.04);
     CHECK(!open.blocked);
     CHECK_NEAR(open.displacement.x, 4.0, 1e-9);
 
-    const StepOutcome hit = stepCollide(terrain, position, {5000, 0}, 20.0, 0.04);
+    const StepOutcome hit = stepCollide(terrain, Realm::Overworld, position, {5000, 0}, 20.0, 0.04);
     CHECK(hit.blocked);
     CHECK(position.x <= 3000.0 - 20.0 + 1e-6);
     CHECK(hit.displacement.x > 0.0);

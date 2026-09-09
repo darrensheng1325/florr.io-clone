@@ -374,7 +374,7 @@ Vec2 MapData::defaultSpawn(Rng& rng, const Terrain& terrain,
         // than the middle of the map, and movement pushes a body out of a wall.
         return zones.front()->centre();
     }
-    return terrain.findOpenSpawn(rng, {kWorldHalf, kWorldHalf}, 600.0);
+    return terrain.findOpenSpawn(rng, {kWorldHalf, kWorldHalf}, 600.0, Realm::Overworld);
 }
 
 bool MapData::spawnInElement(const MapElement& element, Rng& rng, const Terrain& terrain,

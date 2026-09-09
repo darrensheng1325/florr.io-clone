@@ -112,6 +112,7 @@ add_library(flix_server STATIC
   server/systems/petals.cpp
   server/systems/combat.cpp
   server/systems/spawning.cpp
+  server/systems/mode_spawning.cpp
   server/systems/loot.cpp
 )
 target_link_libraries(flix_server PUBLIC flix_shared)

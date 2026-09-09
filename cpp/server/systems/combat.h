@@ -227,6 +227,8 @@ private:
         bool isMobBody = false;
         bool isPet = false;
         bool isPlayerBody = false;
+        /// The space the body is in; the broadphase is asked about this one.
+        Realm realm = Realm::Overworld;
     };
 
     /// A flower's raindrop field, resolved once per tick.
@@ -239,6 +241,7 @@ private:
         Vec2 position;
         double radius = 0;
         double damage = 0;
+        Realm realm = Realm::Overworld;
     };
 
     struct FieldSource {
@@ -251,6 +254,7 @@ private:
         Rarity rarity = Rarity::Common;
         double damagePerHit = 0;
         double damageIntervalMillis = 0;
+        Realm realm = Realm::Overworld;
     };
 
     struct ShotSource {
@@ -261,6 +265,7 @@ private:
         /// Momentum, for the shove a hit delivers and the recoil it repays.
         double mass = 1;
         double speed = 0;
+        Realm realm = Realm::Overworld;
     };
 
     /// One body a shot is overlapping this tick, resolved BEFORE any damage is

@@ -24,6 +24,7 @@
 #include "server/systems/movement.h"
 #include "server/systems/petals.h"
 #include "server/systems/spawning.h"
+#include "server/systems/mode_spawning.h"
 #include "shared/game/config.h"
 #include "shared/game/shop.h"
 #include "shared/game/skin_format.h"
@@ -103,6 +104,38 @@ void giveToInventory(PlayerRecord& record, std::uint16_t petalIndex, Rarity rari
 /// it. Five Basic petals is the smallest kit that is actually playable, and
 /// the five spares beside them are exactly one craft batch -- a brand-new
 /// account can walk to the crafting panel and roll its first Unusual.
+/// One loadout slot as a body in `realm` actually wears it.
+///
+/// The maze plays the account's ring one rarity DOWN, and an orbiting slot
+/// still above mythic after that shift is benched -- left empty on the body
+/// and untouched on the account, which is the reference's applyMazeLoadout.
+/// The storage row behind the ring shifts too but is never capped: it orbits
+/// nothing, so nothing can be over-tier in it.
+///
+/// Both the body and the profile the client draws its loadout bar from go
+/// through here, or the bar would advertise a rarity the flower is not
+/// actually swinging.
+WornSlot wornSlot(const PlayerRecord& record, std::size_t slot, Realm realm) {
+    WornSlot worn;
+    if (slot >= record.loadout.size() || !record.loadout[slot].has_value()) return worn;
+
+    const StoredItem& item = *record.loadout[slot];
+    worn.petalIndex = content().petalIndex(item.petalType);
+    // A stored petal this build no longer has leaves the slot empty rather
+    // than resolving to whatever index 0 happens to be.
+    if (worn.petalIndex == kInvalidIndex) worn.petalIndex = kNoPetal;
+    worn.rarity = item.rarity;
+
+    if (realm == Realm::Maze && worn.petalIndex != kNoPetal) {
+        worn.rarity = clampRarity(std::max(0, rarityIndex(worn.rarity) - 1));
+        if (slot < kLoadoutActiveSlots && rarityIndex(worn.rarity) > rarityIndex(Rarity::Mythic)) {
+            worn.petalIndex = kNoPetal;
+            worn.rarity = Rarity::Common;
+        }
+    }
+    return worn;
+}
+
 void grantStarterKit(PlayerRecord& record) {
     const std::uint16_t basic = content().petalIndex("basic");
     if (basic == kInvalidIndex) return;
@@ -188,6 +221,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     petals_ = std::make_unique<PetalSystem>();
     combat_ = std::make_unique<CombatSystem>();
     spawning_ = std::make_unique<SpawnSystem>();
+    modes_ = std::make_unique<ModeSpawner>();
     loot_ = std::make_unique<LootSystem>();
     if (!loot_->loadTables(content(), config.dataDir + "/mob_drops.json", errorOut)) return false;
 
@@ -464,19 +498,19 @@ void GameServer::runSystems(double nowMillis, double dt) {
     activePlayers_.clear();
     Query<PlayerTag, Transform> players{world_};
     players.each([&](Entity, PlayerTag&, Transform& transform) {
-        activePlayers_.push_back(transform.position);
+        activePlayers_.push_back({transform.position, transform.realm});
     });
     humanPlayers_.clear();
     for (const auto& entry : sessions_) {
         if (!entry.second.playing()) continue;
         if (const Transform* transform = world_.tryGet<Transform>(entry.second.entity)) {
-            humanPlayers_.push_back(transform->position);
+            humanPlayers_.push_back({transform->position, transform->realm});
         }
     }
     grid_.clear();
     Query<Transform, Body> afterPlayers{world_};
     afterPlayers.each([&](Entity e, Transform& transform, Body& body) {
-        grid_.insert(e, transform.position, body.radius);
+        grid_.insert(e, transform.realm, transform.position, body.radius);
     });
 
     // The reference server resolves flower bodies and the petal ring inside
@@ -494,11 +528,14 @@ void GameServer::runSystems(double nowMillis, double dt) {
     grid_.clear();
     Query<Transform, Body> afterMovement{world_};
     afterMovement.each([&](Entity e, Transform& transform, Body& body) {
-        grid_.insert(e, transform.position, body.radius);
+        grid_.insert(e, transform.realm, transform.position, body.radius);
     });
     combat_->runWorldPhase(world_, grid_, content(), nowMillis, dt);
     spawning_->run(world_, *terrain_, content(), humanPlayers_, rng_, nowMillis, net::kTickSeconds,
                    commands_);
+    // The arena and the maze are filled whole rather than by viewport, and only
+    // while someone is in them.
+    modes_->run(world_, *terrain_, content(), *spawning_, grid_, humanPlayers_, rng_, nowMillis);
     loot_->run(world_, grid_, content(), rng_, nowMillis, dt, commands_, events_);
 
     // A pickup is a world event; owning it is an account fact. The loot system
@@ -600,7 +637,9 @@ void GameServer::bankPickups() {
         if (!session || session->userId.empty()) continue;
         if (pickup.petalIndex >= content().petalCount()) continue;
 
-        giveToInventory(database_.progress(session->userId), pickup.petalIndex, pickup.rarity, 1);
+        // Into the bag the body is playing with: an arena pickup is the run's,
+        // not the account's, until the run ends.
+        giveToInventory(liveRecord(*session), pickup.petalIndex, pickup.rarity, 1);
         database_.markDirty();
 
         if (net::Connection* connection = listener_.find(session->connection)) {
@@ -645,12 +684,16 @@ void GameServer::reapDead(double nowMillis) {
 
         if (world_.has<NetId>(e)) {
             const Transform* transform = world_.tryGet<Transform>(e);
-            events_.killed(world_.get<NetId>(e).value, transform ? transform->position : Vec2{});
+            events_.killed(world_.get<NetId>(e).value, transform ? transform->position : Vec2{},
+                           transform ? transform->realm : Realm::Overworld);
         }
 
         if (isPlayer) {
             if (session != nullptr) {
                 session->deathReported = true;
+                // In the ring a death hands the run over to the killer before
+                // anything is written down.
+                if (session->arena) settleArenaDeath(*session, world_.get<Dead>(e).killer);
                 persistPlayer(*session);
                 if (net::Connection* connection = listener_.find(session->connection)) {
                     ByteWriter w;
@@ -728,7 +771,7 @@ void GameServer::onConnect(net::Connection& connection) {
     session.connection = connection.id();
     session.connectedAtMillis = monotonicMillis();
     session.lastHeardMillis = session.connectedAtMillis;
-    sessions_[connection.id()] = session;
+    sessions_[connection.id()] = std::move(session);
     views_[connection.id()] = ClientView{};
 }
 
@@ -1001,13 +1044,20 @@ void GameServer::handleResume(Session& session, net::Connection& connection, Byt
 }
 
 void GameServer::sendProfile(Session& session, net::Connection& connection) {
-    const PlayerRecord& record = database_.progress(session.userId);
+    // The bag and ring the body is playing with (the arena run's, in the
+    // ring), and the progression track it is on (the maze's, in the maze) --
+    // so the panels show what the flower actually has and the talent menu
+    // spends the points the body actually earned.
+    const PlayerRecord& record = liveRecord(session);
+    const bool onMazeTrack = session.playing() && session.realm == Realm::Maze;
+    const double trackXp = onMazeTrack ? record.mazeTotalXp : record.totalXp;
+    const SkillSet& skills = onMazeTrack ? record.mazeSkills : record.skills;
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::Profile));
     w.str(session.username);
-    w.f64(record.totalXp);
-    w.u16(static_cast<std::uint16_t>(levelFromTotalXp(record.totalXp).level));
+    w.f64(trackXp);
+    w.u16(static_cast<std::uint16_t>(levelFromTotalXp(trackXp).level));
     w.u32(static_cast<std::uint32_t>(std::max(0, record.stars)));
 
     // The inventory is a sparse dictionary of rarity -> item name -> count.
@@ -1032,18 +1082,15 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
     }
     w.patchU16(stackCountAt, stackCount);
 
+    // The ring the flower is actually wearing, which in the maze is the
+    // account's shifted down a tier: a bar advertising the rarity the account
+    // owns while the body swings one below it is a bar that lies.
+    const Realm realm = session.playing() ? session.realm : Realm::Overworld;
     w.u8(static_cast<std::uint8_t>(kLoadoutSlots));
     for (std::size_t i = 0; i < kLoadoutSlots; ++i) {
-        std::uint16_t index = kNoPetal;
-        Rarity rarity = Rarity::Common;
-        if (i < record.loadout.size() && record.loadout[i].has_value()) {
-            const StoredItem& item = *record.loadout[i];
-            index = content().petalIndex(item.petalType);
-            if (index == kInvalidIndex) index = kNoPetal;
-            rarity = item.rarity;
-        }
-        w.u16(index);
-        w.u8(static_cast<std::uint8_t>(rarity));
+        const WornSlot worn = wornSlot(record, i, realm);
+        w.u16(worn.petalIndex);
+        w.u8(static_cast<std::uint8_t>(worn.rarity));
     }
 
     w.u32(record.renderFlags);
@@ -1054,7 +1101,7 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
     const std::size_t skillCountAt = w.reserveU16();
     std::uint16_t skillCount = 0;
     for (int i = 0; i < kSkillCount; ++i) {
-        const int tier = record.skills.tier[static_cast<std::size_t>(i)];
+        const int tier = skills.tier[static_cast<std::size_t>(i)];
         if (tier < 0) continue;
         w.u8(static_cast<std::uint8_t>(i));
         w.u8(static_cast<std::uint8_t>(tier));
@@ -1150,7 +1197,12 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     // A biome the map has no safe area for is dropped here, once, with a
     // notice -- rather than silently every time they die.
     session.spawnBiome.clear();
-    if (!biome.empty() && biome != "default") {
+    if (biome == kArenaSpawnChoice || biome == kMazeSpawnChoice) {
+        // The two destinations that are not on the map at all: each is a realm
+        // of its own (realm.h), and the biome lookup has nothing to say about
+        // either.
+        session.spawnBiome = biome;
+    } else if (!biome.empty() && biome != "default") {
         Vec2 probe;
         if (mapData_.spawnInBiome(biome, rng_, *terrain_, probe)) {
             session.spawnBiome = biome;
@@ -1182,11 +1234,19 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     w.u32(world_.get<NetId>(entity).value);
     w.position(world_.get<Transform>(entity).position);
     w.u32(tick_);
+    // Which space the body is in, and which maze the server is playing: the
+    // client builds the same walls from the day number alone.
+    w.u8(static_cast<std::uint8_t>(world_.get<Transform>(entity).realm));
+    w.i64(activeMaze().day());
     // This is the exact decoded TypeScript wall grid. Forty kilobytes once per
     // join is comfortably below the frame cap and cannot drift from collision.
     w.u16(static_cast<std::uint16_t>(terrain_->tileCount()));
     w.raw(terrain_->tiles(), terrain_->tileCount());
     connection.send(w);
+    // The client's profile is the account's, and a body in the ring plays on
+    // the arena kit instead; the maze body is on its own track. Restated here
+    // so the panels show what the flower actually has from the first frame.
+    sendProfile(session, connection);
 
     broadcastChat(net::ChatChannel::System, "", session.username + " joined");
 }
@@ -1314,8 +1374,18 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
     if (!reader.ok() || !session.authenticated()) return;
     if (slot >= kLoadoutSlots) return;
     if (petalIndex != kNoPetal && petalIndex >= content().petalCount()) return;
+    if (session.playing() && session.realm == Realm::Maze) {
+        // The maze body plays a DERIVED ring -- the account's, one rarity down
+        // -- and the reference locks the loadout for the run rather than let
+        // an edit made in maze terms be persisted in regular ones.
+        if (net::Connection* connection = listener_.find(session.connection)) {
+            sendNotice(*connection, net::NoticeSeverity::Warning,
+                       "Your loadout is locked inside the maze.");
+        }
+        return;
+    }
 
-    PlayerRecord& record = database_.progress(session.userId);
+    PlayerRecord& record = liveRecord(session);
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
 
     // Equipping must come out of the inventory, or a client can name any petal
@@ -1354,8 +1424,15 @@ void GameServer::handleSwapLoadout(Session& session, ByteReader& reader) {
     const std::uint8_t b = reader.u8();
     if (!reader.ok() || !session.authenticated()) return;
     if (a >= kLoadoutSlots || b >= kLoadoutSlots || a == b) return;
+    if (session.playing() && session.realm == Realm::Maze) {
+        if (net::Connection* connection = listener_.find(session.connection)) {
+            sendNotice(*connection, net::NoticeSeverity::Warning,
+                       "Your loadout is locked inside the maze.");
+        }
+        return;
+    }
 
-    PlayerRecord& record = database_.progress(session.userId);
+    PlayerRecord& record = liveRecord(session);
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
     std::swap(record.loadout[a], record.loadout[b]);
     database_.markDirty();
@@ -1375,7 +1452,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::CraftResult));
 
-    PlayerRecord& record = database_.progress(session.userId);
+    PlayerRecord& record = liveRecord(session);
     const bool valid = count >= kCraftBatch && rarity != Rarity::Apex &&
                        petalIndex < content().petalCount();
     if (!valid || !takeFromInventory(record, petalIndex, rarity, count)) {
@@ -1563,14 +1640,22 @@ void GameServer::handleUpgradeSkill(Session& session, net::Connection& connectio
 
     const SkillId id = static_cast<SkillId>(rawSkill);
     PlayerRecord& record = database_.progress(session.userId);
+    if (session.playing() && session.realm == Realm::Arena) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "Talents are disabled in the arena.");
+        return;
+    }
+    // The maze buys from its own tree with its own points.
+    const bool maze = session.playing() && session.realm == Realm::Maze;
+    SkillSet& skills = maze ? record.mazeSkills : record.skills;
+    const int points = maze ? record.mazeTalentPoints() : record.talentPoints();
 
     // Tiers are bought one at a time, in order. Accepting an arbitrary target
     // would let a client skip the tiers below it and pay for one of them.
-    if (tier < 0 || tier >= skillTierCount(id) || tier != record.skills.level(id) + 1) {
+    if (tier < 0 || tier >= skillTierCount(id) || tier != skills.level(id) + 1) {
         sendNotice(connection, net::NoticeSeverity::Warning, "Talents are bought in order.");
         return;
     }
-    if (id == SkillId::SecondChance && !record.skills.secondChanceUnlocked()) {
+    if (id == SkillId::SecondChance && !skills.secondChanceUnlocked()) {
         sendNotice(connection, net::NoticeSeverity::Warning,
                    std::string("Second Chance needs ") + rarityLabel(kSecondChanceRequirement) +
                        " " + kSkillLabels[static_cast<std::size_t>(kSecondChanceParent)] + ".");
@@ -1578,13 +1663,13 @@ void GameServer::handleUpgradeSkill(Session& session, net::Connection& connectio
     }
 
     const int cost = kTierCost[static_cast<std::size_t>(tier)];
-    if (record.talentPoints() < cost) {
+    if (points < cost) {
         sendNotice(connection, net::NoticeSeverity::Warning,
                    "Not enough talent points (need " + std::to_string(cost) + ").");
         return;
     }
 
-    record.skills.set(id, tier);
+    skills.set(id, tier);
     database_.markDirty();
     if (session.playing() && world_.isAlive(session.entity)) {
         applyAccountToEntity(record, session.entity);
@@ -1595,7 +1680,12 @@ void GameServer::handleUpgradeSkill(Session& session, net::Connection& connectio
 void GameServer::handleResetSkills(Session& session, net::Connection& connection) {
     if (!session.authenticated()) return;
     PlayerRecord& record = database_.progress(session.userId);
-    record.skills.clear();
+    if (session.playing() && session.realm == Realm::Arena) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "Talents are disabled in the arena.");
+        return;
+    }
+    if (session.playing() && session.realm == Realm::Maze) record.mazeSkills.clear();
+    else record.skills.clear();
     database_.markDirty();
     if (session.playing() && world_.isAlive(session.entity)) {
         applyAccountToEntity(record, session.entity);
@@ -1614,6 +1704,16 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     // off the wire is a price the client chose.
     if (!shopSellsPetal(petalIndex) || !shopSellsRarity(rarity)) {
         sendShopResult(connection, net::ShopResultKind::Purchase, false, 0, "That is not for sale.");
+        return;
+    }
+    // Not from inside the ring. Stars are the ACCOUNT's and so is what they
+    // buy, but a flower in the arena is playing out of the run's own bag --
+    // so the petal would be bought, charged for, and invisible until the run
+    // ended. Refused for the same reason talents are.
+    if (session.playing() && session.realm == Realm::Arena) {
+        sendShopResult(connection, net::ShopResultKind::Purchase, false,
+                       database_.progress(session.userId).stars,
+                       "The shop is closed in the arena.");
         return;
     }
 
@@ -2645,14 +2745,18 @@ std::string GameServer::adminChangeMaze(const std::string& argument) {
 
     // Anyone standing in the old layout is standing in the new one's walls.
     // The reference moves them to the new entrance; so does this, and the
-    // client cuts its interpolation on the jump by itself.
+    // client cuts its interpolation on the jump by itself. Yesterday's mobs
+    // would be inside the walls too, so they go (clearMazeEnemies), and every
+    // client is told which maze to build now.
     const Vec2 entrance = activeMaze().spawn();
     Query<PlayerTag, Transform> flowers{world_};
     std::vector<Entity> inside;
     flowers.each([&](Entity entity, PlayerTag&, Transform& transform) {
-        if (isInMazeRegion(transform.position)) inside.push_back(entity);
+        if (transform.realm == Realm::Maze) inside.push_back(entity);
     });
     for (const Entity entity : inside) teleportEntity(entity, entrance);
+    modes_->clearMaze(world_, commands_);
+    broadcastMazeInfo();
 
     return "Maze changed to day " + std::to_string(activeMaze().day()) + " (" +
            biomeName(activeMaze().biome()) + "). Offset from real day: " +
@@ -2943,6 +3047,10 @@ void GameServer::handleRespawn(Session& session) {
         despawnPlayer(session, false);
     }
     spawnPlayer(session);
+    // A fresh arena run has a fresh kit; the same restatement the join makes.
+    if (net::Connection* connection = listener_.find(session.connection)) {
+        sendProfile(session, *connection);
+    }
 }
 
 void GameServer::handlePing(net::Connection& connection, ByteReader& reader) {
@@ -3014,21 +3122,39 @@ Entity GameServer::spawnPlayer(Session& session) {
     // the walls: the reference refuses a spawn point that overlaps a body or
     // that has more than a handful of mobs within 200 units, which is what
     // stops a fresh flower materialising inside a swarm.
-    std::vector<MobDisc> blockers;
-    collectSpawnBlockers(blockers);
-
+    const Realm realm = spawnRealmFor(session);
     Vec2 spawn;
-    if (session.spawnBiome.empty() ||
-        !mapData_.spawnInBiome(session.spawnBiome, rng_, *terrain_, spawn, &blockers)) {
-        spawn = mapData_.defaultSpawn(rng_, *terrain_, &blockers);
+    if (realm == Realm::Arena) {
+        spawn = kArenaSpawn;
+    } else if (realm == Realm::Maze) {
+        // Inside the entrance room, jittered so a party does not stack on one
+        // point (src/server/playerManager.ts:168-179), and on floor whatever
+        // the jitter did.
+        spawn = terrain_->findOpenSpawn(rng_, activeMaze().spawn(), kMazeCellSize * 0.3, realm);
+    } else {
+        std::vector<MobDisc> blockers;
+        collectSpawnBlockers(blockers);
+        if (session.spawnBiome.empty() ||
+            !mapData_.spawnInBiome(session.spawnBiome, rng_, *terrain_, spawn, &blockers)) {
+            spawn = mapData_.defaultSpawn(rng_, *terrain_, &blockers);
+        }
     }
+
+    // The realm is settled on the session BEFORE the account is applied, and
+    // the arena's scratch record with it: applyAccountToEntity reads both.
+    session.realm = realm;
+    session.arena.reset();
+    if (realm == Realm::Arena) session.arena = startArenaRun(database_.progress(session.userId));
 
     const Entity entity = world_.create();
     world_.add<PlayerTag>(entity);
-    world_.add<Transform>(entity, Transform{spawn, 0.0});
+    world_.add<Transform>(entity, Transform{spawn, 0.0, realm});
     world_.add<Motion>(entity);
     world_.add<Knockback>(entity);
-    world_.add<Faction>(entity, Faction{Team::Players, false});
+    // In the ring players are hostile to each other; everywhere else they are
+    // not. Petals and pets copy this Faction, so the whole kit follows.
+    world_.add<Faction>(entity, Faction{Team::Players, realm == Realm::Arena});
+    if (realm == Realm::Arena) world_.add<ArenaScore>(entity);
     world_.add<PlayerInput>(entity);
     world_.add<PlayerLocation>(entity);
     world_.add<PlayerModifiers>(entity);
@@ -3051,7 +3177,7 @@ Entity GameServer::spawnPlayer(Session& session) {
                                                                         : session.displayName,
                                             session.connection, session.admin});
 
-    const PlayerRecord& record = database_.progress(session.userId);
+    const PlayerRecord& record = liveRecord(session);
     applyAccountToEntity(record, entity);
 
     // A FRESH body only: full health and the respawn window. applyAccountToEntity
@@ -3080,10 +3206,19 @@ Entity GameServer::spawnPlayer(Session& session) {
 }
 
 void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity) {
-    const LevelProgress progress = levelFromTotalXp(record.totalXp);
+    // Which realm the body is in decides which of the account's tracks it
+    // plays on: the maze has its own XP and its own tree
+    // (src/server/playerManager.ts:198-245), and the ring has a flat health
+    // pool with talents switched off (src/server/playerManager.ts:812-824).
+    const Transform* transform = world_.tryGet<Transform>(entity);
+    const Realm realm = transform != nullptr ? transform->realm : Realm::Overworld;
+    const bool maze = realm == Realm::Maze;
+    const double trackXp = maze ? record.mazeTotalXp : record.totalXp;
+    const SkillSet& skills = maze ? record.mazeSkills : record.skills;
+    const LevelProgress progress = levelFromTotalXp(trackXp);
 
     PlayerProgress& state = world_.ensure<PlayerProgress>(entity);
-    state.totalXp = record.totalXp;
+    state.totalXp = trackXp;
     state.level = progress.level;
     state.stars = record.stars;
 
@@ -3094,7 +3229,7 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
     // The tree is copied onto the body so the tick never reaches into storage.
     // Every path that changes it -- login, respawn, buying a tier, a reset --
     // comes back through here, which is what keeps the two in step.
-    world_.ensure<PlayerSkillTree>(entity).skills = record.skills;
+    world_.ensure<PlayerSkillTree>(entity).skills = skills;
 
     Body& body = world_.ensure<Body>(entity);
     body.radius = playerRadiusForLevel(progress.level);
@@ -3102,7 +3237,9 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
 
     Health& health = world_.ensure<Health>(entity);
     const double previousFraction = health.max > 0 ? health.current / health.max : 1.0;
-    health.max = maxHealthForLevel(progress.level) * record.skills.statScale(SkillId::PlayerHealth);
+    health.max = realm == Realm::Arena
+                     ? kArenaMaxHealth
+                     : maxHealthForLevel(progress.level) * skills.statScale(SkillId::PlayerHealth);
     // Preserve the FRACTION across a max-health change, so levelling up mid
     // fight neither heals you to full nor leaves you proportionally worse off.
     //
@@ -3121,18 +3258,9 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
 
     Loadout& loadout = world_.ensure<Loadout>(entity);
     for (std::size_t i = 0; i < kLoadoutSlots; ++i) {
-        std::uint16_t index = kNoPetal;
-        Rarity rarity = Rarity::Common;
-        if (i < record.loadout.size() && record.loadout[i].has_value()) {
-            const StoredItem& item = *record.loadout[i];
-            index = content().petalIndex(item.petalType);
-            // A stored petal this build no longer has leaves the slot empty
-            // rather than resolving to whatever index 0 happens to be.
-            if (index == kInvalidIndex) index = kNoPetal;
-            rarity = item.rarity;
-        }
-        loadout.slots[i].configIndex = index;
-        loadout.slots[i].rarity = rarity;
+        const WornSlot worn = wornSlot(record, i, realm);
+        loadout.slots[i].configIndex = worn.petalIndex;
+        loadout.slots[i].rarity = worn.rarity;
         // `broken` and `reloadReadyAtMillis` are deliberately NOT touched. They
         // are the ring's own bookkeeping: the petal pass arms a full reload on
         // any slot whose contents changed and leaves an unchanged one alone, so
@@ -3148,7 +3276,11 @@ void GameServer::persistPlayer(const Session& session) {
     if (!progress) return;
 
     PlayerRecord& record = database_.progress(session.userId);
-    record.totalXp = progress->totalXp;
+    // Onto the track the body was playing on: a maze run's XP is the maze's,
+    // and writing it into totalXP would destroy the outside level
+    // (src/server/playerManager.ts:975-978).
+    if (session.realm == Realm::Maze) record.mazeTotalXp = progress->totalXp;
+    else record.totalXp = progress->totalXp;
     record.stars = progress->stars;
     database_.markDirty();
 }
@@ -3156,6 +3288,9 @@ void GameServer::persistPlayer(const Session& session) {
 void GameServer::despawnPlayer(Session& session, bool persist) {
     if (session.entity == NULL_ENTITY) return;
     if (persist) persistPlayer(session);
+    // Leaving the ring, by any door, is the end of the run.
+    if (session.arena) endArenaRun(session);
+    session.realm = Realm::Overworld;
 
     // The petals belong to the body, not the account, so they go with it.
     if (const Loadout* loadout = world_.tryGet<Loadout>(session.entity)) {
@@ -3169,6 +3304,113 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
     // Same reason as the spawn: the id this member was known by is gone, and a
     // roster still naming it points every squadmate's HUD at nothing.
     if (const Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
+}
+
+// ---------------------------------------------------------------------------
+// Realms: the arena run and the maze track
+// ---------------------------------------------------------------------------
+
+Realm GameServer::spawnRealmFor(const Session& session) const {
+    if (session.spawnBiome == kArenaSpawnChoice) return Realm::Arena;
+    if (session.spawnBiome == kMazeSpawnChoice) return Realm::Maze;
+    return Realm::Overworld;
+}
+
+PlayerRecord& GameServer::liveRecord(Session& session) {
+    if (session.arena) return *session.arena;
+    return database_.progress(session.userId);
+}
+
+std::unique_ptr<PlayerRecord> GameServer::startArenaRun(const PlayerRecord& account) const {
+    // The reference's enterPvpArena: five common basics and five empty slots,
+    // nothing in the bag, and a fresh score. The level is the account's -- XP
+    // keeps accruing in the ring -- and so are the cosmetics. No talents: the
+    // ring switches every multiplier off, so the scratch tree stays empty.
+    auto run = std::make_unique<PlayerRecord>();
+    run->totalXp = account.totalXp;
+    run->stars = account.stars;
+    run->renderFlags = account.renderFlags;
+    run->equippedSkinId = account.equippedSkinId;
+    run->loadout.assign(kLoadoutSlots, std::nullopt);
+    const std::uint16_t basic = content().petalIndex("basic");
+    if (basic != kInvalidIndex) {
+        for (std::size_t i = 0; i < 5 && i < kLoadoutActiveSlots; ++i) {
+            StoredItem item;
+            item.type = "petal";
+            item.petalType = content().petal(basic).id;
+            item.rarity = Rarity::Common;
+            run->loadout[i] = item;
+        }
+    }
+    return run;
+}
+
+void GameServer::endArenaRun(Session& session) {
+    if (!session.arena) return;
+    PlayerRecord& account = database_.progress(session.userId);
+    // A quarter of every stack looted in the ring, rounded down, reaches the
+    // account (exitPvpArena); the ring's own petals and whatever was equipped
+    // out of its bag do not.
+    const Json& bag = session.arena->inventory;
+    for (const std::string& rarityName : bag.keys()) {
+        const Rarity rarity = parseRarity(rarityName);
+        const Json& byType = bag[rarityName];
+        for (const std::string& key : byType.keys()) {
+            const int kept = static_cast<int>(
+                std::floor(std::max(0, byType[key].asInt()) * kArenaInventoryKeepRatio));
+            if (kept <= 0) continue;
+            account.addItem(rarity, key, kept);
+        }
+    }
+    session.arena.reset();
+    database_.markDirty();
+}
+
+void GameServer::settleArenaDeath(Session& victim, Entity killer) {
+    if (!victim.arena) return;
+    Session* winner = killer != NULL_ENTITY ? sessionForEntity(killer) : nullptr;
+    // Only another flower IN THE RING inherits anything: a mob kill, a bot, or
+    // a killer who has since left simply empties the run (playerState.ts:1352).
+    if (winner != nullptr && winner != &victim && winner->arena && winner->playing()) {
+        if (ArenaScore* mine = world_.tryGet<ArenaScore>(victim.entity)) {
+            if (ArenaScore* theirs = world_.tryGet<ArenaScore>(winner->entity)) {
+                theirs->score += mine->score;
+            }
+        }
+        const Json& bag = victim.arena->inventory;
+        for (const std::string& rarityName : bag.keys()) {
+            const Rarity rarity = parseRarity(rarityName);
+            const Json& byType = bag[rarityName];
+            for (const std::string& key : byType.keys()) {
+                const int count = std::max(0, byType[key].asInt());
+                if (count > 0) winner->arena->addItem(rarity, key, count);
+            }
+        }
+        if (net::Connection* connection = listener_.find(winner->connection)) {
+            sendProfile(*winner, *connection);
+        }
+    }
+    if (ArenaScore* mine = world_.tryGet<ArenaScore>(victim.entity)) mine->score = 0;
+    victim.arena->inventory = Json::object();
+    if (net::Connection* connection = listener_.find(victim.connection)) {
+        sendProfile(victim, *connection);
+    }
+}
+
+void GameServer::sendMazeInfo(net::Connection& connection) {
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::MazeInfo));
+    w.i64(activeMaze().day());
+    connection.send(w);
+}
+
+void GameServer::broadcastMazeInfo() {
+    for (auto& entry : sessions_) {
+        if (!entry.second.authenticated()) continue;
+        if (net::Connection* connection = listener_.find(entry.second.connection)) {
+            sendMazeInfo(*connection);
+        }
+    }
 }
 
 } // namespace flix

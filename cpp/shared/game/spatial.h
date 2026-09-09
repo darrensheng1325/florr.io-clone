@@ -1,5 +1,6 @@
 #pragma once
-// The broadphase: a uniform bucket grid, rebuilt from scratch every tick.
+// The broadphase: a uniform bucket grid per realm, rebuilt from scratch every
+// tick.
 //
 // Everything that asks "what is near me" -- contact damage, petal hits,
 // projectile tests, mob aggro, drop pickup -- asks it here first. Rebuilding
@@ -13,7 +14,15 @@
 // the caller is the one that knows whether it wants circles, capsules or a
 // cone. What the grid guarantees is that the superset is complete and that
 // nothing appears in it twice.
+//
+// One LAYER per realm (see realm.h). The overworld, the arena and the maze
+// are separate coordinate spaces whose positions overlap numerically, so an
+// entity is filed under its realm and a query names the realm it is asking
+// about. A candidate list therefore never crosses realms, and no caller has
+// to remember to check -- a maze mob at (3000, 3000) is simply not in the
+// grid an overworld flower at (3000, 3000) queries.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -21,6 +30,7 @@
 #include "shared/core/entity.h"
 #include "shared/core/types.h"
 #include "shared/game/constants.h"
+#include "shared/game/realm.h"
 
 namespace flix {
 
@@ -32,51 +42,49 @@ public:
     /// count, and the whole grid is walked on wrap-around.
     static constexpr double kDefaultCellSize = 600.0;
 
-    /// The grid covers `size` units from `origin`. One grid per REGION: the
-    /// arena sits far outside the overworld, and a position outside the
-    /// configured bounds is clamped into the border cells rather than dropped,
-    /// so a single grid spanning both would make arena entities collide with
-    /// whatever sits at the overworld's edge.
-    explicit SpatialGrid(double cellSize = kDefaultCellSize,
-                         Vec2 origin = Vec2{0.0, 0.0},
-                         Vec2 size = Vec2{kWorldSize, kWorldSize});
+    /// Each realm's layer covers that realm's square from (0, 0) -- see
+    /// Terrain::realmSize. A position outside it is clamped into the border
+    /// cells rather than dropped, so nothing is ever lost to the grid; it is
+    /// only found by more queries than it needs to be.
+    explicit SpatialGrid(double cellSize = kDefaultCellSize);
 
     /// Retires every bucket in O(1) by bumping an epoch. The bucket vectors
     /// keep their capacity, which is what makes the steady-state rebuild
     /// allocation-free.
     void clear();
 
-    /// Files `e` under every cell its bounding circle touches.
+    /// Files `e` under every cell its bounding circle touches, in its realm.
     ///
     /// Fat insertion, deliberately: filing a boss only under its centre cell
     /// makes it invisible to a query that overlaps nothing but its edge, and
     /// that bug looks like "the big mob has no hitbox on its left side".
-    void insert(Entity e, Vec2 position, double radius = 0.0);
+    void insert(Entity e, Realm realm, Vec2 position, double radius = 0.0);
 
-    /// Candidates within `radius` of `center`. `out` is cleared and refilled;
-    /// hand back the same vector every tick and the query never allocates.
-    void query(Vec2 center, double radius, std::vector<Entity>& out) const;
+    /// Candidates within `radius` of `center`, in one realm. `out` is cleared
+    /// and refilled; hand back the same vector every tick and the query never
+    /// allocates.
+    void query(Realm realm, Vec2 center, double radius, std::vector<Entity>& out) const;
 
-    void queryRect(Vec2 min, Vec2 max, std::vector<Entity>& out) const;
-    void queryRect(const Rect& area, std::vector<Entity>& out) const;
+    void queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out) const;
+    void queryRect(Realm realm, const Rect& area, std::vector<Entity>& out) const;
 
-    /// Entities inserted since the last clear. An entity spanning several
-    /// cells counts once.
+    /// Entities inserted since the last clear, across every realm. An entity
+    /// spanning several cells counts once.
     std::size_t size() const { return inserted_; }
     bool empty() const { return inserted_ == 0; }
 
-    int cols() const { return cols_; }
-    int rows() const { return rows_; }
+    int cols(Realm realm) const { return layer(realm).cols; }
+    int rows(Realm realm) const { return layer(realm).rows; }
     double cellSize() const { return cellSize_; }
-    Vec2 origin() const { return origin_; }
 
-    /// Total slots reserved across every bucket. Only tests care: it is how
-    /// they assert that a steady-state rebuild stopped allocating.
+    /// Total slots reserved across every bucket of every layer. Only tests
+    /// care: it is how they assert that a steady-state rebuild stopped
+    /// allocating.
     std::size_t reservedEntries() const;
 
-    /// Cell coordinates for a world point, clamped into the grid.
-    int cellX(double worldX) const { return cellIndex(worldX - origin_.x, invCellSize_, cols_); }
-    int cellY(double worldY) const { return cellIndex(worldY - origin_.y, invCellSize_, rows_); }
+    /// Cell coordinates for a point in a realm, clamped into that layer.
+    int cellX(Realm realm, double x) const { return cellIndex(x, invCellSize_, layer(realm).cols); }
+    int cellY(Realm realm, double y) const { return cellIndex(y, invCellSize_, layer(realm).rows); }
 
 private:
     /// Hard cap per axis. A caller asking for a one-unit cell over the whole
@@ -85,28 +93,37 @@ private:
 
     static int cellIndex(double offset, double invCellSize, int axisCells);
 
-    std::size_t bucketAt(int cx, int cy) const {
-        return static_cast<std::size_t>(cy) * static_cast<std::size_t>(cols_) + static_cast<std::size_t>(cx);
-    }
+    /// One realm's buckets.
+    struct Layer {
+        int cols = 1;
+        int rows = 1;
+        std::vector<std::vector<Entity>> buckets;
+        /// Which epoch each bucket was last written in. A bucket whose epoch
+        /// is stale still holds last tick's entities; readers skip it and the
+        /// next insert clears it. That is the whole trick behind an O(1)
+        /// clear().
+        std::vector<std::uint32_t> bucketEpoch;
+
+        std::size_t bucketAt(int cx, int cy) const {
+            return static_cast<std::size_t>(cy) * static_cast<std::size_t>(cols) +
+                   static_cast<std::size_t>(cx);
+        }
+    };
+
+    Layer& layer(Realm realm) { return layers_[realmIndex(realm)]; }
+    const Layer& layer(Realm realm) const { return layers_[realmIndex(realm)]; }
 
     double cellSize_ = kDefaultCellSize;
     double invCellSize_ = 1.0 / kDefaultCellSize;
-    Vec2 origin_;
-    int cols_ = 1;
-    int rows_ = 1;
-
-    std::vector<std::vector<Entity>> buckets_;
-    /// Which epoch each bucket was last written in. A bucket whose epoch is
-    /// stale still holds last tick's entities; readers skip it and the next
-    /// insert clears it. That is the whole trick behind an O(1) clear().
-    std::vector<std::uint32_t> bucketEpoch_;
+    std::array<Layer, kRealmCount> layers_;
     std::uint32_t epoch_ = 1;
     std::size_t inserted_ = 0;
 
     /// Per-entity-index stamp, so a query can drop the duplicates that fat
     /// insertion creates without allocating a set. Keyed by entity INDEX
     /// rather than by handle: an index names at most one live entity, and the
-    /// grid only ever holds live ones.
+    /// grid only ever holds live ones. Shared by every layer -- a query only
+    /// ever walks one.
     ///
     /// Mutable because it is scratch space for a logically const read, which
     /// also means a single grid cannot be queried from two threads at once.

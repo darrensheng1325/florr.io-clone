@@ -453,7 +453,8 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
             const std::uint8_t flags = kind == DamageKind::Poison
                                            ? static_cast<std::uint8_t>(net::DamagePoison)
                                            : std::uint8_t{0};
-            events_->damage(id->value, applied, transform ? transform->position : Vec2{}, flags);
+            events_->damage(id->value, applied, transform ? transform->position : Vec2{},
+                            transform ? transform->realm : Realm::Overworld, flags);
         }
     }
 
@@ -516,6 +517,9 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
                 : 1.0;
         const double xp = std::round(baseXp * multiplier);
         progress->totalXp += xp;
+        // The arena leaderboard counts the XP earned inside the ring
+        // (src/server/playerManager.ts:929); a flower outside it has no score.
+        if (ArenaScore* arena = world.tryGet<ArenaScore>(recipient)) arena->score += xp;
         const int level = levelFromTotalXp(progress->totalXp).level;
         if (level != progress->level) {
             progress->level = level;
@@ -527,8 +531,13 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
             // health/damage.
             const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(recipient);
             const double healthScale = modifiers ? modifiers->maxHealthScale : 1.0;
+            const Transform* at = world.tryGet<Transform>(recipient);
+            const bool arena = at != nullptr && at->realm == Realm::Arena;
             if (Health* health = world.tryGet<Health>(recipient)) {
-                health->max = std::round(maxHealthForLevel(level) * healthScale);
+                // The ring's pool is flat (PVP_MAX_HEALTH); a level gained in
+                // it still heals, as the reference's level-up does.
+                health->max = arena ? kArenaMaxHealth
+                                    : std::round(maxHealthForLevel(level) * healthScale);
                 health->current = health->max;
             }
             if (ContactDamage* contact = world.tryGet<ContactDamage>(recipient)) {
@@ -857,7 +866,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
         if (effect.radius <= 0.0) return;
         fields_.push_back({e, effect.kind, transform.position, effect.radius,
                            effect.damagePerSecond, effect.slowFactor, effect.rarity,
-                           effect.damagePerHit, effect.damageIntervalMillis});
+                           effect.damagePerHit, effect.damageIntervalMillis, transform.realm});
     });
 
     for (const FieldSource& field : fields_) {
@@ -871,7 +880,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
         }
         if (field.damagePerSecond <= 0.0 && field.damagePerHit <= 0.0 &&
             field.slowFactor >= 1.0) continue;
-        grid.query(field.position, field.radius + kBroadphasePad, candidates_);
+        grid.query(field.realm, field.position, field.radius + kBroadphasePad, candidates_);
         for (const Entity victim : candidates_) {
             const Transform* transform = world.tryGet<Transform>(victim);
             if (transform == nullptr) continue;
@@ -955,7 +964,8 @@ void CombatSystem::gatherAuras(World& world, const ContentRegistry& content) {
         // multiplier the ring's own contact takes, not the flower's body one.
         const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(e);
         auras_.push_back({e, transform.position, bestRadius,
-                          bestDamage * (modifiers != nullptr ? modifiers->petalDamageScale : 1.0)});
+                          bestDamage * (modifiers != nullptr ? modifiers->petalDamageScale : 1.0),
+                          transform.realm});
     });
 }
 
@@ -963,7 +973,7 @@ void CombatSystem::resolveAuras(World& world, const SpatialGrid& grid, double no
     for (const AuraSource& aura : auras_) {
         if (!world.isAlive(aura.player) || world.has<Dead>(aura.player)) continue;
 
-        grid.query(aura.position, aura.radius + kBroadphasePad, candidates_);
+        grid.query(aura.realm, aura.position, aura.radius + kBroadphasePad, candidates_);
         for (const Entity victim : candidates_) {
             // Pets are not in the reference's enemy grid at all, so the field
             // sweeps wild mobs and never the flower's own summons.
@@ -996,6 +1006,7 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         MeleeSource source;
         source.attacker = e;
         source.position = transform.position;
+        source.realm = transform.realm;
         source.radius = body.radius;
         source.damage = contact.amount;
         source.hitIntervalMillis = contact.intervalMillis;
@@ -1039,6 +1050,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content) {
         MeleeSource source;
         source.attacker = e;
         source.position = transform.position;
+        source.realm = transform.realm;
         source.radius = body.radius;
         source.damage = stats.damage;
         source.hitIntervalMillis = stats.damageIntervalMillis;
@@ -1072,7 +1084,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
         // The grid files each entity under every cell its own radius touches,
         // so a query at the attacker's radius already returns everything whose
         // circle could overlap; the exact test below is the one that decides.
-        grid.query(source.position, source.radius + kBroadphasePad, candidates_);
+        grid.query(source.realm, source.position, source.radius + kBroadphasePad, candidates_);
         for (const Entity victim : candidates_) {
             if (victim == source.attacker) continue;
             const Transform* transform = world.tryGet<Transform>(victim);
@@ -1288,7 +1300,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         // Movement has already flown the shot this tick, so the budget spent
         // is the distance it just covered -- not one it is about to.
         shots_.push_back({e, transform.position, body.radius, motion.velocity.length() * dt,
-                          body.mass, motion.velocity.length()});
+                          body.mass, motion.velocity.length(), transform.realm});
     });
 
     for (const ShotSource& shot : shots_) {
@@ -1309,7 +1321,8 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         const std::uint16_t petalIndex = projectile->petalConfigIndex;
         const Rarity rarity = projectile->rarity;
 
-        grid.query(shot.position, shot.radius + shot.travelled + kBroadphasePad, candidates_);
+        grid.query(shot.realm, shot.position, shot.radius + shot.travelled + kBroadphasePad,
+                   candidates_);
 
         // Gathered whole before a single hit lands. The loop below marks
         // victims Dead and that relocates their rows, so nothing here may hold

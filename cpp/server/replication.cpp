@@ -58,6 +58,10 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
     if (const PlayerProgress* progress = world.tryGet<PlayerProgress>(e)) {
         out.level = static_cast<std::uint16_t>(std::max(1, progress->level));
     }
+    if (const ArenaScore* arena = world.tryGet<ArenaScore>(e)) {
+        out.arenaScore = static_cast<std::uint32_t>(
+            clamp(arena->score, 0.0, static_cast<double>(0xFFFFFFFFu)));
+    }
     if (const Loadout* loadout = world.tryGet<Loadout>(e)) {
         // The best rarity ANYWHERE in the loadout, empty slots ignored: the
         // level label under the flower is tinted with it, which is how a
@@ -78,6 +82,11 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     if (!viewerTransform) return;
 
     const Vec2 centre = viewerTransform->position;
+    // The viewer sees its own realm and nothing else. Every realm's
+    // coordinates start at (0, 0), so a position alone says nothing about
+    // whether an entity is anywhere near this client -- it has to be in the
+    // same space first.
+    const Realm realm = viewerTransform->realm;
     Vec2 viewport{kViewportWidth, kViewportHeight};
     if (const PlayerLocation* location = world.tryGet<PlayerLocation>(viewer)) {
         viewport = location->viewport;
@@ -119,7 +128,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
         // The viewer's own body is always replicated, however the camera sits:
         // losing it would leave the client with nothing to anchor prediction to.
-        // A squadmate is exempt for its own reason -- see Frame::alwaysVisible.
+        // A squadmate is exempt for its own reason -- see Frame::alwaysVisible
+        // -- but only within the viewer's realm: a party member in the maze has
+        // no position that means anything on an overworld screen.
+        if (e != viewer && transform.realm != realm) return;
         if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
         candidates_.push_back({e, id.value, flix::distanceSq(transform.position, centre)});
     });
@@ -288,6 +300,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.u32(visuals.renderFlags);
             out.u16(visuals.level);
             out.u8(static_cast<std::uint8_t>(visuals.bestRarity));
+            out.u32(visuals.arenaScore);
         }
         if (info.kind == net::EntityKind::Petal) {
             // Petals are placed on an absolute ring around the owner's SERVER
@@ -319,6 +332,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         tracked.renderFlags = visuals.renderFlags;
         tracked.level = visuals.level;
         tracked.bestRarity = static_cast<std::uint8_t>(visuals.bestRarity);
+        tracked.arenaScore = visuals.arenaScore;
         view.tracked.emplace(candidate.netId, tracked);
     }
     out.patchU16(spawnCountAt, spawnCount);
@@ -356,7 +370,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
              visuals.equipFlags != tracked.equipFlags ||
              visuals.renderFlags != tracked.renderFlags ||
              visuals.level != tracked.level ||
-             static_cast<std::uint8_t>(visuals.bestRarity) != tracked.bestRarity)) {
+             static_cast<std::uint8_t>(visuals.bestRarity) != tracked.bestRarity ||
+             visuals.arenaScore != tracked.arenaScore)) {
             mask |= net::FieldPlayerVisuals;
         }
         if (mask == 0) continue;
@@ -389,11 +404,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.u32(visuals.renderFlags);
             out.u16(visuals.level);
             out.u8(static_cast<std::uint8_t>(visuals.bestRarity));
+            out.u32(visuals.arenaScore);
             tracked.faceFlags = visuals.faceFlags;
             tracked.equipFlags = visuals.equipFlags;
             tracked.renderFlags = visuals.renderFlags;
             tracked.level = visuals.level;
             tracked.bestRarity = static_cast<std::uint8_t>(visuals.bestRarity);
+            tracked.arenaScore = visuals.arenaScore;
         }
         ++updateCount;
     }
@@ -423,7 +440,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // entities keeps a busy fight on the far side of the map from costing
         // every client bytes for numbers they will never see.
         for (const WireEvent& event : frame.events->events()) {
-            if (event.positional && outsideView(event.position)) continue;
+            if (event.positional && (event.realm != realm || outsideView(event.position))) continue;
             out.u8(static_cast<std::uint8_t>(event.kind));
             out.u32(event.netId);
             out.u32(event.otherNetId);
