@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <vector>
 
 #include "server/replication.h"
@@ -354,6 +355,10 @@ private:
         /// does not own.
         std::vector<Vec2> polygon;
         Rarity tier = Rarity::Common;
+        /// What this zone spawns: weighted rows of section presets and named
+        /// mobs. Empty means the ambient roll of whichever section the mob
+        /// lands in, which is what every zone did before distributions existed.
+        std::vector<ZoneMobEntry> mobs;
         /// The 3x3 sections this rectangle touches. The density fill asks
         /// "am I in a zone?" of every candidate point it samples, and with 148
         /// rectangles on the map that test is worth reducing to one integer
@@ -441,6 +446,12 @@ private:
     /// Mobs the last census saw inside `bounds`, inclusive on every edge as
     /// the reference's own count is.
     bool sampleZonePoint(const SpawnZone& zone, Rng&, Vec2& out) const;
+    /// The mob a zone fill should place: its distribution when it declares one,
+    /// and otherwise the ambient roll for `section`.
+    /// Not const: it defers to chooseMobType, which lazily rebuilds the
+    /// per-section candidate table.
+    std::uint16_t chooseZoneMobType(const ContentRegistry&, const SpawnZone&, int section,
+                                    Rarity, Rng&);
     int countMobsInZone(const SpawnZone& zone) const;
 
     /// True when a body of `halfSize` at `position` would touch a mob the last
@@ -510,6 +521,9 @@ private:
 
     /// Rebuilt when `mapData` changes, which in the server is once.
     std::vector<SpawnZone> zones_;
+    /// Mob names a zone asked for that the content does not define, so each is
+    /// reported once rather than on every attempt.
+    std::set<std::string> unknownZoneMobs_;
     const MapData* zoneMap_ = nullptr;
     /// Both start due, so the first tick stocks the zones a player can already
     /// see and puts the world's ultra out rather than waiting a minute for it.

@@ -960,6 +960,7 @@ void SpawnSystem::rebuildZones() {
         zone.bounds = element.bounds;
         zone.polygon = element.polygon;
         zone.tier = element.spawnTier;
+        zone.mobs = element.mobDistribution;
         // The OUTLINE's area, not the bounding box's: a diagonal band covers
         // about half its box, and sizing its population by the box would pack
         // it at twice the density of a rectangular zone next door.
@@ -994,6 +995,54 @@ bool SpawnSystem::sampleZonePoint(const SpawnZone& zone, Rng& rng, Vec2& out) co
         return true;
     }
     return false;
+}
+
+std::uint16_t SpawnSystem::chooseZoneMobType(const ContentRegistry& content,
+                                            const SpawnZone& zone, int section, Rarity rarity,
+                                            Rng& rng) {
+    // No distribution: the ambient roll of the section the mob landed in, which
+    // is what a zone has always done and what the great majority of the map
+    // still says. `section` rather than anything of the zone's own, because a
+    // zone can straddle two of them and the mob belongs to the ground it is
+    // standing on.
+    if (zone.mobs.empty()) return chooseMobType(content, section, rarity, rng);
+
+    double total = 0.0;
+    for (const ZoneMobEntry& row : zone.mobs) total += std::max(0.0, row.weight);
+    // A table nobody weighted still spawns something rather than nothing, as
+    // the biome tables' weightless case does.
+    const ZoneMobEntry* chosen = &zone.mobs.front();
+    if (total > 0.0) {
+        double roll = rng.unit() * total;
+        for (const ZoneMobEntry& row : zone.mobs) {
+            roll -= std::max(0.0, row.weight);
+            if (roll <= 0.0) {
+                chosen = &row;
+                break;
+            }
+        }
+    }
+
+    if (chosen->isPreset()) {
+        // A preset defers to that section's ambient table, weights and all, so
+        // "ocean" in a garden zone means exactly what the ocean would spawn.
+        return chooseMobType(content, chosen->presetSection, rarity, rng);
+    }
+    // Named outright, which bypasses the candidate table entirely -- that table
+    // excludes `neverAmbient` mobs, and this is one of the two ways one reaches
+    // the world.
+    const std::uint16_t index = content.mobIndex(chosen->mobType);
+    if (index == kInvalidIndex || index >= content.mobCount()) {
+        // A name the content does not define. Reported once per name rather
+        // than per spawn: a mistyped mob would otherwise be a zone that quietly
+        // spawns nothing at all, several times a second.
+        if (unknownZoneMobs_.insert(chosen->mobType).second) {
+            std::fprintf(stderr, "[spawn] zone names mob \"%s\", which the content does not define\n",
+                         chosen->mobType.c_str());
+        }
+        return kInvalidIndex;
+    }
+    return index;
 }
 
 int SpawnSystem::countMobsInZone(const SpawnZone& zone) const {
@@ -1140,7 +1189,7 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
         } else {
             rarity = applyTierDrift(rarity, luck, rng);
         }
-        type = chooseMobType(content, section, rarity, rng);
+        type = chooseZoneMobType(content, zone, section, rarity, rng);
         if (type == kInvalidIndex) return NULL_ENTITY;
     }
 

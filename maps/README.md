@@ -74,7 +74,7 @@ within 150 units, so the two never end up on opposite sides.
 | --- | --- |
 | `background` | the ground: which artwork each cell is painted with |
 | `terrain` | the tile grid — collision. Air is left empty, so the background shows through |
-| `spawns` | `spawn` **polygons**, with a `spawnType` property |
+| `spawns` | `spawn` **polygons**, with `spawnType` and an optional `mobs` distribution |
 | `biomes` | `biome` rectangles, with `biomeName`, `backgroundTexture` and `spawnTable` |
 | `teleporters` | `teleporter` **points**, with `teleportToX` / `teleportToY` and an optional `serverPort` |
 
@@ -82,6 +82,39 @@ Objects are grouped by kind so each set can be hidden while you work on
 another. The game never sees the grouping: every reader filters by kind before
 it looks at order, so only the order *within* a layer is observable, and that
 is preserved.
+
+### What a spawn zone spawns
+
+A zone says two independent things. `spawnType` is the **tier** — `common`
+through `ultra` — and is still where the map's difficulty progression lives.
+`mobs` is the **distribution**: what actually appears there, as weighted rows of
+mob ids and presets.
+
+```
+mobs = garden 50% hornet 50%
+mobs = ocean 20% jellyfish 80%
+mobs = hornet
+```
+
+A row is a name and a weight. The name is a **preset** when it matches one of
+the nine mob-spawn sections — `garden`, `desert`, `hel`, `ocean`, `ant_hell`,
+`jungle`, `sewers`, `computer`, `unknown` — and a **mob id** otherwise. A preset
+defers to that section's own ambient table, weights and all, so `ocean` in a
+garden zone spawns exactly what the ocean would. A named mob is taken directly,
+which also bypasses the ambient table's exclusions: naming a `neverAmbient` mob
+is one of the two ways one reaches the world at all.
+
+Weights are relative, so they need not sum to 100 — `ocean 1 jellyfish 4` is the
+same zone as `ocean 20% jellyfish 80%`. Commas, percent signs and `=` are all
+just separators. A bare name takes weight 1, so `hornet` alone is a zone of
+nothing but hornets. A name the content does not define is reported once on
+stderr rather than silently spawning nothing forever.
+
+**Omitting `mobs` is the default and means what it always meant**: roll the
+ambient table of whichever section the mob lands in. Every zone on the shipped
+map still does that — six of them straddle two sections, where "the section the
+mob landed in" is not a constant, so the default is deliberately not written out
+as a preset.
 
 ### Spawn zones are polygons
 

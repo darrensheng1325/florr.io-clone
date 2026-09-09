@@ -228,6 +228,10 @@ function objectFromElement(element, id) {
         }
     }
     if (p.spawnType !== undefined) custom.spawnType = p.spawnType;
+    // The zone's mob distribution, verbatim. It is parsed on the C++ side --
+    // only the server has a view of what mobs exist — so this layer's whole job
+    // is not to mangle the string.
+    if (p.mobs !== undefined) custom.mobs = p.mobs;
     if (p.biomeName !== undefined) custom.biomeName = p.biomeName;
     if (p.backgroundTexture !== undefined) custom.backgroundTexture = p.backgroundTexture;
     if (p.isNoCombat !== undefined) custom.isNoCombat = p.isNoCombat;
@@ -254,6 +258,7 @@ function elementFromObject(object, kind, context) {
     const custom = readProperties(object);
     const properties = {};
     if (custom.spawnType !== undefined) properties.spawnType = custom.spawnType;
+    if (custom.mobs !== undefined) properties.mobs = custom.mobs;
     if (custom.biomeName !== undefined) properties.biomeName = custom.biomeName;
     if (custom.backgroundTexture !== undefined) properties.backgroundTexture = custom.backgroundTexture;
     if (custom.isNoCombat !== undefined) properties.isNoCombat = custom.isNoCombat;

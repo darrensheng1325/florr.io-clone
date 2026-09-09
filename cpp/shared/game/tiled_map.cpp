@@ -338,7 +338,7 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
 
                 const Json custom = propertiesOf(object);
                 Json properties = Json::object();
-                for (const char* name : {"spawnType", "biomeName", "backgroundTexture"}) {
+                for (const char* name : {"spawnType", "mobs", "biomeName", "backgroundTexture"}) {
                     if (custom.contains(name)) properties.set(name, custom[name]);
                 }
                 if (custom.contains("isNoCombat")) properties.set("isNoCombat", custom["isNoCombat"]);

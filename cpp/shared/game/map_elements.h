@@ -47,6 +47,45 @@ struct BiomeSpawnEntry {
     std::string mobType;
 };
 
+/// One row of a spawn zone's mob distribution.
+///
+/// A row names either a PRESET -- one of the map's nine mob-spawn sections,
+/// whose ambient roll it defers to -- or a single mob outright. Those are the
+/// two useful ways to say what belongs in a zone: "whatever the ocean holds"
+/// and "jellyfish".
+struct ZoneMobEntry {
+    /// The section whose ambient roll this row uses, or -1 when it names a mob.
+    int presetSection = -1;
+    /// The mob this row spawns. Named outright, which bypasses the ambient
+    /// candidate table entirely -- that table excludes `neverAmbient` mobs, and
+    /// this is how one gets into a zone.
+    std::string mobType;
+    /// Relative weight. Authored as percentages, but nothing requires them to
+    /// sum to a hundred: they are normalised against each other.
+    double weight = 1.0;
+
+    bool isPreset() const { return presetSection >= 0; }
+};
+
+/// The section a preset name refers to (`garden`, `ant_hell`, ...), or -1.
+/// The names are terrain.h's nine biomes, lowercased with spaces underscored,
+/// so there is one list of them rather than two.
+int sectionIndexByName(const std::string& name);
+
+/// Parses a zone's mob distribution: `garden 50% hornet 50%`.
+///
+/// A sequence of `name weight` pairs, commas optional and percent signs
+/// optional. A name that matches a section is a preset; anything else is a mob
+/// id, checked against the content registry only when the zone spawns, because
+/// the map layer has no view of what mobs exist. A row with no weight takes 1,
+/// so a bare `hornet` is a zone of nothing but hornets.
+///
+/// Text that parses to nothing yields an empty list, which the spawner reads as
+/// "no distribution" -- the ambient roll it has always done. `warningOut`, when
+/// given, collects what was skipped, because a mistyped distribution is
+/// otherwise a zone that silently keeps its old behaviour.
+std::vector<ZoneMobEntry> parseMobDistribution(const std::string& text, std::string* warningOut);
+
 /// True when `at` is inside a zone outline, boundary INCLUDED.
 ///
 /// An empty `polygon` means the outline is `bounds` itself. The boundary counts
@@ -92,9 +131,19 @@ struct MapElement {
     /// teleporters are still rectangles and points respectively.
     std::vector<Vec2> polygon;
 
-    /// Spawn zones only: the mob tier that belongs in this rectangle.
+    /// Spawn zones only: the mob tier that belongs in this zone.
+    ///
+    /// Orthogonal to `mobDistribution`, which says WHAT spawns: a zone is "epic
+    /// tier" and "half garden, half hornet" at the same time, and the tier
+    /// bands are still where the map's difficulty progression lives.
     Rarity spawnTier = Rarity::Common;
     bool hasSpawnTier = false;
+
+    /// Spawn zones only: what this zone spawns, as weighted rows of presets and
+    /// mobs. EMPTY means what it has always meant -- roll the ambient table of
+    /// whichever section the mob lands in -- which is why every zone that says
+    /// nothing behaves exactly as it did.
+    std::vector<ZoneMobEntry> mobDistribution;
 
     /// Biomes only.
     std::string biomeName;

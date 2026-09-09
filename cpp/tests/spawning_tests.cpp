@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <string>
@@ -1225,4 +1226,136 @@ TEST(a_target_dummy_is_smaller_than_the_wild_mob_of_its_tier) {
     CHECK_NEAR(sim.world.get<MobType>(unique).sizeJitter, 0.75, 1e-12);
     CHECK_NEAR(sim.world.get<Body>(unique).radius,
                shipped().mobStats(dummy, Rarity::Unique).radius * 0.75, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Zone mob distributions
+// ---------------------------------------------------------------------------
+//
+// A zone says WHAT it spawns as weighted rows of section presets and named
+// mobs. These drive the whole path -- the authored string, through the Tiled
+// map, into MapData, into a running spawn pass -- because the parser agreeing
+// with itself proves nothing about which mobs come out.
+
+namespace {
+
+/// Writes a one-zone Tiled map whose spawn polygon covers most of section 0,
+/// carrying `distribution` verbatim as its `mobs` property.
+std::string writeZoneMap(const std::string& name, const std::string& distribution) {
+    const std::string path = std::string("/tmp/") + name;
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    // One tile cell, because MapData only wants the annotations and a map has
+    // to have a tile layer to be a map. Terrain is the thing that insists on a
+    // full 200x200 grid, and these tests give the Sim its own flat one.
+    out << R"({
+      "type": "map", "orientation": "orthogonal", "infinite": false,
+      "width": 1, "height": 1, "tilewidth": 300, "tileheight": 300,
+      "tilesets": [], "layers": [
+        {"type": "tilelayer", "name": "terrain", "width": 1, "height": 1, "data": [0]},
+        {"type": "objectgroup", "name": "spawns", "objects": [
+          {"id": 1, "class": "spawn", "x": 2000, "y": 2000,
+           "polygon": [{"x":0,"y":0},{"x":14000,"y":0},{"x":14000,"y":14000},{"x":0,"y":14000}],
+           "properties": [
+             {"name": "spawnType", "type": "string", "value": "common"},
+             {"name": "mobs", "type": "string", "value": ")"
+        << distribution << R"("}
+           ]}
+        ]}
+      ]})";
+    return path;
+}
+
+/// Every ambient mob in the world, by config id.
+std::vector<std::string> spawnedMobIds(Sim& sim) {
+    std::vector<std::string> ids;
+    Query<MobTag, MobType> mobs{sim.world};
+    mobs.each([&](Entity, MobTag&, MobType& type) {
+        ids.push_back(shipped().mob(type.configIndex).id);
+    });
+    return ids;
+}
+
+} // namespace
+
+TEST(a_zone_that_names_a_mob_spawns_only_that_mob) {
+    const std::string path = writeZoneMap("flix_zone_named.tmj", "hornet 100%");
+    MapData map;
+    std::string error;
+    if (!map.loadWorldMap(path, error) || map.elements().size() != 1) {
+        std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+        CHECK(false);
+        return;
+    }
+    CHECK(map.elements()[0].mobDistribution.size() == 1);
+
+    Sim sim;
+    sim.spawner.mapData = &map;
+    const std::vector<Vec2> players{{9000, 9000}};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    const std::vector<std::string> ids = spawnedMobIds(sim);
+    CHECK(!ids.empty());
+    for (const std::string& id : ids) CHECK_EQ(id, std::string("hornet"));
+    std::remove(path.c_str());
+}
+
+TEST(a_zone_preset_borrows_another_sections_roster) {
+    // The zone sits in the Garden, and asks for the Ocean. This is the whole
+    // point of a preset: the nine mob-spawn sections become a palette a zone
+    // can draw from, rather than nine places the mobs are stuck in.
+    const std::string path = writeZoneMap("flix_zone_preset.tmj", "ocean 100%");
+    MapData map;
+    std::string error;
+    if (!map.loadWorldMap(path, error) || map.elements().empty()) {
+        std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+        CHECK(false);
+        return;
+    }
+    CHECK(map.elements()[0].mobDistribution[0].presetSection == 3);
+
+    Sim sim;
+    sim.spawner.mapData = &map;
+    const std::vector<Vec2> players{{9000, 9000}};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    const std::vector<std::string> ids = spawnedMobIds(sim);
+    CHECK(!ids.empty());
+    // Ocean's roster, and none of the Garden's -- a bee here would mean the
+    // preset was ignored and the point's own section rolled instead.
+    for (const std::string& id : ids) {
+        const std::uint16_t index = shipped().mobIndex(id);
+        CHECK(index != kInvalidIndex);
+        CHECK(shipped().mobStats(index, Rarity::Common).spawnsIn(3));
+    }
+    std::remove(path.c_str());
+}
+
+TEST(a_distribution_splits_in_roughly_the_authored_proportion) {
+    // 80/20, over enough spawns that a working split cannot look like a broken
+    // one. The bound is loose on purpose: this is asserting that the weights
+    // are honoured at all, not pinning the RNG.
+    const std::string path = writeZoneMap("flix_zone_split.tmj", "hornet 80% bee 20%");
+    MapData map;
+    std::string error;
+    if (!map.loadWorldMap(path, error) || map.elements().empty()) {
+        std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+        CHECK(false);
+        return;
+    }
+
+    Sim sim;
+    sim.spawner.mapData = &map;
+    const std::vector<Vec2> players{{9000, 9000}};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    int hornets = 0;
+    int bees = 0;
+    for (const std::string& id : spawnedMobIds(sim)) {
+        if (id == "hornet") ++hornets;
+        else if (id == "bee") ++bees;
+        else CHECK_EQ(id, std::string("hornet"));   // nothing else may appear
+    }
+    CHECK(hornets + bees > 20);
+    CHECK(hornets > bees);
+    std::remove(path.c_str());
 }

@@ -353,3 +353,96 @@ TEST(a_spawn_in_a_polygon_zone_lands_inside_it) {
     // this would starve.
     CHECK(placed > 150);
 }
+
+// ---------------------------------------------------------------------------
+// Zone mob distributions
+// ---------------------------------------------------------------------------
+//
+// A zone says WHAT it spawns as weighted rows of section presets and named
+// mobs -- "garden 50% hornet 50%". The tier it spawns at is a separate
+// property, and still where the map's difficulty progression lives.
+
+TEST(a_distribution_parses_the_authored_syntax) {
+    std::string warning;
+    const std::vector<ZoneMobEntry> rows = parseMobDistribution("garden 50% hornet 50%", &warning);
+    CHECK(warning.empty());
+    CHECK(rows.size() == 2);
+
+    // "garden" is one of the nine mob-spawn sections, so it is a preset: this
+    // row defers to whatever the Garden's ambient table holds.
+    CHECK(rows[0].isPreset());
+    CHECK(rows[0].presetSection == 0);
+    CHECK(rows[0].mobType.empty());
+    CHECK_EQ(rows[0].weight, 50.0);
+
+    // "hornet" is not a section, so it is a mob named outright.
+    CHECK(!rows[1].isPreset());
+    CHECK_EQ(rows[1].mobType, std::string("hornet"));
+    CHECK_EQ(rows[1].weight, 50.0);
+}
+
+TEST(a_distribution_accepts_the_shapes_an_author_will_type) {
+    // Percent signs, commas and separators are all noise; the weights are
+    // relative, so nothing has to add up to a hundred.
+    const std::vector<ZoneMobEntry> spelled = parseMobDistribution("ocean 20% jellyfish 80%", nullptr);
+    const std::vector<ZoneMobEntry> bare = parseMobDistribution("ocean 20, jellyfish 80", nullptr);
+    const std::vector<ZoneMobEntry> ratio = parseMobDistribution("ocean 1 jellyfish 4", nullptr);
+    for (const auto* rows : {&spelled, &bare, &ratio}) {
+        CHECK(rows->size() == 2);
+        CHECK((*rows)[0].presetSection == 3);          // Ocean
+        CHECK_EQ((*rows)[1].mobType, std::string("jellyfish"));
+        CHECK((*rows)[1].weight > (*rows)[0].weight);
+    }
+
+    // A bare name is a zone of nothing but that.
+    const std::vector<ZoneMobEntry> only = parseMobDistribution("hornet", nullptr);
+    CHECK(only.size() == 1);
+    CHECK_EQ(only[0].mobType, std::string("hornet"));
+    CHECK_EQ(only[0].weight, 1.0);
+
+    // Underscored section names, because "Ant Hell" is a section.
+    const std::vector<ZoneMobEntry> ants = parseMobDistribution("ant_hell 100%", nullptr);
+    CHECK(ants.size() == 1);
+    CHECK(ants[0].presetSection == 4);
+}
+
+TEST(a_broken_distribution_is_reported_not_guessed_at) {
+    // Nothing at all: the spawner reads an empty list as "no distribution" and
+    // does the ambient roll it always did.
+    CHECK(parseMobDistribution("", nullptr).empty());
+    CHECK(parseMobDistribution("   ", nullptr).empty());
+
+    // A weight of zero would make its row unreachable, which is a mistake
+    // rather than an intention. Skipped, and said out loud -- a mistyped
+    // distribution is otherwise a zone that silently keeps its old behaviour.
+    std::string warning;
+    const std::vector<ZoneMobEntry> rows = parseMobDistribution("hornet 0 bee 3", &warning);
+    CHECK(!warning.empty());
+    CHECK(rows.size() == 1);
+    CHECK_EQ(rows[0].mobType, std::string("bee"));
+
+    // Every section name resolves, and nothing else does.
+    CHECK(sectionIndexByName("garden") == 0);
+    CHECK(sectionIndexByName("sewers") == 6);
+    CHECK(sectionIndexByName("unknown") == 8);
+    CHECK(sectionIndexByName("hornet") == -1);
+    CHECK(sectionIndexByName("Garden") == -1);   // ids are lower case
+}
+
+TEST(the_shipped_zones_keep_the_ambient_roll) {
+    // No zone on the map declares a distribution yet, and that is the point of
+    // the empty case: 151 zones go on spawning the ambient table of whichever
+    // section the mob lands in, exactly as they did. Six of them straddle two
+    // sections, and for those "the section the mob landed in" is not a constant
+    // -- which is why the default is not written out as a preset.
+    MapData map;
+    std::string error;
+    CHECK(map.loadWorldMap(dataDir() + "/world.tmj", error));
+    int zones = 0;
+    for (const MapElement& element : map.elements()) {
+        if (element.kind != MapElementKind::Spawn) continue;
+        ++zones;
+        CHECK(element.mobDistribution.empty());
+    }
+    CHECK(zones > 100);
+}

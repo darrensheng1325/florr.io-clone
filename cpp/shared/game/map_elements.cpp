@@ -1,9 +1,12 @@
 #include "shared/game/map_elements.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 
 #include "shared/core/json.h"
 #include "shared/game/constants.h"
@@ -96,6 +99,96 @@ bool onSegment(Vec2 a, Vec2 b, Vec2 at) {
 }
 
 } // namespace
+
+int sectionIndexByName(const std::string& name) {
+    for (int section = 0; section < kSectionCount; ++section) {
+        // terrain.h's biome names, lowercased with spaces underscored: "Ant
+        // Hell" is `ant_hell`. Derived rather than transcribed so the preset
+        // names cannot drift from the sections they stand for.
+        std::string id = kBiomes[static_cast<std::size_t>(section)].name;
+        for (char& c : id) {
+            c = c == ' ' ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (id == name) return section;
+    }
+    return -1;
+}
+
+std::vector<ZoneMobEntry> parseMobDistribution(const std::string& text, std::string* warningOut) {
+    std::vector<ZoneMobEntry> rows;
+    const auto warn = [&](const std::string& message) {
+        if (warningOut == nullptr) return;
+        if (!warningOut->empty()) *warningOut += "; ";
+        *warningOut += message;
+    };
+
+    // Tokenised on anything that is not part of a name or a number, so commas,
+    // percent signs and newlines all just separate. `garden 50% hornet 50%`,
+    // `garden 50, hornet 50` and `garden 1 hornet 1` are the same distribution.
+    std::size_t at = 0;
+    const auto skipSeparators = [&] {
+        while (at < text.size()) {
+            const char c = text[at];
+            const bool part = std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                              c == '.' || c == '-';
+            if (part) break;
+            ++at;
+        }
+    };
+
+    while (true) {
+        skipSeparators();
+        if (at >= text.size()) break;
+
+        // A name: letters, digits and underscores, starting with a letter.
+        if (!std::isalpha(static_cast<unsigned char>(text[at]))) {
+            const std::size_t start = at;
+            while (at < text.size() && !std::isspace(static_cast<unsigned char>(text[at]))) ++at;
+            warn("expected a mob or preset name, found \"" + text.substr(start, at - start) + "\"");
+            continue;
+        }
+        const std::size_t nameStart = at;
+        while (at < text.size() &&
+               (std::isalnum(static_cast<unsigned char>(text[at])) || text[at] == '_')) {
+            ++at;
+        }
+        const std::string name = text.substr(nameStart, at - nameStart);
+
+        // An optional weight. Its absence means 1, so a bare name is a zone of
+        // nothing but that.
+        double weight = 1.0;
+        std::size_t lookahead = at;
+        while (lookahead < text.size() &&
+               (text[lookahead] == ' ' || text[lookahead] == '\t' || text[lookahead] == '=' ||
+                text[lookahead] == ':')) {
+            ++lookahead;
+        }
+        if (lookahead < text.size() &&
+            (std::isdigit(static_cast<unsigned char>(text[lookahead])) || text[lookahead] == '.')) {
+            std::size_t consumed = 0;
+            try {
+                weight = std::stod(text.substr(lookahead), &consumed);
+            } catch (const std::exception&) {
+                consumed = 0;
+            }
+            if (consumed > 0) at = lookahead + consumed;
+        }
+        if (!(weight > 0.0) || !std::isfinite(weight)) {
+            warn("\"" + name + "\" has a weight of " + std::to_string(weight) + "; skipped");
+            continue;
+        }
+
+        ZoneMobEntry row;
+        row.weight = weight;
+        row.presetSection = sectionIndexByName(name);
+        // Not a section, so it is a mob id. Whether that mob EXISTS is the
+        // spawner's question -- the map layer has no view of the content
+        // registry, and refusing here would make the map depend on mobs.json.
+        if (row.presetSection < 0) row.mobType = name;
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
 
 bool zoneContains(const Rect& bounds, const std::vector<Vec2>& polygon, Vec2 at) {
     // Inclusive on every edge, as the reference's own rectangle test is.
@@ -317,6 +410,15 @@ void MapData::adopt(const Json& array) {
                 element.hasSpawnTier = true;
             }
             element.biomeName = properties["biomeName"].asString();
+            const std::string mobs = properties["mobs"].asString();
+            if (!mobs.empty()) {
+                std::string warning;
+                element.mobDistribution = parseMobDistribution(mobs, &warning);
+                if (!warning.empty()) {
+                    std::fprintf(stderr, "[map] spawn zone \"%s\": %s\n", mobs.c_str(),
+                                 warning.c_str());
+                }
+            }
             const Json& destination = properties["teleportTo"];
             if (destination.isObject()) {
                 element.teleportTo = {destination["x"].asDouble(), destination["y"].asDouble()};
