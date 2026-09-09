@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "build:map": "node scripts/encodeMap.js",
+    "map:to-tiled": "node scripts/mapToTiled.js",
     "svg2skin": "node scripts/svg-to-skin.js",
     "build": "node scripts/encodeMap.js && FLIX_BUILD=release node scripts/build-web.js all",
     "build:web-client": "FLIX_BUILD=release node scripts/build-web.js client",

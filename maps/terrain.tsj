@@ -1,0 +1,258 @@
+{
+ "columns": 0,
+ "grid": {
+  "height": 300,
+  "orientation": "orthogonal",
+  "width": 300
+ },
+ "margin": 0,
+ "name": "terrain",
+ "spacing": 0,
+ "tilecount": 6,
+ "tiledversion": "1.10.2",
+ "tileheight": 300,
+ "tilewidth": 300,
+ "tiles": [
+  {
+   "id": 0,
+   "class": "air",
+   "image": "tiles/air.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 1,
+   "class": "wall",
+   "image": "tiles/wall.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "class": "water",
+   "image": "tiles/water.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "class": "bridge",
+   "image": "tiles/bridge.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#ff5500"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/bridge.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 3
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "class": "sewage",
+   "image": "tiles/sewage.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#000000"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/sewage.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 4
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "class": "block",
+   "image": "tiles/block.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00ff00"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 5
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  }
+ ],
+ "type": "tileset",
+ "version": "1.10"
+}

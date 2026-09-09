@@ -1,8 +1,8 @@
 "use strict";
-// Runtime shim. The hand-edited canonical source lives in `./map_source`
-// and is consumed only by the build script (scripts/encodeMap.js). At runtime
-// we use the compact RLE-compressed form in `./map_bundle` (auto-generated),
-// which decodes once into the shared wall grid.
+// Runtime shim. The canonical map is the Tiled map `maps/world.tmj`, which
+// scripts/encodeMap.js compiles into the compact RLE-compressed `./map_bundle`
+// (auto-generated). At runtime we use the bundle, which decodes once into the
+// shared wall grid. The C++ client and server read maps/world.tmj directly.
 //
 // Loading the full 435 KB source on the server cost ~5–15 MB of resident heap
 // (parsed JSON literal + a duplicated 200×200 wallGrid kept alive by both

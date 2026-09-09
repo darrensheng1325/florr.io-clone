@@ -17,9 +17,11 @@
 #include <string>
 #include <vector>
 
+#include "shared/core/json.h"
 #include "shared/core/types.h"
 #include "shared/game/components.h"
 #include "shared/game/rarity.h"
+#include "shared/game/tiled_map.h"
 
 namespace flix {
 
@@ -107,17 +109,45 @@ BiomeDisplay biomeDisplay(const std::string& biomeName);
 /// The map's annotation layer, loaded once beside the tile grid.
 class MapData {
 public:
+    /// Reads the annotation layer from whichever map format `path` names: the
+    /// Tiled map the game is authored in, or the TypeScript bundle it used to
+    /// ship as. Pair it with worldMapPath() to pick the file.
+    ///
+    /// A map without annotations is not an error: the layer is optional, and a
+    /// server that loses it falls back to the middle of the map rather than
+    /// refusing to start.
+    bool loadWorldMap(const std::string& path, std::string& errorOut);
+
+    /// Reads the object layers of a Tiled `.tmj`. See shared/game/tiled_map.h.
+    bool loadTiled(const std::string& path, std::string& errorOut);
+
     /// Reads MAP_ELEMENTS out of `map_bundle.ts`. The array is plain JSON
     /// inside a TypeScript literal, so it is sliced out and handed to the JSON
     /// parser rather than being re-lexed here.
-    ///
-    /// A bundle without the array is not an error: the annotation layer is
-    /// optional, and a server that loses it falls back to the middle of the
-    /// map rather than refusing to start.
     bool load(const std::string& bundlePath, std::string& errorOut);
 
     bool loaded() const { return !elements_.empty(); }
     const std::vector<MapElement>& elements() const { return elements_; }
+
+    /// Which ground artwork the map paints `at` with, as an index into the
+    /// ground palette; -1 for bare void, and -1 outside the map.
+    ///
+    /// This replaces sectionAt() as the renderer's question. The two used to be
+    /// the same question -- the ground was whatever the map's 3x3 grid of
+    /// sections said it was -- and separating them is what lets a map put a
+    /// patch of desert inside the garden. sectionAt() still exists and still
+    /// decides which mobs live where; it just no longer decides what the ground
+    /// looks like.
+    int groundAt(Vec2 at) const;
+
+    /// True when the map carries a background layer at all. False means the
+    /// caller should fall back to the section grid: a map WITHOUT the layer and
+    /// a map whose every cell is void are different things.
+    bool hasBackground() const { return !background_.empty(); }
+
+    /// The ground palette, in ground-id order: what each id is called and which
+    /// artwork file it names.
+    const std::vector<TiledGroundType>& groundPalette() const { return groundPalette_; }
 
     /// Where a player joining without a preference should appear.
     ///
@@ -200,6 +230,11 @@ public:
                                  TeleporterState& state) const;
 
 private:
+    /// Turns one MAP_ELEMENTS-shaped JSON array into elements_, and derives the
+    /// two biome lists from it. Both formats funnel through here, so there is
+    /// one answer to what a spawn table row means rather than two.
+    void adopt(const Json& array);
+
     /// Picks a point inside `area` a flower can safely be dropped on: no tile
     /// its BODY would overlap is solid, no mob is standing there, and the spot
     /// is not already crowded. False when fifty tries found nothing, which
@@ -210,6 +245,12 @@ private:
     std::vector<MapElement> elements_;
     std::vector<std::string> spawnableBiomes_;
     std::vector<std::string> pickableBiomes_;
+    /// Row-major ground ids over the tile grid, or empty when the map has no
+    /// background layer. Signed: -1 is void.
+    std::vector<std::int8_t> background_;
+    int backgroundWidth_ = 0;
+    int backgroundHeight_ = 0;
+    std::vector<TiledGroundType> groundPalette_;
 };
 
 } // namespace flix

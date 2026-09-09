@@ -267,8 +267,16 @@ public:
     /// side of a threshold.
     void generate(std::uint64_t seed);
 
-    /// Loads MAP_TILE_RLE from TypeScript's generated map_bundle.ts. The
-    /// bundle remains the single map source used by both implementations.
+    /// Loads the tile grid from whichever map format `path` names: the Tiled
+    /// map the game is authored in, or the TypeScript bundle it used to ship
+    /// as. Pair it with worldMapPath() to pick the file.
+    bool loadWorldMap(const std::string& path, std::string& errorOut);
+
+    /// Loads the tile layer of a Tiled `.tmj`. See shared/game/tiled_map.h.
+    bool loadTiledMap(const std::string& path, std::string& errorOut);
+
+    /// Loads MAP_TILE_RLE from TypeScript's generated map_bundle.ts, which is
+    /// itself built from the Tiled map by scripts/encodeMap.js.
     bool loadMapBundle(const std::string& path, std::string& errorOut);
 
     /// Replaces the grid with an authoritative network copy.

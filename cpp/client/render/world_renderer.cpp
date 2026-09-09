@@ -243,10 +243,9 @@ constexpr double kTeleporterCull = 140.0;
 constexpr std::uint32_t kInvulnHealth = 0xFAFFC9u;
 constexpr double kInvulnFadeSeconds = 0.5;
 
-/// The base fill of each map section's ground artwork, in the same row-major
-/// order sectionAt() indexes. Painted directly for the two sections that have
-/// no artwork at all, and everywhere else only until the art has loaded.
-constexpr std::uint32_t kBiomeGround[kSectionCount] = {
+/// The base fill of each ground type's artwork, in ground-id order. Painted
+/// only until the art has loaded, or if its file could not be read at all.
+constexpr std::uint32_t kGroundFallback[kSectionCount] = {
     0x1EA761u,  // Garden
     0xEAE4D0u,  // Desert
     0xA31414u,  // Hel
@@ -905,8 +904,19 @@ void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera) const {
     drawGroundTiles(canvas, camera, Rect{0, 0, kWorldSize, kWorldSize}, -1);
 }
 
+/// Which ground artwork covers a point.
+///
+/// The map's `background` layer, when it has one. A map that predates the layer
+/// -- the TypeScript bundle has no way to carry it -- falls back to the 3x3
+/// section grid the layer replaced, so an old data directory still draws the
+/// world it always did rather than a black one.
+int WorldRenderer::groundIndexAt(Vec2 at) const {
+    if (map_ != nullptr && map_->hasBackground()) return map_->groundAt(at);
+    return sectionAt(at);
+}
+
 void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect world,
-                                    int fixedSection) const {
+                                    int fixedGround) const {
     const Rect visible = camera.visibleWorld(0);
     const double zoom = camera.zoom();
 
@@ -921,13 +931,16 @@ void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect w
         for (int i = 0; i <= tilesX; ++i) {
             const double tileX = startX + i * kGroundTileSize;
             const double tileY = startY + j * kGroundTileSize;
-            const int section = fixedSection >= 0
-                                    ? fixedSection
-                                    : sectionAt({tileX + kGroundTileSize * 0.5,
-                                                 tileY + kGroundTileSize * 0.5});
-            // Outside the map there is no ground at all -- the void stays the
-            // black the frame was cleared to.
-            if (section < 0) continue;
+            // Sampled at the ground tile's CENTRE, which is what keeps a
+            // 400-unit artwork tile whole over a 300-unit background grid: the
+            // layer chooses the art, it does not chop it up.
+            const int ground = fixedGround >= 0
+                                   ? fixedGround
+                                   : groundIndexAt({tileX + kGroundTileSize * 0.5,
+                                                    tileY + kGroundTileSize * 0.5});
+            // Outside the map, and anywhere the map paints no ground, there is
+            // none -- the void stays the black the frame was cleared to.
+            if (ground < 0) continue;
 
             // Origin floored and the tile drawn oversized, both in world units,
             // exactly as the browser build does inside its camera transform.
@@ -937,7 +950,7 @@ void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect w
             const Rect visiblePart = intersection(tile, world);
             if (visiblePart.w <= 0 || visiblePart.h <= 0) continue;
 
-            const SvgDocument* art = sprites_ ? sprites_->sectionGround(section) : nullptr;
+            const SvgDocument* art = sprites_ ? sprites_->groundArt(ground) : nullptr;
             canvas.save();
             // The clip is only ever doing something at the edge of the map: a
             // tile the world rect does not cut is drawn wholly inside its own
@@ -956,7 +969,7 @@ void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect w
                 }
             } else {
                 const Vec2 at = camera.worldToScreen({visiblePart.x, visiblePart.y});
-                ui::setFill(canvas, kBiomeGround[section]);
+                ui::setFill(canvas, kGroundFallback[ground]);
                 canvas.fillRect(static_cast<float>(at.x), static_cast<float>(at.y),
                                 static_cast<float>(visiblePart.w * zoom),
                                 static_cast<float>(visiblePart.h * zoom));
@@ -1025,9 +1038,11 @@ void WorldRenderer::drawMaze(Canvas& canvas, const Camera& camera) const {
     if (!visible.intersects(square)) return;
 
     // 1. Ground: the biome's own tiles, the way that biome's overworld is
-    //    painted, clipped to the maze's square.
-    const int section = kMazeBiomeSections[static_cast<std::size_t>(maze.biome())];
-    drawGroundTiles(canvas, camera, square, section);
+    //    painted, clipped to the maze's square. One ground type for the whole
+    //    maze -- it has no background layer of its own, and every cell of it is
+    //    the same biome anyway.
+    const int ground = kMazeBiomeSections[static_cast<std::size_t>(maze.biome())];
+    drawGroundTiles(canvas, camera, square, ground);
 
     // 2. Walls: a single translucent black path, filled once. Filling cell by
     //    cell at partial alpha leaves antialiased hairline seams along every

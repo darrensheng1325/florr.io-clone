@@ -1,6 +1,7 @@
 #include "server/game_server.h"
 
 #include "shared/core/process_stats.h"
+#include "shared/game/tiled_map.h"
 
 #include <algorithm>
 #include <array>
@@ -204,12 +205,15 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
 
     rng_.reseed(config.worldSeed);
     terrain_ = std::make_unique<Terrain>();
-    if (!terrain_->loadMapBundle(config.dataDir + "/map_bundle.ts", errorOut)) return false;
+    // The Tiled map the game is authored in, or the TypeScript bundle built
+    // from it -- whichever this data directory was staged with.
+    const std::string mapPath = worldMapPath(config.dataDir);
+    if (!terrain_->loadWorldMap(mapPath, errorOut)) return false;
     // The annotation layer is optional: without it every spawn falls back to
     // the middle of the map, which is survivable for a server operator to see
     // in a warning but not worth refusing to start over.
     std::string mapWarning;
-    if (!mapData_.load(config.dataDir + "/map_bundle.ts", mapWarning)) {
+    if (!mapData_.loadWorldMap(mapPath, mapWarning)) {
         std::fprintf(stderr, "[map] %s; spawns will fall back to the map centre\n",
                      mapWarning.c_str());
     }

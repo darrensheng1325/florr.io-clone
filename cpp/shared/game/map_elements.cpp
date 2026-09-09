@@ -125,6 +125,11 @@ bool MapData::load(const std::string& bundlePath, std::string& errorOut) {
     elements_.clear();
     spawnableBiomes_.clear();
     pickableBiomes_.clear();
+    // The bundle has no background layer, and saying so is what makes the
+    // renderer fall back to the section grid rather than paint nothing.
+    background_.clear();
+    groundPalette_.clear();
+    backgroundWidth_ = backgroundHeight_ = 0;
 
     std::ifstream input(bundlePath, std::ios::binary);
     if (!input) {
@@ -181,7 +186,48 @@ bool MapData::load(const std::string& bundlePath, std::string& errorOut) {
         return false;
     }
 
-    for (const Json& value : root.items()) {
+    adopt(root);
+    return true;
+}
+
+bool MapData::loadWorldMap(const std::string& path, std::string& errorOut) {
+    return isTiledMapPath(path) ? loadTiled(path, errorOut) : load(path, errorOut);
+}
+
+bool MapData::loadTiled(const std::string& path, std::string& errorOut) {
+    elements_.clear();
+    spawnableBiomes_.clear();
+    pickableBiomes_.clear();
+    background_.clear();
+    groundPalette_.clear();
+    backgroundWidth_ = backgroundHeight_ = 0;
+
+    TiledMap map;
+    if (!map.load(path, errorOut)) return false;
+    adopt(map.elements());
+    background_ = map.background();
+    groundPalette_ = map.groundPalette();
+    backgroundWidth_ = map.width();
+    backgroundHeight_ = map.height();
+    return true;
+}
+
+int MapData::groundAt(Vec2 at) const {
+    if (background_.empty()) return -1;
+    const int tx = static_cast<int>(std::floor(at.x / kTileSize));
+    const int ty = static_cast<int>(std::floor(at.y / kTileSize));
+    if (tx < 0 || ty < 0 || tx >= backgroundWidth_ || ty >= backgroundHeight_) return -1;
+    return background_[static_cast<std::size_t>(ty) * static_cast<std::size_t>(backgroundWidth_) +
+                       static_cast<std::size_t>(tx)];
+}
+
+/// The one element parser, shared by both map formats.
+///
+/// `array` is the bundle's MAP_ELEMENTS shape either way: the Tiled reader
+/// rebuilds its objects into it rather than growing a second parser here, so
+/// there is exactly one place that decides what a spawn table row means.
+void MapData::adopt(const Json& array) {
+    for (const Json& value : array.items()) {
         if (!value.isObject()) continue;
         MapElement element;
         const std::string kind = value["type"].asString();
@@ -258,7 +304,6 @@ bool MapData::load(const std::string& bundlePath, std::string& errorOut) {
             spawnableBiomes_.push_back(element.biomeName);
         }
     }
-    return true;
 }
 
 MapData::TeleportStep MapData::stepTeleporters(Vec2 centre, double deltaSeconds, double nowMillis,

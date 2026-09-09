@@ -91,6 +91,7 @@ add_library(flix_shared STATIC
   shared/game/skin_format.cpp
   shared/game/map_elements.cpp
   shared/game/terrain.cpp
+  shared/game/tiled_map.cpp
   shared/game/spatial.cpp
 )
 target_include_directories(flix_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -212,13 +213,21 @@ set(FLIX_DATA_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/petals.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/mob_drops.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/map_bundle.ts
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/land.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/desert.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ocean.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hel.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ant_hell.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/sewers.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/jungle.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/world.tmj
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/terrain.tsj
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground.tsj
+    # The ground artwork the map's background layer names. From maps/, not from
+    # src/: the browser build keeps its own copies of these because it is
+    # frozen, and the map's art belongs with the map.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/land.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/desert.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/ocean.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/hel.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/ant_hell.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/sewers.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/jungle.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/computer.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/unknown.svg
     ${CMAKE_CURRENT_SOURCE_DIR}/data/mob_xp.json)
 
 set(FLIX_DATA_STAGED)
@@ -227,6 +236,15 @@ foreach(source IN LISTS FLIX_DATA_SOURCES)
   list(APPEND FLIX_DATA_STAGED ${FLIX_DATA_DIR}/${name})
 endforeach()
 
+# world.tmj names both tilesets as siblings, which the flat copy below
+# preserves. The ground art is staged flat too, which is how sprites.cpp finds
+# it by bare file name.
+#
+# The TERRAIN tileset's tile art is deliberately NOT staged: it is what Tiled
+# draws the palette with, and the engine paints those tiles from constants of
+# its own (world_renderer.cpp's kTileColor and the wall pattern), so shipping
+# those SVGs would put four kilobytes in the wasm that nothing ever opens.
+#
 # A plain `copy`, not `copy_if_different`: the outputs must come out strictly
 # newer than the inputs, or every build would see them as still out of date and
 # relink the wasm for nothing. The DEPENDS list is what keeps this from running

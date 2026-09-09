@@ -198,7 +198,10 @@ private:
     /// The tiling itself, over `area`. A negative `fixedSection` reads each
     /// tile's biome off the map; the maze hands over the one section whose
     /// ground it borrows.
-    void drawGroundTiles(Canvas&, const Camera&, Rect area, int fixedSection) const;
+    /// Paints ground over `area`. `fixedGround` pins every tile to one ground
+    /// type (what the maze wants); -1 asks the map, cell by cell.
+    void drawGroundTiles(Canvas&, const Camera&, Rect area, int fixedGround) const;
+    int groundIndexAt(Vec2 at) const;
     /// The maze realm: its biome's ground under rrolf-style walls, every
     /// corridor junction rounded by a quarter-circle fillet, and the void
     /// beyond its square left black.

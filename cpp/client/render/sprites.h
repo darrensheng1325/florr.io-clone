@@ -52,10 +52,11 @@ public:
     bool mobDrawable(std::uint16_t index) const;
     bool petalDrawable(std::uint16_t index) const;
 
-    /// The 400-unit ground artwork of a map section, or null when the section
-    /// is a flat colour (Computer and Unknown are both plain black) or its
-    /// file could not be read.
-    const SvgDocument* sectionGround(int section) const;
+    /// The 400-unit ground artwork of one ground type, or null when its file
+    /// could not be read. The map's `background` layer names which one every
+    /// cell is painted with; ids are in the order the nine map sections used
+    /// to be, which is what makes an unpainted map look unchanged.
+    const SvgDocument* groundArt(int groundId) const;
 
     /// The repeating artwork of one tile kind, or null when the kind is a flat
     /// colour. One copy covers one 300-unit cell, the period the browser

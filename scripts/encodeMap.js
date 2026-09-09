@@ -2,24 +2,30 @@
 /**
  * Build-time bundler for the world map.
  *
- *   - Reads the canonical map source (src/map_data.ts or a JSON file passed as argv[2]).
+ *   - Reads the canonical map, which is the Tiled map `maps/world.tmj`.
  *   - Encodes the wall grid as run-length compressed base64 (8 bits per tile).
  *   - Emits src/map_bundle.ts containing the elements array, custom tile palette,
  *     and the compact RLE blob. Both client and server import this module — the
  *     map ships with the client bundle and is no longer streamed from the server.
  *
+ * The C++ client and server read `maps/world.tmj` directly (see
+ * cpp/shared/game/tiled_map.h), so this bundle exists for the TypeScript server,
+ * which wants the map as an importable module rather than a file to open. Both
+ * come from the same Tiled map; nothing is authored twice.
+ *
  * Usage:
- *   node scripts/encodeMap.js [input.json] [-o src/map_bundle.ts]
+ *   node scripts/encodeMap.js [maps/world.tmj] [-o src/map_bundle.ts]
  */
 
 const fs = require('fs');
 const path = require('path');
+const tiled = require('./lib/tiled');
 
 const ROOT = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
-// Default input is map_source.ts (the hand-edited canonical literal). The old
-// map_data.ts is now a thin runtime shim that re-exports the compact bundle.
-let input = path.join(ROOT, 'src', 'map_source.ts');
+// The Tiled map is the map. map_data.ts is a thin runtime shim that re-exports
+// the compact bundle this script writes.
+let input = path.join(ROOT, 'maps', tiled.MAP_FILE);
 let output = path.join(ROOT, 'src', 'map_bundle.ts');
 for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -31,10 +37,14 @@ for (let i = 0; i < args.length; i++) {
 }
 
 function loadMapData(file) {
+    // A Tiled map, or — for a one-off conversion or a test fixture — a raw
+    // MapData JSON in the shape this script has always emitted.
+    if (tiled.isTiledMapFile(file)) return tiled.fromTiled(file);
     const ext = path.extname(file).toLowerCase();
     const raw = fs.readFileSync(file, 'utf8');
     if (ext === '.json') return JSON.parse(raw);
-    // Strip the TS wrapper around the JSON literal.
+    // Strip the TS wrapper around the JSON literal. The retired map_source.ts
+    // format, kept readable so an old branch's map still compiles.
     const m = raw.match(/const WORLD_MAP_DATA\s*:\s*MapData\s*=\s*(\{[\s\S]*?\});\s*\n/);
     if (!m) throw new Error(`Could not locate WORLD_MAP_DATA literal in ${file}`);
     return JSON.parse(m[1]);

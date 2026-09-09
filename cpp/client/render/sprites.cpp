@@ -14,12 +14,17 @@ namespace {
 /// are stored as 0xRRGGBBAA by the loader; the drawing layer works in RGB.
 std::uint32_t rgbOf(std::uint32_t rgba) { return rgba >> 8; }
 
-/// The ground artwork of each map section, in the browser build's row-major
-/// section order. The last two sections declare a colour rather than a file.
-constexpr std::array<const char*, kSectionCount> kSectionArt = {
+/// The ground artwork of each ground type, in ground-id order.
+///
+/// These are the nine the map's 3x3 section grid used to hard-code, and they
+/// stay in that order so a ground id reads as the section it came from. What
+/// changed is who chooses: the map's `background` layer names one per cell, so
+/// the nine are a palette rather than a geography. The files are staged from
+/// `maps/ground/`, beside the map that names them.
+constexpr std::array<const char*, kSectionCount> kGroundArt = {
     "land.svg", "desert.svg", "hel.svg",
     "ocean.svg", "ant_hell.svg", "jungle.svg",
-    "sewers.svg", nullptr, nullptr,
+    "sewers.svg", "computer.svg", "unknown.svg",
 };
 
 /// The bridge tile's texture, transcribed from MAP_CUSTOM_TILE_TYPES in
@@ -446,9 +451,9 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         compile(config.image, config.colorRgba, "petal " + config.id, petals_[i]);
     }
 
-    for (std::size_t i = 0; i < kSectionArt.size(); ++i) {
-        if (!kSectionArt[i]) continue;
-        const std::string path = dataDir + "/" + kSectionArt[i];
+    for (std::size_t i = 0; i < kGroundArt.size(); ++i) {
+        if (!kGroundArt[i]) continue;
+        const std::string path = dataDir + "/" + kGroundArt[i];
         auto document = std::make_shared<SvgDocument>(SvgDocument::fromFile(path));
         if (document->empty()) {
             // Ground artwork is optional: the flat biome colour still reads as
@@ -471,9 +476,9 @@ bool SpriteCache::petalDrawable(std::uint16_t index) const {
     return index < petals_.size() && petals_[index].usable;
 }
 
-const SvgDocument* SpriteCache::sectionGround(int section) const {
-    if (section < 0 || section >= kSectionCount) return nullptr;
-    return ground_[static_cast<std::size_t>(section)].get();
+const SvgDocument* SpriteCache::groundArt(int groundId) const {
+    if (groundId < 0 || groundId >= kSectionCount) return nullptr;
+    return ground_[static_cast<std::size_t>(groundId)].get();
 }
 
 const SvgDocument* SpriteCache::tileArt(Tile tile) const {

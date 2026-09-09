@@ -4,6 +4,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <fstream>
@@ -12,6 +13,8 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+
+#include "shared/game/tiled_map.h"
 
 namespace flix {
 namespace {
@@ -455,6 +458,40 @@ void Terrain::generate(std::uint64_t seed) {
     spawnTile_ = chooseGardenSpawn();
     connectAll();
     assert(isConnected());
+}
+
+bool Terrain::loadWorldMap(const std::string& path, std::string& errorOut) {
+    return isTiledMapPath(path) ? loadTiledMap(path, errorOut) : loadMapBundle(path, errorOut);
+}
+
+bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut) {
+    TiledMap map;
+    if (!map.load(path, errorOut)) return false;
+    if (map.width() != kTilesPerAxis || map.height() != kTilesPerAxis) {
+        errorOut = path + " is " + std::to_string(map.width()) + "x" + std::to_string(map.height()) +
+                   " tiles; the world is " + std::to_string(kTilesPerAxis) + " square";
+        return false;
+    }
+    for (const std::uint8_t tile : map.tiles()) {
+        if (tile > static_cast<std::uint8_t>(Tile::Block)) {
+            errorOut = path + " uses tile id " + std::to_string(tile) +
+                       ", which the engine has no Tile for";
+            return false;
+        }
+    }
+    // A tileset whose flags disagree with constants.h means the editor is
+    // showing an author one thing and the server is colliding with another.
+    // Reported, not corrected: constants.h wins, and the map needs fixing.
+    for (const std::string& name : map.mismatchedFlags()) {
+        std::fprintf(stderr, "[map] tile \"%s\" in %s declares solid/water flags the engine "
+                             "disagrees with; the engine's win\n", name.c_str(), path.c_str());
+    }
+    if (!setTiles(map.tiles())) {
+        errorOut = "could not install the tile grid from " + path;
+        return false;
+    }
+    seed_ = 0;   // an authored map, not a generated one
+    return true;
 }
 
 bool Terrain::loadMapBundle(const std::string& path, std::string& errorOut) {

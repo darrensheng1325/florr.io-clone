@@ -22,6 +22,7 @@
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
 #include "shared/game/terrain.h"
+#include "shared/game/tiled_map.h"
 
 namespace flix {
 
@@ -744,7 +745,7 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // the spawn picker may offer. A bundle it cannot read costs the picker its
     // choices, not the client its start.
     std::string mapWarning;
-    if (!mapData_.load(config.dataDir + "/map_bundle.ts", mapWarning)) {
+    if (!mapData_.loadWorldMap(worldMapPath(config.dataDir), mapWarning)) {
         std::fprintf(stderr, "[map] %s; the spawn picker will offer the garden only\n",
                      mapWarning.c_str());
     }
