@@ -108,8 +108,16 @@ export const MAP_GRID_HEIGHT = ${height};
 /** Run-length encoded base64 blob — decode via constants.decodeTileGridRLE(). */
 export const MAP_TILE_RLE = ${JSON.stringify(rle)};
 `;
-    fs.writeFileSync(output, body);
-    return body.length;
+    // Written only when the content actually moves. The emitted bundle is
+    // deterministic, and it is one of the files the C++ build stages into the
+    // wasm (cpp/CMakeLists.txt, FLIX_DATA_SOURCES). An unconditional write
+    // bumps its mtime on every `npm start`, which re-runs the staging command,
+    // which -- because the staged files are LINK_DEPENDS of both web targets
+    // -- relinks bundle.wasm and server.wasm for a map that did not change.
+    // An emscripten relink at -O3 is most of that wait.
+    const unchanged = fs.existsSync(output) && fs.readFileSync(output, 'utf8') === body;
+    if (!unchanged) fs.writeFileSync(output, body);
+    return { chars: body.length, written: !unchanged };
 }
 
 (function main() {
@@ -143,7 +151,10 @@ export const MAP_TILE_RLE = ${JSON.stringify(rle)};
         rleBytes,
     });
 
-    console.log(`[encodeMap] wrote: ${path.relative(ROOT, output)} (${written} chars)`);
+    console.log(
+        written.written
+            ? `[encodeMap] wrote: ${path.relative(ROOT, output)} (${written.chars} chars)`
+            : `[encodeMap] unchanged: ${path.relative(ROOT, output)} (${written.chars} chars) — left alone so the wasm does not relink`);
     console.log(`[encodeMap] tiles: ${width}x${height}, raw=${sourceTilesBytes}B, rle=${rleBytes}B (${(100 * rleBytes / sourceTilesBytes).toFixed(1)}%)`);
     console.log(`[encodeMap] elements: ${data.elements.length}, custom tile types: ${customFiltered.length}`);
 })();
