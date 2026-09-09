@@ -1642,9 +1642,34 @@ void WorldRenderer::drawDefaultFlower(Canvas& canvas, const RemoteEntity& entity
              active ? 4.0 : 14.5, timeSeconds);
 }
 
+void WorldRenderer::drawCutterBlade(Canvas& canvas, std::uint8_t equipFlags,
+                                    double timeSeconds) const {
+    if (!sprites_ || !content_) return;
+    // The lightning cutter is the same blade in cyan, and carries its own bit
+    // for exactly this reason. A flower wearing both shows the lightning one.
+    const std::uint16_t index =
+        content_->petalIndex((equipFlags & EquipLightningCutter) ? "lightning_cutter" : "cutter");
+    if (index == kInvalidIndex || !sprites_->petalDrawable(index)) return;
+
+    // The caller has already put us in the flower's radius-25 art space, which
+    // is the space gardn's `ctx.scale(radius / 25)` reaches before it draws the
+    // blade raw -- so the artwork goes down at its plain configured size and
+    // the teeth land at radius 35, 1.4 flowers across, as they do there.
+    const PetalConfig& config = content_->petal(index);
+    const double diameter = kPetalArtSize * config.size * petalArtScale(&config);
+    const double speed = config.speed > 0 ? config.speed : 1.0;
+    sprites_->drawPetal(canvas, index, 0, 0, diameter,
+                        std::fmod(timeSeconds * kPetalSpinRate * speed, kTau), timeSeconds);
+}
+
 void WorldRenderer::drawFace(Canvas& canvas, std::uint8_t faceFlags, std::uint8_t equipFlags,
                              double eyeX, double eyeY, double mouth, double timeSeconds,
                              std::uint32_t bodyColor) const {
+    // First, so the blade sits BEHIND the body: gardn draws the cutter before
+    // the flower's own circle (Client/Assets/Flower.cc) and the teeth show only
+    // where they reach past the rim.
+    if (equipFlags & EquipCutter) drawCutterBlade(canvas, equipFlags, timeSeconds);
+
     std::uint32_t baseColor = bodyColor;
     // The status precedence is intentional: corruption identifies a flower
     // that can hurt other players, so it must remain visible through poison.
@@ -1978,24 +2003,13 @@ void WorldRenderer::drawDiggerMob(Canvas& canvas, const MobDraw& mob, double rad
                                   double timeSeconds) const {
     const double scale = radius / kFlowerArtRadius;
 
-    // The cutter goes down first so the blade sits behind the face. It is sized
-    // and spun exactly like the one a player carries, so the two read as the
-    // same object.
-    if (sprites_ && content_) {
-        const std::uint16_t cutter = content_->petalIndex("cutter");
-        if (cutter != kInvalidIndex) {
-            const PetalConfig& config = content_->petal(cutter);
-            const double speed = config.speed > 0 ? config.speed : 1.0;
-            const double size = kPetalArtSize * config.size * petalArtScale(&config) * scale;
-            sprites_->drawPetal(canvas, cutter, 0, 0, size,
-                                std::fmod(timeSeconds * kPetalSpinRate * speed, kTau), timeSeconds);
-        }
-    }
-
     canvas.save();
     canvas.scale(static_cast<float>(scale), static_cast<float>(scale));
     const Vec2 eye = mobEye(mob.netId, mob.angle);
-    drawFace(canvas, FaceSquareEyes, EquipNone, eye.x, eye.y, 14.5, timeSeconds, kDiggerBodyColor);
+    // EquipCutter, so the blade is drawn by the one painter a player's flower
+    // uses: the digger carries the same object and must not drift from it.
+    drawFace(canvas, FaceSquareEyes, EquipCutter, eye.x, eye.y, 14.5, timeSeconds,
+             kDiggerBodyColor);
     canvas.restore();
 }
 

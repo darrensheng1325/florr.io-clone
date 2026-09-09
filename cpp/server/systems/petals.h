@@ -236,6 +236,14 @@ private:
     void applyRaindropAura(World& world, const ContentRegistry& registry, Entity player,
                            PetalSlotState& state, const Aggregate& aggregate, double nowMillis);
 
+    /// The lightning cutter's strike, driven from the loadout.
+    ///
+    /// A cutter is worn rather than spawned -- it takes no place on the ring
+    /// and has no instance -- so there is nothing for a per-petal timer to hang
+    /// off. Centred on the flower, paced by the player's own limiter.
+    void strikeWornLightning(World& world, const ContentRegistry& registry, Entity player,
+                             double nowMillis);
+
     /// `health` <= 0 spawns the petal with no Health component at all, which is
     /// what an unbreakable petal is: not one with zero hit points, which would
     /// break on its first tick.

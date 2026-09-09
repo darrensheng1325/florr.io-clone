@@ -82,7 +82,7 @@ constexpr GardnIconRadius kGardnIconRadius[] = {
     {"bubble", 12},  // size 1 -> 10
     {"cactus", 15},  // size 1 -> 10
     {"corn", 16},  // size 1 -> 10
-    {"cutter", 40},  // size 7 -> 70
+    {"cutter", 40},  // size 4 -> 40
     {"dahlia", 7},  // size 0.33 -> 3.3
     {"dandelion", 10},
     {"egg", 12.5},  // size 1 -> 10

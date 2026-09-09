@@ -47,10 +47,12 @@ public:
         viewportHeight_ = height;
     }
 
-    /// World units -> design units. Independent of the window size and of the
-    /// display's pixel density, both of which are absorbed by the frame's
-    /// base transform long before anything asks the camera anything.
-    double zoom() const { return userZoom; }
+    /// World units -> design units: the player's setting times what the worn
+    /// loadout asks for, the same product as Graphics.zoomLevel. Independent
+    /// of the window size and of the display's pixel density, both of which
+    /// are absorbed by the frame's base transform long before anything asks
+    /// the camera anything.
+    double zoom() const { return userZoom * loadoutZoom; }
 
     Vec2 worldToScreen(Vec2 world) const {
         const double z = zoom();
@@ -81,8 +83,15 @@ public:
     int viewportWidth() const { return viewportWidth_; }
     int viewportHeight() const { return viewportHeight_; }
 
-    /// Player-controlled zoom, and the transient zoom some petals apply.
+    /// Player-controlled zoom: the settings value the wheel and the zoom keys
+    /// move, floored at 1 -- see kMinZoom in client/ui/menus.h.
     double userZoom = 1.0;
+    /// What the worn loadout asks for: the smallest cameraZoom on the active
+    /// bar, or 1 -- see loadoutCameraZoom. Antennae and observer are the
+    /// petals that set one, and they are the only way to see more of the
+    /// world than the default view, which is what makes them worth wearing.
+    /// The client's alone: the server neither computes it nor sends it.
+    double loadoutZoom = 1.0;
 
 private:
     Vec2 centre_;

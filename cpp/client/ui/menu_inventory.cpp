@@ -291,6 +291,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     hit.alpha = 0.56;
     hit.altText = "Damage: " + exactNumber(damage);
     lines.push_back(hit);
+
+    // Only the cutters have one, and theirs moves with rarity, so the number
+    // has to be on the card -- the description alone cannot say how much.
+    if (stats.bodyDamage > 0.0) {
+        const double body = std::round(stats.bodyDamage);
+        TooltipLine slam{"Body Damage: +" + abbreviate(body), 12.0};
+        slam.alpha = 0.56;
+        slam.altText = "Body Damage: +" + exactNumber(body);
+        lines.push_back(slam);
+    }
     return lines;
 }
 

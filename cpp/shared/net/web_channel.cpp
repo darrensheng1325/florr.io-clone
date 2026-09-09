@@ -41,7 +41,8 @@ EM_JS(void, flix_net_init, (), {
 
     // How long the transport picker waits for /transport-info, and for a
     // WebTransport handshake, before giving up and using WebSocket. Both are
-    // one-off costs on the first connection of a session.
+    // one-off costs on the first connection of a page session: a handshake
+    // that fails is remembered (see flix_ch_connect) and not tried again.
     infoTimeoutMs: 1500,
     webTransportTimeoutMs: 2500,
 
@@ -215,17 +216,39 @@ EM_JS(int, flix_ch_connect, (const char* hostPtr, int port), {
     })();
   };
 
+  // A WebTransport handshake that failed earlier in this page session is not
+  // tried again, and neither is the /transport-info round trip that led to
+  // it. Behind a proxy that carries only TCP -- Cloudflare's, for one -- the
+  // server still advertises WebTransport on its own port, the handshake can
+  // never succeed, and its timeout would otherwise be paid on every
+  // reconnect. Per origin, for the life of the tab: the same memo the
+  // TypeScript client kept. Storage may be missing (Node) or refuse (a
+  // page with site data blocked); either just means trying every time.
+  const memoKey = "flix.webtransport.unavailable:" + origin;
+  const webTransportRemembered = () => {
+    try {
+      return typeof sessionStorage !== "undefined" && sessionStorage.getItem(memoKey) !== null;
+    } catch (e) { return false; }
+  };
+  const rememberWebTransportFailure = (why) => {
+    try {
+      if (typeof sessionStorage !== "undefined") sessionStorage.setItem(memoKey, String(why));
+    } catch (e) { }
+  };
+
   (async () => {
     let info = null;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), net.infoTimeoutMs);
-      const response = await fetch(origin + "/transport-info",
-                                  { signal: controller.signal, cache: "no-store" });
-      clearTimeout(timer);
-      if (response.ok) info = await response.json();
-    } catch (e) {
-      // No answer means WebSocket only, which is the safe assumption anyway.
+    if (!webTransportRemembered()) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), net.infoTimeoutMs);
+        const response = await fetch(origin + "/transport-info",
+                                    { signal: controller.signal, cache: "no-store" });
+        clearTimeout(timer);
+        if (response.ok) info = await response.json();
+      } catch (e) {
+        // No answer means WebSocket only, which is the safe assumption anyway.
+      }
     }
 
     // Secure context only, because that is what the API requires -- an http
@@ -238,7 +261,8 @@ EM_JS(int, flix_ch_connect, (const char* hostPtr, int port), {
         return;
       } catch (e) {
         // Anything at all: no UDP path, an untrusted certificate, a timeout.
-        // One wasted round trip is the whole cost of trying.
+        // One wasted round trip is the whole cost of trying -- once.
+        rememberWebTransportFailure(e);
         if (typeof console !== "undefined") {
           console.warn("[net] webtransport unavailable (" + e + "); using websocket");
         }

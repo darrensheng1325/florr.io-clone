@@ -602,7 +602,14 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.knockback = ctx.range(src, "knockback", p.knockback, -kMaxBaseStat, kMaxBaseStat);
     p.projectile = parseProjectile(ctx, src, nullptr);
     p.range = ctx.range(src, "range", 0.0, 0.0, kWorldSize);
+    p.bodyDamage = ctx.range(src, "bodyDamage", 0.0, 0.0, kMaxBaseStat);
     p.equipFlags = parseEquipFlags(ctx.text(src, "equipFlags"));
+    // The lightning cutter carries a second bit so the client can tell the two
+    // blades apart and paint the cyan one. It is derived from the id rather
+    // than written in petals.json because that file is shared verbatim with
+    // the browser build, whose loader THROWS on an equipFlags name its own
+    // (frozen) EquipmentFlags enum does not have.
+    if (p.id == "lightning_cutter") p.equipFlags |= EquipLightningCutter;
 
     p.poisonPerSecond = ctx.range(src, "poison", 0.0, 0.0, kMaxPoisonPerMillis) * 1000.0;
     p.poisonDurationMillis = ctx.range(src, "poisonDuration", 0.0, 0.0, kMaxDurationMillis);
@@ -1070,6 +1077,12 @@ PetalStats ContentRegistry::petalStats(std::uint16_t index, Rarity r) const {
         s.reloadMillis *= std::pow(0.85, rarityIndex(tier));
         s.reloadMillis = std::max(50.0, s.reloadMillis);
     }
+    // The petal damage ladder, not the gentler passive-modifier curve: what a
+    // cutter grants IS damage, so it keeps pace with petal damage and with the
+    // mobs a tier of it is meant to fight. Authored at 10, it is worth exactly
+    // a basic petal's hit at every tier -- one petal's damage, moved onto the
+    // flower's body.
+    s.bodyDamage = c.bodyDamage * stat;
     s.poisonPerSecond = c.poisonPerSecond * stat;
     s.poisonDurationMillis = c.poisonDurationMillis;
     s.heal = c.burstHeal * heal;

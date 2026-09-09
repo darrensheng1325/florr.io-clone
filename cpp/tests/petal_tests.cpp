@@ -39,7 +39,9 @@ const char* const kPetalsJson = R"JSON({
   "anchor":   {"name":"Anchor","damage":1,"health":5,"size":1,"cooldown":1000,"count":1,"playerModifiers":{"rotationSpeed":0},"color":"#888888"},
   "inflator": {"name":"Inflator","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"playerRadius":1.5},"color":"#FF00FF"},
   "summoner": {"name":"Summoner","damage":1,"health":4,"size":1,"cooldown":1000,"count":1,"petMobType":"critter","petMobRarity":"common","petCount":2,"color":"#AA00AA"},
-  "toxic":    {"name":"Toxic","damage":2,"health":5,"size":1,"cooldown":1000,"count":1,"poison":0.05,"poisonDuration":3000,"color":"#00AA00"}
+  "toxic":    {"name":"Toxic","damage":2,"health":5,"size":1,"cooldown":1000,"count":1,"poison":0.05,"poisonDuration":3000,"color":"#00AA00"},
+  "blade":    {"name":"Blade","damage":0,"health":null,"size":4,"cooldown":1,"count":0,"range":0,"bodyDamage":10,"equipFlags":"Cutter","noPhysics":true,"color":"#111111"},
+  "sparkblade":{"name":"Spark Blade","damage":1,"health":null,"size":4,"cooldown":1,"count":0,"range":0,"bodyDamage":10,"equipFlags":"Cutter","noPhysics":true,"color":"#00FFFF"}
 })JSON";
 
 const char* const kMobsJson = R"JSON({
@@ -442,6 +444,56 @@ TEST(an_empty_loadout_places_nothing_and_leaves_modifiers_neutral) {
     CHECK_NEAR(rig.modifiers().speedScale, 1.0, 1e-12);
     CHECK_NEAR(rig.modifiers().luck, 1.0, 1e-12);
     CHECK_NEAR(rig.ring().radius, kPetalOrbitRestRadius, 1e-9);
+}
+
+TEST(a_worn_cutter_adds_body_damage_and_takes_no_ring_place) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.world.add<ContactDamage>(rig.player, ContactDamage{0.0, 0.0});
+    rig.equip(0, "blade", Rarity::Epic);
+    rig.equip(1, "basic");
+    rig.settleEquips();
+
+    const int level = rig.world.get<PlayerProgress>(rig.player).level;
+    const auto granted = [&](Rarity rarity) {
+        return fixture().registry.petalStats(petalId("blade"), rarity).bodyDamage;
+    };
+
+    // A cutter is carried, not swung: it spawns nothing, so the basic petal is
+    // the ring's only occupant and gets the whole circle to itself.
+    CHECK_EQ(rig.petals().size(), std::size_t(1));
+    CHECK_EQ(rig.petals(0).size(), std::size_t(0));
+    // The petal damage ladder: 3x a tier from the authored 10, so an epic
+    // blade grants 270. gardn's flat +20 does not survive a ten-tier game.
+    CHECK_NEAR(granted(Rarity::Epic), 270.0, 1e-9);
+    CHECK_NEAR(rig.modifiers().bodyDamageBonus, granted(Rarity::Epic), 1e-12);
+    CHECK_NEAR(rig.world.get<ContactDamage>(rig.player).amount,
+               bodyDamageForLevel(level) + granted(Rarity::Epic), 1e-9);
+
+    // Rarity moves it, on the same 3x ladder a petal's damage climbs.
+    CHECK(granted(Rarity::Common) < granted(Rarity::Epic));
+    CHECK(granted(Rarity::Epic) < granted(Rarity::Unique));
+    CHECK_NEAR(granted(Rarity::Epic), 27.0 * granted(Rarity::Common), 1e-9);
+    CHECK_NEAR(granted(Rarity::Unique), 6561.0 * granted(Rarity::Common), 1e-9);
+    // Exactly a basic petal's hit at the same tier: the anchor the authored
+    // value is chosen for.
+    CHECK_NEAR(granted(Rarity::Epic),
+               fixture().registry.petalStats(petalId("basic"), Rarity::Epic).damage, 1e-9);
+
+    // Maximised, never summed: a second blade cannot double the bonus, and the
+    // better of the two is the one that counts.
+    rig.equip(2, "sparkblade", Rarity::Common);
+    rig.tick(5);
+    CHECK_NEAR(rig.modifiers().bodyDamageBonus, granted(Rarity::Epic), 1e-12);
+    rig.equip(2, "sparkblade", Rarity::Unique);
+    rig.tick(5);
+    CHECK_NEAR(rig.modifiers().bodyDamageBonus, granted(Rarity::Unique), 1e-12);
+
+    rig.unequip(0);
+    rig.unequip(2);
+    rig.tick(5);
+    CHECK_NEAR(rig.modifiers().bodyDamageBonus, 0.0, 1e-12);
+    CHECK_NEAR(rig.world.get<ContactDamage>(rig.player).amount, bodyDamageForLevel(level), 1e-9);
 }
 
 // ---------------------------------------------------------------------------

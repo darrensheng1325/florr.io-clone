@@ -135,10 +135,22 @@ inline constexpr int kStripSlotCount = 14;
 
 /// The range ClientSettings::zoom is held to, and how far one press of a zoom
 /// key moves it. The step is the browser's own ZOOM_STEP; the range is this
-/// client's, and is the one the wheel has always scrolled through.
-inline constexpr double kMinZoom = 0.6;
+/// client's. The floor is 100%: the wheel and the keys only ever zoom IN.
+/// Seeing MORE of the world than the default view is what antennae and
+/// observer are for (see loadoutCameraZoom), and a wheel that could scroll
+/// out past them -- this client's once reached 0.6, the browser's 0.5 --
+/// made the two petals pointless.
+inline constexpr double kMinZoom = 1.0;
 inline constexpr double kMaxZoom = 1.6;
 inline constexpr double kZoomKeyStep = 0.1;
+
+/// The camera multiplier the worn loadout asks for: the smallest cameraZoom
+/// over the ACTIVE slots, or 1 when none sets one. Antennae and observer are
+/// the petals that do. Not summed and not stacked -- two of them show the
+/// better one, exactly as the browser's getEquippedZoomMultiplier did -- and
+/// floored at the browser's 0.3 so no tier can invert the camera. Storage
+/// grants nothing, the same rule the server applies to the equipment bits.
+double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry);
 
 /// Everything the settings menu owns. Kept in one struct so it can be written
 /// to disk and read back as a unit, and so nothing else has to know which of

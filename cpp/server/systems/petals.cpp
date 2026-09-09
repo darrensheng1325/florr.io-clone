@@ -75,11 +75,9 @@ constexpr const char* kFlowerPetMobId = "glitch_flower";
 constexpr double kLightningRadius = 1000.0;
 constexpr double kLightningFallbackDamage = 25.0;
 
-/// A lightning cutter is authored as a one-millisecond petal that breaks itself
-/// on every strike and is instantly restored, so what actually paces it is the
-/// per-PLAYER limiter: 500 ms apart, at most twice a second. The two rules
-/// collapse into one gap, because two strikes 500 ms apart are never three in
-/// a second.
+/// How far apart a worn lightning cutter's strikes are: 500 ms, so at most
+/// twice a second. The limiter is per PLAYER rather than per petal, so a second
+/// blade shares the first one's cadence instead of doubling the strike rate.
 constexpr double kLightningCutterIntervalMillis = 500.0;
 
 /// An explosion reaches three times the petal's DRAWN size, and the reference
@@ -118,7 +116,6 @@ constexpr double kYggdrasilRevivalRange = 80.0;
 enum class PetalBehaviourKind : std::uint8_t {
     None,
     Lightning,
-    LightningCutter,
     BloodLeaf,
     Starfish,
     Bomb,
@@ -142,9 +139,6 @@ struct PetalBehaviour {
 /// `test_explosive` is the repeating version of the same blast.
 PetalBehaviour behaviourOf(const std::string& id) {
     if (id == "lightning") return {PetalBehaviourKind::Lightning, true, false, 0.0};
-    if (id == "lightning_cutter") {
-        return {PetalBehaviourKind::LightningCutter, false, false, net::kTickMillis};
-    }
     if (id == "blood_leaf") return {PetalBehaviourKind::BloodLeaf, false, false, 0.0};
     if (id == "starfish") return {PetalBehaviourKind::Starfish, false, false, 0.0};
     if (id == "bomb" || id == "explosive") return {PetalBehaviourKind::Bomb, true, true, 0.0};
@@ -329,6 +323,7 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         applyPassiveHeal(world, player, aggregate, dt);
         applyRaindropAura(world, registry, player, world.get<PetalSlotState>(player), aggregate,
                           nowMillis);
+        strikeWornLightning(world, registry, player, nowMillis);
         updateRing(world, player, aggregate, dt);
         placePetals(world, registry, player, aggregate, nowMillis, dt, terrain);
         runActions(world, registry, player, nowMillis, terrain);
@@ -862,6 +857,12 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             aggregate.modifiers.passiveHealPerSecond += stats.passiveHealPerSecond;
             aggregate.modifiers.poisonArmor =
                 std::max(aggregate.modifiers.poisonArmor, mods.poisonArmor);
+            // A cutter is worn, not swung: it deals no contact damage of its
+            // own and instead adds to the flower's body slam, as gardn's
+            // `BASE_BODY_DAMAGE + 20` does. Maximised rather than summed --
+            // two blades are still one bonus, and the better one wins.
+            aggregate.modifiers.bodyDamageBonus =
+                std::max(aggregate.modifiers.bodyDamageBonus, stats.bodyDamage);
             if (!slot.broken) {
                 aggregate.modifiers.spongeDamageDurationMillis =
                     std::max(aggregate.modifiers.spongeDamageDurationMillis,
@@ -917,7 +918,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         }
     }
     if (ContactDamage* contact = world.tryGet<ContactDamage>(player)) {
-        contact->amount = bodyDamageForLevel(level);
+        contact->amount = bodyDamageForLevel(level) + aggregate.modifiers.bodyDamageBonus;
         contact->intervalMillis = 0.0;
     }
     if (PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(player)) {
@@ -1655,20 +1656,6 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
             strikeLightning(world, player, at, stats.damage);
             return;
 
-        case PetalBehaviourKind::LightningCutter: {
-            if (trigger == PetalTrigger::Collision) return;
-            // Per PLAYER, not per petal: the reference's limiter is keyed on
-            // the flower, so a second cutter shares the first one's cadence
-            // instead of doubling the strike rate.
-            PetalSlotState* state = world.tryGet<PetalSlotState>(player);
-            if (state != nullptr) {
-                if (nowMillis < state->nextLightningMillis) return;
-                state->nextLightningMillis = nowMillis + kLightningCutterIntervalMillis;
-            }
-            strikeLightning(world, player, at, stats.damage);
-            return;
-        }
-
         case PetalBehaviourKind::BloodLeaf: {
             if (trigger == PetalTrigger::Collision || trigger == PetalTrigger::Interval) return;
             if (guarded) {
@@ -1882,6 +1869,34 @@ void PetalSystem::applyRaindropAura(World& world, const ContentRegistry& registr
     state.raindropReadyAtMillis = nowMillis + kRaindropAuraDamageIntervalMillis;
     emitDamageBurst(world, player, transform->position, bestRadius,
                     bestDamage * aggregate.modifiers.petalDamageScale);
+}
+
+void PetalSystem::strikeWornLightning(World& world, const ContentRegistry& registry,
+                                      Entity player, double nowMillis) {
+    PetalSlotState* state = world.tryGet<PetalSlotState>(player);
+    if (state == nullptr || nowMillis < state->nextLightningMillis) return;
+    const Loadout* loadout = world.tryGet<Loadout>(player);
+    const Transform* transform = world.tryGet<Transform>(player);
+    if (loadout == nullptr || transform == nullptr) return;
+
+    // The strongest blade strikes, once. The cutter is worn rather than spawned
+    // -- there is no ring instance to hang a timer off -- so the loadout is
+    // what drives this, and the flower's own limiter is what paces it.
+    double damage = 0;
+    bool worn = false;
+    for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+        const LoadoutSlot& slot = loadout->slots[static_cast<std::size_t>(i)];
+        if (slot.empty()) continue;
+        if (registry.petal(slot.configIndex).id != "lightning_cutter") continue;
+        worn = true;
+        damage = std::max(damage, registry.petalStats(slot.configIndex, slot.rarity).damage);
+    }
+    if (!worn) return;
+
+    // Armed before the strike: emitting creates an entity, and nothing after
+    // this line may depend on the flower's columns staying put.
+    state->nextLightningMillis = nowMillis + kLightningCutterIntervalMillis;
+    strikeLightning(world, player, transform->position, damage);
 }
 
 void PetalSystem::retireDistantPets(World& world, const ContentRegistry& registry, Entity player,

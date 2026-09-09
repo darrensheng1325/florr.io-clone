@@ -1597,4 +1597,23 @@ bool MenuSystem::capturesMouse(Vec2 mouse) const {
     return false;
 }
 
+double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry) {
+    // The browser's floor, from getPetalStats: an apex observer scales its
+    // authored 0.85 down to 0.34, and a petal authored lower than that would
+    // cross zero. Nothing may shrink the world past this, whatever the tier.
+    constexpr double kFloor = 0.3;
+    double zoom = 1.0;
+    const std::size_t worn =
+        std::min(profile.loadout.size(), static_cast<std::size_t>(kLoadoutActiveSlots));
+    for (std::size_t i = 0; i < worn; ++i) {
+        const Profile::Slot& slot = profile.loadout[i];
+        if (slot.empty() || slot.petalIndex >= registry.petalCount()) continue;
+        // No positive-only guard: a tier that takes the figure through zero
+        // lands on the floor below, not back on 1.
+        const double asked = registry.petalStats(slot.petalIndex, slot.rarity).cameraZoom;
+        if (asked < zoom) zoom = asked;
+    }
+    return std::max(kFloor, zoom);
+}
+
 } // namespace flix

@@ -269,6 +269,11 @@ private:
     /// server's drop roll uses, so both clients pick the same artwork.
     const std::vector<std::uint16_t>& droppablePetals() const;
 
+    /// The spinning saw a worn cutter puts on the flower, in the caller's
+    /// radius-25 art space. Drawn before the body so it reads as carried
+    /// behind, and never as an orbiting petal -- a cutter takes no ring place.
+    void drawCutterBlade(Canvas&, std::uint8_t equipFlags, double timeSeconds) const;
+
     /// The face, at an explicit mouth curve. A corpse is the one caller that
     /// needs a mouth the live attack/defend bits would never produce, and the
     /// digger the one that needs a body that is not flower yellow.

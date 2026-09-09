@@ -374,7 +374,16 @@ the client, while it connects:
    localhost with no trust-store setup.
 3. Anything at all going wrong — no UDP path, an untrusted certificate, a
    timeout — falls through to WebSocket. One wasted round trip is the whole
-   cost of trying.
+   cost of trying, and it is paid once: the failure is remembered per origin
+   in `sessionStorage` for the life of the tab, so a reconnect goes straight
+   to WebSocket. That matters behind a proxy that carries only TCP —
+   Cloudflare's, for one — where the server still advertises WebTransport on
+   its own port and the handshake can never succeed.
+
+The page dials the port it was served on: `location.port`, or the scheme's
+default when the URL names none. Behind nginx or Cloudflare that is 443,
+which the proxy forwards to the server's own port; only a page with no origin
+port at all falls back to 3000.
 
 The server's QUIC listener is equally best-effort: `@fails-components/webtransport`
 is an optional native dependency and needs a certificate, and failing either

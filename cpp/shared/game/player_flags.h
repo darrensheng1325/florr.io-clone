@@ -27,6 +27,10 @@ enum EquipFlag : std::uint8_t {
     EquipObserver = 1 << 2,
     EquipAntennae = 1 << 3,
     EquipTest1    = 1 << 4,
+    /// Set alongside EquipCutter for the lightning cutter, so the client can
+    /// paint its cyan blade. Derived in the content loader from the petal id --
+    /// see parsePetal() for why it is not written in petals.json.
+    EquipLightningCutter = 1 << 5,
 };
 
 enum PlayerRenderFlag : std::uint32_t {

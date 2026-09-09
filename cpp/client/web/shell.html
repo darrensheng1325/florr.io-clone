@@ -100,7 +100,15 @@
   const canvas = document.getElementById('canvas');
 
   const host = query.get('host') || location.hostname || '127.0.0.1';
-  const port = query.get('port') || location.port || '3000';
+  // A page URL with no explicit port was served on its scheme's default,
+  // and that is the port the game dials too. Whatever fronts the server --
+  // nginx, Cloudflare's proxy -- answers there and forwards to the server's
+  // own 3000, which is not reachable through it (Cloudflare will not carry
+  // that port at all). The 3000 fallback is for a page with no origin port
+  // to go by, such as one opened from disk.
+  const defaultPort = location.protocol === 'https:' ? '443'
+                    : location.protocol === 'http:' ? '80' : '3000';
+  const port = query.get('port') || location.port || defaultPort;
 
   const args = ['--data', 'data', '--host', host, '--port', port];
   for (const name of ['user', 'password']) {

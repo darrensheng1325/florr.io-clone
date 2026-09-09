@@ -1025,6 +1025,11 @@ void App::frame(double dt) {
     // across every frame rather than the menu reaching into the renderer.
     renderer_.options = menus_.settings().render;
     camera_.userZoom = menus_.settings().zoom;
+    // The petals' share of the zoom, read off the account's own loadout: the
+    // server does not compute it and it is not on the wire, as in the
+    // browser. It rides into the viewport the next input frame reports, so
+    // the server widens what it streams as soon as an observer goes on.
+    camera_.loadoutZoom = loadoutCameraZoom(net_.profile(), content());
     const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
     menus_.setInGame(inWorld);
     if (menus_.takeExitRequest() && inWorld) leaveToTitle();

@@ -244,6 +244,12 @@ struct PetalConfig {
     double knockback = 5;
     ProjectileSpec projectile;
     double range = 0;           ///< reach for the petals that have one
+    /// What a worn cutter adds to the flower's BODY damage, before rarity.
+    /// Scaled on the damage ladder, so it is stated at the common tier like
+    /// every other damage figure. Not `damage` itself: nothing about this
+    /// petal touches a mob, and putting it there would make every tooltip and
+    /// drop call it a weapon.
+    double bodyDamage = 0;
     std::uint8_t equipFlags = EquipNone;
 
     double poisonPerSecond = 0;
@@ -353,6 +359,8 @@ struct MobStats {
 struct PetalStats {
     double damage = 0;
     double health = 0;
+    /// Body damage granted to the wearer, scaled for this tier.
+    double bodyDamage = 0;
     double reloadMillis = kDefaultPetalReloadMillis;
     double poisonPerSecond = 0;
     double poisonDurationMillis = 0;

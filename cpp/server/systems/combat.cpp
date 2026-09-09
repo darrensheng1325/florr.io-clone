@@ -541,7 +541,10 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
                 health->current = health->max;
             }
             if (ContactDamage* contact = world.tryGet<ContactDamage>(recipient)) {
-                contact->amount = bodyDamageForLevel(level);
+                // The worn cutter's bonus rides along, or the level-up would
+                // strip it until the next petal pass folded it back on.
+                contact->amount = bodyDamageForLevel(level) +
+                                  (modifiers ? modifiers->bodyDamageBonus : 0.0);
             }
         }
     }

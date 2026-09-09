@@ -400,6 +400,10 @@ struct PlayerModifiers {
     /// NO petal damage modifier at all, so collapsing the two costs a fully
     /// talented ring roughly two and a half times its damage.
     double petalDamageScale = 1.0;
+    /// Flat addition to the level's body damage, granted by a worn cutter.
+    /// Published here rather than recomputed at each impact so that the
+    /// level-up path can rebuild the same figure the petal pass wrote.
+    double bodyDamageBonus = 0.0;
     double sizeScale = 1.0;
     double luck = 1.0;          ///< TypeScript's neutral luck value
     double magnetism = 0.0;     ///< adds to pickup radius

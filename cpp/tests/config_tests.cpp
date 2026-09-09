@@ -512,6 +512,15 @@ TEST(enums_and_colours_are_parsed_not_stored_as_text) {
     CHECK_EQ(r.petal(r.petalIndex("bubble")).colorRgba, 0xFFFFFF00u);
 
     CHECK_EQ(r.petal(r.petalIndex("cutter")).equipFlags, std::uint8_t(EquipCutter));
+    // Both bits, and the second one is DERIVED from the id: petals.json says
+    // plain "Cutter" because the browser build's loader throws on a name its
+    // frozen enum lacks. Losing this leaves the cyan blade painted black.
+    CHECK_EQ(r.petal(r.petalIndex("lightning_cutter")).equipFlags,
+             std::uint8_t(EquipCutter | EquipLightningCutter));
+    // The body-damage grant rides the petal damage ladder: 3x a tier, so it
+    // matches what a basic petal of the same rarity hits for.
+    CHECK_NEAR(r.petalStats(r.petalIndex("cutter"), Rarity::Common).bodyDamage, 10.0, 1e-9);
+    CHECK_NEAR(r.petalStats(r.petalIndex("cutter"), Rarity::Unique).bodyDamage, 65610.0, 1e-9);
     CHECK_EQ(r.petal(r.petalIndex("third_eye")).equipFlags, std::uint8_t(EquipThirdEye));
     CHECK_EQ(r.petal(r.petalIndex("observer")).equipFlags, std::uint8_t(EquipObserver));
     CHECK_EQ(r.petal(r.petalIndex("antennae")).equipFlags, std::uint8_t(EquipAntennae));
