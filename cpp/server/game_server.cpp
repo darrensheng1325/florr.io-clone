@@ -1247,8 +1247,6 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     // the arena kit instead; the maze body is on its own track. Restated here
     // so the panels show what the flower actually has from the first frame.
     sendProfile(session, connection);
-
-    broadcastChat(net::ChatChannel::System, "", session.username + " joined");
 }
 
 void GameServer::handleLeave(Session& session, net::Connection& connection) {
