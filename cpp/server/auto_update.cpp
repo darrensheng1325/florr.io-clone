@@ -41,10 +41,17 @@ EM_JS(void, flix_update_start, (const char* urlPtr), {
     const { execFileSync } = require('child_process');
     let staging = null;
     try {
-      // The directory the server is actually running from, which is the one
-      // `node dist/server.js` named. Refusing to overlay anything else is what
-      // stops an update run from a source checkout trashing the checkout.
-      const runtimeDir = path.dirname(process.argv[1]);
+      // The directory this module was loaded from: the build directory, which
+      // is where an update installs. It is `__dirname`, NOT process.argv[1]:
+      // under pm2 (fork mode) argv[1] is pm2's own wrapper,
+      // /usr/local/lib/node_modules/pm2/lib/ProcessContainerFork.js, which
+      // require()s server.js -- so the old dirname(argv[1]) pointed at pm2's
+      // lib directory and every update on a pm2-managed server refused itself
+      // with "not a built deployment". __dirname is the emitted server.js's
+      // own directory whoever loaded it. The server.js check still refuses to
+      // overlay anything that is not a build directory.
+      const runtimeDir = typeof __dirname === 'string' ? __dirname
+                                                       : path.dirname(process.argv[1]);
       if (!fs.existsSync(path.join(runtimeDir, 'server.js'))) {
         throw new Error('Refusing to update: ' + runtimeDir +
                         ' is not a built deployment (no server.js).');
