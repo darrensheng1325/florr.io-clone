@@ -67,6 +67,22 @@ struct Effect {
     std::vector<EffectParticle> particles;
 };
 
+/// One arm of a lightning strike: the jagged run from where the strike landed
+/// to one of the mobs it hit.
+///
+/// The jitter is rolled ONCE, when the strike arrives, and the polyline is
+/// kept. Re-rolling it per frame makes the arc crawl and shimmer instead of
+/// flashing; the style reference seeds its own jitter off entity ids to get the
+/// same fixed shape, which a stored path gives for free.
+///
+/// A bolt rather than a strike is the unit here because each arm is jittered on
+/// its own. The arms of one strike are born in the same frame and so fade
+/// together without having to be grouped.
+struct LightningBolt {
+    std::vector<Vec2> points;
+    double ageSeconds = 0;
+};
+
 /// The flourish a drop plays as it lands: it slides in from a random offset
 /// and unwinds a random spin over 400 ms.
 struct DropSpawn {
@@ -220,6 +236,7 @@ private:
     void drawRobot(Canvas&, const RemoteEntity&) const;
     void drawHitbox(Canvas&, const RemoteEntity&, const Camera&, Vec2 at) const;
     void drawEffects(Canvas&, const Camera&) const;
+    void drawLightning(Canvas&, const Camera&) const;
 
     /// One loot drop: the shadow backdrop, the rarity plate, the petal and the
     /// item's name, all in world units. `rotation`, `scale` and `alpha` are
@@ -319,6 +336,11 @@ private:
     const Terrain* terrain_ = nullptr;
     const MapData* map_ = nullptr;
     std::vector<Effect> effects_;
+
+    /// Lightning arms still flashing, kept apart from the effect pool for the
+    /// same reason the drop shimmer is: one strike lands two dozen of them at
+    /// once and would evict every damage number on screen.
+    std::vector<LightningBolt> bolts_;
 
     /// The drop shimmer, kept apart from the effect pool. It emits a steady
     /// trickle rather than periodic bursts, so its grains have no shared

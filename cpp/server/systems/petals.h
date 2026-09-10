@@ -25,6 +25,7 @@
 namespace flix {
 
 class Terrain;
+class EventQueue;
 
 /// Live state for one loadout slot's petals.
 ///
@@ -131,8 +132,15 @@ class PetalSystem {
 public:
     /// One tick. Phase 4: after movement, so the ring orbits where the flower
     /// ended up; before combat, so a petal hits from its final position.
+    ///
+    /// `events` collects the tick's one-shot visuals. Only the lightning strike
+    /// uses it: everything else this system does is either streamed as entity
+    /// state or resolved by combat, which owns its own events. Left null the
+    /// ring still works and simply reports nothing, which is what a headless
+    /// test wants.
     void run(World& world, const ContentRegistry& registry, double nowMillis, double dt,
-             CommandBuffer& commands, const Terrain* terrain = nullptr);
+             CommandBuffer& commands, const Terrain* terrain = nullptr,
+             EventQueue* events = nullptr);
 
     /// Fold every flower's loadout into its PlayerModifiers, body radius and
     /// max health, without touching the ring.
@@ -281,6 +289,10 @@ private:
     /// beyond its own radius and damage.
     void emitDamageBurst(World& world, Entity player, Vec2 at, double radius, double damage);
     void strikeLightning(World& world, Entity player, Vec2 at, double damage);
+    /// The strike's visual half: one event carrying the bolts' endpoints. The
+    /// damage half is a field, and a field has nothing on the wire the client
+    /// could draw a strike from.
+    void reportLightning(World& world, Entity player, Vec2 at, double radius);
     void explodePetal(World& world, Entity player, Vec2 at, double petalSize, double damage,
                       double nowMillis);
     /// The scripted heal, which is a different curve from a burst petal's:
@@ -373,6 +385,13 @@ private:
     std::vector<Entity> pendingSpawns_;
     std::vector<PendingBreak> pendingBreaks_;
     std::vector<Entity> mobScratch_;
+    /// Where a strike's bolts end, rebuilt per strike so the report allocates
+    /// nothing once the vector has grown.
+    std::vector<Vec2> lightningTargets_;
+
+    /// This tick's event queue, installed by run(). Null outside a tick and in
+    /// a test that does not care about the wire.
+    EventQueue* events_ = nullptr;
 
     /// Wild mobs, rebuilt once at the top of the tick. Its own grid rather
     /// than the server's: the reference's attraction reads the enemy grid as

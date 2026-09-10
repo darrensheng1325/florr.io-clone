@@ -58,6 +58,21 @@ constexpr double kDpsWindowSeconds = 10.0;
 constexpr double kExplosionLifeSeconds = 1.0;
 constexpr std::uint32_t kExplosionOuter = 0xFF4500u;
 constexpr std::uint32_t kExplosionInner = 0xFFD700u;
+
+/// Lightning: white arms that flash and fade over half a second.
+constexpr double kLightningLifeSeconds = 0.5;
+constexpr std::uint32_t kLightningColor = 0xFFFFFFu;
+constexpr double kLightningWidth = 2.65;
+/// How long one straight run of a bolt is before it breaks again, in world
+/// units. Random per bolt inside the range, so two arms of the same strike
+/// covering the same distance do not break in the same places.
+constexpr double kLightningSegmentMin = 50.0;
+constexpr double kLightningSegmentSpread = 100.0;
+/// Arms kept alive at once. A strike reports at most net::kMaxLightningTargets,
+/// so this is four overlapping strikes' worth; past it the newest is dropped,
+/// which in a crowd that dense is a white patch either way.
+constexpr std::size_t kMaxLightningBolts = 96;
+
 /// The browser build integrates its particles once per 60 Hz frame; both its
 /// velocities and its 16 ms life step are therefore per frame, not per second.
 constexpr double kFramesPerSecond = 60.0;
@@ -312,6 +327,39 @@ double randomUnit() {
     state ^= state >> 17;
     state ^= state << 5;
     return static_cast<double>(state >> 8) * (1.0 / 16777216.0);
+}
+
+/// Lays out one arm of a strike: `from` to `to`, broken into runs that each
+/// wander off the straight line.
+///
+/// Ported from the style reference's own bolt: the line is cut into equal runs,
+/// and each run's MIDPOINT is displaced by a random vector no longer than half
+/// the run. Displacing the midpoints rather than the joints is what keeps the
+/// arm anchored at both ends however hard it is shaken -- it starts where the
+/// strike landed and finishes on the mob, which is the whole point of drawing
+/// it.
+void buildLightningBolt(Vec2 from, Vec2 to, std::vector<Vec2>& out) {
+    out.clear();
+    out.push_back(from);
+    const Vec2 delta = to - from;
+    const double distance = delta.length();
+    if (distance <= 1e-9) {
+        out.push_back(to);
+        return;
+    }
+    const Vec2 direction = delta / distance;
+    const double runLength = kLightningSegmentMin + kLightningSegmentSpread * randomUnit();
+    const int runs = std::max(1, static_cast<int>(std::ceil(distance / runLength)));
+    const double half = distance / runs / 2.0;
+    out.reserve(static_cast<std::size_t>(runs) + 2);
+    for (int i = 0; i < runs; ++i) {
+        const double along = (2.0 * i + 1.0) * half;
+        const double jitterAngle = kTau * randomUnit();
+        const double jitter = half * randomUnit();
+        out.push_back({from.x + direction.x * along + std::cos(jitterAngle) * jitter,
+                       from.y + direction.y * along + std::sin(jitterAngle) * jitter});
+    }
+    out.push_back(to);
 }
 
 /// Straight per-channel lerp, rounded the way the browser build rounds it.
@@ -728,6 +776,20 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 effects_.push_back(std::move(e));
                 break;
             }
+            case net::EventKind::Lightning: {
+                // One arm per mob the strike hit. The endpoints are the
+                // server's, not the entity table's: the strike's damage lands a
+                // tick later, so some of these mobs are already dead and gone
+                // from the table by the time this is read -- and a bolt to the
+                // mob it just killed is precisely the bolt to draw.
+                for (const Vec2& target : event.points) {
+                    if (bolts_.size() >= kMaxLightningBolts) break;
+                    LightningBolt bolt;
+                    buildLightningBolt(event.position, target, bolt.points);
+                    bolts_.push_back(std::move(bolt));
+                }
+                break;
+            }
             case net::EventKind::PickedUp: {
                 // The drop is erased from the snapshot in the same tick, so
                 // the flight to its taker is played from the record kept here.
@@ -838,6 +900,13 @@ void WorldRenderer::update(double dt) {
     effects_.erase(std::remove_if(effects_.begin(), effects_.end(),
                                   [](const Effect& e) { return e.ageSeconds >= e.lifeSeconds; }),
                    effects_.end());
+
+    for (LightningBolt& bolt : bolts_) bolt.ageSeconds += dt;
+    bolts_.erase(std::remove_if(bolts_.begin(), bolts_.end(),
+                                [](const LightningBolt& b) {
+                                    return b.ageSeconds >= kLightningLifeSeconds;
+                                }),
+                 bolts_.end());
 
     for (EffectParticle& p : dropSparkles_) {
         p.position += p.velocity * dt;
@@ -2506,6 +2575,11 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
     // a damage number or an explosion that happens to share its patch.
     for (const EffectParticle& p : dropSparkles_) drawSparkleGrain(canvas, camera, p, true);
 
+    // Then the bolts, UNDER the numbers: a strike into a pile draws an arm to
+    // every mob in it, and a white mesh over the damage it just dealt would
+    // hide the one part of the effect that carries information.
+    drawLightning(canvas, camera);
+
     for (const Effect& e : effects_) {
         const double t = clamp(e.ageSeconds / e.lifeSeconds, 0.0, 1.0);
 
@@ -2563,6 +2637,36 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
             }
         }
     }
+}
+
+void WorldRenderer::drawLightning(Canvas& canvas, const Camera& camera) const {
+    if (bolts_.empty()) return;
+    const double zoom = camera.zoom();
+
+    canvas.save();
+    ui::setStroke(canvas, kLightningColor);
+    canvas.setLineWidth(static_cast<float>(kLightningWidth * zoom));
+    // Round on both, or every joint in a hard-angled arm shows as a notch and
+    // the arm reads as a chain of separate sticks.
+    canvas.setLineCap("round");
+    canvas.setLineJoin("round");
+    for (const LightningBolt& bolt : bolts_) {
+        if (bolt.points.size() < 2) continue;
+        const double t = clamp(bolt.ageSeconds / kLightningLifeSeconds, 0.0, 1.0);
+        canvas.setGlobalAlpha(static_cast<float>(1.0 - t));
+        canvas.beginPath();
+        // One path per arm, not per run: the runs share a style, so the whole
+        // polyline is a single stroke.
+        const Vec2 start = camera.worldToScreen(bolt.points.front());
+        canvas.moveTo(static_cast<float>(start.x), static_cast<float>(start.y));
+        for (std::size_t i = 1; i < bolt.points.size(); ++i) {
+            const Vec2 at = camera.worldToScreen(bolt.points[i]);
+            canvas.lineTo(static_cast<float>(at.x), static_cast<float>(at.y));
+        }
+        canvas.stroke();
+    }
+    canvas.setGlobalAlpha(1.0f);
+    canvas.restore();
 }
 
 void WorldRenderer::draw(Canvas& canvas, const WorldView& view, const Camera& camera,

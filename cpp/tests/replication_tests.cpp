@@ -305,6 +305,51 @@ TEST(events_are_scoped_to_what_the_client_can_see) {
     CHECK_NEAR(client.events()[0].amount, 37.0, 0.01);
 }
 
+TEST(a_lightning_strike_carries_its_bolts_and_the_next_event_still_decodes) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.events().clear();
+
+    // A strike, then an ordinary event behind it. The second one is the point:
+    // Lightning is the only kind with a variable tail, and a reader that does
+    // not consume it reads the tail as the next event's header.
+    f.events.lightning({1000, 1000}, 1000.0, Realm::Overworld,
+                       {{1100, 1000}, {900, 1050}, {1000, 1200}});
+    f.events.damage(4242, 9, {1010, 1010}, Realm::Overworld);
+    f.tick(client, 2, 1040);
+
+    CHECK_EQ(client.events().size(), std::size_t(2));
+    const ViewEvent& strike = client.events()[0];
+    CHECK_EQ(static_cast<int>(strike.kind), static_cast<int>(net::EventKind::Lightning));
+    CHECK_NEAR(strike.position.x, 1000.0, 0.05);
+    CHECK_NEAR(strike.radius, 1000.0, 0.05);
+    CHECK_EQ(strike.points.size(), std::size_t(3));
+    CHECK_NEAR(strike.points[0].x, 1100.0, 0.05);
+    CHECK_NEAR(strike.points[2].y, 1200.0, 0.05);
+
+    CHECK_EQ(static_cast<int>(client.events()[1].kind), static_cast<int>(net::EventKind::Damage));
+    CHECK_EQ(client.events()[1].netId, std::uint32_t(4242));
+    CHECK(client.events()[1].points.empty());
+}
+
+TEST(a_strike_reports_no_more_bolts_than_the_wire_cap) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.events().clear();
+
+    std::vector<Vec2> targets;
+    for (std::size_t i = 0; i < net::kMaxLightningTargets + 8; ++i) {
+        targets.push_back({1000.0 + static_cast<double>(i), 1000.0});
+    }
+    f.events.lightning({1000, 1000}, 1000.0, Realm::Overworld, targets);
+    f.tick(client, 2, 1040);
+
+    CHECK_EQ(client.events().size(), std::size_t(1));
+    CHECK_EQ(client.events()[0].points.size(), net::kMaxLightningTargets);
+}
+
 TEST(truncated_snapshot_is_rejected_wholesale) {
     Fixture f;
     f.addMob({1100, 1000});

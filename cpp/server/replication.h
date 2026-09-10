@@ -91,6 +91,10 @@ struct WireEvent {
     double radius = 0;
     std::uint8_t flag = 0;
 
+    /// Lightning only: where each bolt ends, in world space. Empty for every
+    /// other kind, and the only variable-length thing on the event wire.
+    std::vector<Vec2> points;
+
     /// Only clients within this distance of `position` are sent the event.
     /// A damage number on the far side of the map is bytes nobody will see.
     bool positional = false;
@@ -137,6 +141,20 @@ public:
         e.realm = realm;
         e.positional = true;
         events_.push_back(e);
+    }
+
+    /// `targets` is where the bolts end -- the mobs the strike hit -- already
+    /// trimmed to net::kMaxLightningTargets by the caller, which is the only
+    /// side that knows which ones are nearest.
+    void lightning(Vec2 at, double radius, Realm realm, const std::vector<Vec2>& targets) {
+        WireEvent e;
+        e.kind = net::EventKind::Lightning;
+        e.position = at;
+        e.radius = radius;
+        e.realm = realm;
+        e.points = targets;
+        e.positional = true;
+        events_.push_back(std::move(e));
     }
 
     const std::vector<WireEvent>& events() const { return events_; }

@@ -1,5 +1,6 @@
 #include "test.h"
 
+#include "server/replication.h"
 #include "server/systems/petals.h"
 
 #include <sys/stat.h>
@@ -41,7 +42,8 @@ const char* const kPetalsJson = R"JSON({
   "summoner": {"name":"Summoner","damage":1,"health":4,"size":1,"cooldown":1000,"count":1,"petMobType":"critter","petMobRarity":"common","petCount":2,"color":"#AA00AA"},
   "toxic":    {"name":"Toxic","damage":2,"health":5,"size":1,"cooldown":1000,"count":1,"poison":0.05,"poisonDuration":3000,"color":"#00AA00"},
   "blade":    {"name":"Blade","damage":0,"health":null,"size":4,"cooldown":1,"count":0,"range":0,"bodyDamage":10,"equipFlags":"Cutter","noPhysics":true,"color":"#111111"},
-  "sparkblade":{"name":"Spark Blade","damage":1,"health":null,"size":4,"cooldown":1,"count":0,"range":0,"bodyDamage":10,"equipFlags":"Cutter","noPhysics":true,"color":"#00FFFF"}
+  "sparkblade":{"name":"Spark Blade","damage":1,"health":null,"size":4,"cooldown":1,"count":0,"range":0,"bodyDamage":10,"equipFlags":"Cutter","noPhysics":true,"color":"#00FFFF"},
+  "lightning":{"name":"Lightning","damage":25,"health":10,"size":1,"cooldown":2500,"count":1,"color":"#FFFFFF"}
 })JSON";
 
 const char* const kMobsJson = R"JSON({
@@ -102,6 +104,10 @@ struct Rig {
     World world;
     CommandBuffer commands{world};
     PetalSystem system;
+    /// Where the tick's one-shot visuals land. Only the lightning strike
+    /// reports one, and it is the only way to see a strike at all: its damage
+    /// is a field combat resolves later, and leaves nothing on this system.
+    EventQueue events;
     Entity player = NULL_ENTITY;
     // Deliberately not zero: a timer that was never set reads as 0, and a
     // clock starting there would make that bug look like a working one.
@@ -162,7 +168,8 @@ struct Rig {
     void tick(int count = 1) {
         for (int i = 0; i < count; ++i) {
             now += net::kTickMillis;
-            system.run(world, fixture().registry, now, net::kTickSeconds, commands);
+            system.run(world, fixture().registry, now, net::kTickSeconds, commands, nullptr,
+                       &events);
             commands.flush();
         }
     }
@@ -541,6 +548,97 @@ TEST(an_attracted_petal_is_projected_inside_the_body_the_hit_test_uses) {
     CHECK(gap < bodyRadius + petalRadius);
     // And on the edge of the body it actually has, not buried in its middle.
     CHECK(gap > bodyRadius * 0.5);
+}
+
+// ---------------------------------------------------------------------------
+// Lightning
+// ---------------------------------------------------------------------------
+
+/// PetalSystem's own kLightningRadius, which is private to it. Spelling the
+/// number out here is deliberate: a test that hard-codes it is what notices the
+/// reach changing under a strike that is supposed to cover a screen.
+constexpr double kStrikeRadius = 1000.0;
+
+/// Puts a mob on the field with enough health to survive the strike, so what is
+/// being measured is the report and not the corpse.
+Entity addMob(Rig& rig, Vec2 at, const char* type = "critter") {
+    const std::uint16_t index = fixture().registry.mobIndex(type);
+    const Entity mob = rig.world.create();
+    rig.world.add<MobTag>(mob);
+    rig.world.add<MobType>(mob, MobType{index, Rarity::Common, 1.0});
+    rig.world.add<Transform>(mob, Transform{at, 0.0});
+    rig.world.add<Body>(mob, Body{10.0, 1.0});
+    rig.world.add<Health>(mob, Health{10000.0, 10000.0, 0.0, 0.0});
+    rig.world.add<Faction>(mob, Faction{Team::Hostiles, false});
+    return mob;
+}
+
+const WireEvent* firstStrike(const Rig& rig) {
+    for (const WireEvent& e : rig.events.events()) {
+        if (e.kind == net::EventKind::Lightning) return &e;
+    }
+    return nullptr;
+}
+
+TEST(a_strike_reports_a_bolt_to_every_mob_it_hit) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "lightning");
+    rig.settleEquips();
+
+    // One mob against the ring, which is what arms the petal, and two more well
+    // inside the strike's thousand-unit reach but nowhere near the petal. All
+    // three are struck, so all three must be drawn.
+    const Vec2 orbit = rig.world.get<Transform>(rig.petals(0).front()).position;
+    addMob(rig, orbit);
+    addMob(rig, {1400.0, 1000.0});
+    addMob(rig, {1000.0, 1300.0});
+
+    CHECK(rig.tickUntil([&] { return firstStrike(rig) != nullptr; }, 120));
+    const WireEvent* strike = firstStrike(rig);
+    CHECK(strike != nullptr);
+    if (strike == nullptr) return;
+    CHECK_EQ(strike->points.size(), std::size_t(3));
+    CHECK(strike->positional);
+
+    // A mob outside the reach is not drawn a bolt, because it was not hit.
+    Rig far;
+    far.equip(0, "lightning");
+    far.settleEquips();
+    addMob(far, far.world.get<Transform>(far.petals(0).front()).position);
+    addMob(far, {1000.0 + kStrikeRadius + 200.0, 1000.0});
+    CHECK(far.tickUntil([&] { return firstStrike(far) != nullptr; }, 120));
+    const WireEvent* nearOnly = firstStrike(far);
+    CHECK(nearOnly != nullptr);
+    if (nearOnly != nullptr) CHECK_EQ(nearOnly->points.size(), std::size_t(1));
+}
+
+TEST(a_strike_into_a_pile_keeps_the_nearest_bolts) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "lightning");
+    rig.settleEquips();
+
+    const Vec2 orbit = rig.world.get<Transform>(rig.petals(0).front()).position;
+    addMob(rig, orbit);
+    // Further than the cap can carry, laid out so that "nearest" and "whatever
+    // order the archetype happens to hold" cannot be confused: the far half is
+    // created FIRST, so a plain truncation would keep exactly the wrong ones.
+    for (std::size_t i = 0; i < net::kMaxLightningTargets; ++i) {
+        addMob(rig, {orbit.x + 600.0 + 5.0 * static_cast<double>(i), orbit.y});
+    }
+    for (std::size_t i = 0; i < net::kMaxLightningTargets; ++i) {
+        addMob(rig, {orbit.x + 5.0 * static_cast<double>(i), orbit.y + 20.0});
+    }
+
+    CHECK(rig.tickUntil([&] { return firstStrike(rig) != nullptr; }, 120));
+    const WireEvent* strike = firstStrike(rig);
+    CHECK(strike != nullptr);
+    if (strike == nullptr) return;
+    CHECK_EQ(strike->points.size(), net::kMaxLightningTargets);
+    for (const Vec2& point : strike->points) {
+        CHECK((point - strike->position).length() < 600.0);
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@
 // content it was built against, and a server that disagrees says so plainly
 // instead of letting the two sides misread each other's bytes for a session.
 
+#include <cstddef>
 #include <cstdint>
 
 #include "shared/game/player_flags.h"
@@ -21,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 16;
+inline constexpr std::uint16_t kProtocolVersion = 17;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -349,7 +350,22 @@ enum class EventKind : std::uint8_t {
     PickedUp,       ///< u32 dropNetId, u32 byNetId -- fly-to-player animation
     LevelUp,        ///< u32 netId, u16 newLevel
     Explosion,      ///< f32 x, f32 y, f32 radius, u8 colorIndex
+    /// A lightning strike: `position` is where it landed and `radius` its
+    /// reach. The ONLY event with a variable tail -- u8 count, then that many
+    /// f32 x, f32 y -- because a bolt is drawn to each mob the strike hit and
+    /// the client has no way to work out which those were: the strike's damage
+    /// is resolved a tick later, by which time the dead are gone.
+    Lightning,
 };
+
+/// How many struck mobs ride a Lightning event.
+///
+/// A strike into an admin-spawned pile hits as many mobs as the pile holds, and
+/// every one of them would be eight bytes on every viewer's wire. Past a couple
+/// of dozen the bolts overlap into a solid white patch, so the ones beyond the
+/// cap buy nothing that can be seen. The set kept is the NEAREST, which is a
+/// disc around the strike -- the shape the effect should have anyway.
+inline constexpr std::size_t kMaxLightningTargets = 24;
 
 // ---------------------------------------------------------------------------
 // Content hash

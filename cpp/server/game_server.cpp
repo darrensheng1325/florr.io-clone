@@ -486,7 +486,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     petals_->foldModifiers(world_, content());
 
     movement_->runPlayerPhase(world_, *terrain_, nowMillis, dt);
-    petals_->run(world_, content(), nowMillis, dt, commands_, terrain_.get());
+    petals_->run(world_, content(), nowMillis, dt, commands_, terrain_.get(), &events_);
 
     // Mob targeting must see the flowers' newly committed positions. Refresh
     // both the LOD list and broadphase after player movement instead of asking

@@ -189,7 +189,17 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         e.position = reader.position();
         e.radius = reader.f32();
         e.flag = reader.u8();
-        events.push_back(e);
+        // Lightning is the only kind carrying a tail; see EventKind. A frame
+        // that ends inside it hands back zeroes and trips the reader's ok()
+        // flag, which the check below turns into a rejected snapshot -- the
+        // tail must be consumed either way, or its bytes would be read as the
+        // next event's header.
+        if (e.kind == net::EventKind::Lightning) {
+            const std::uint8_t targets = reader.u8();
+            e.points.reserve(targets);
+            for (std::uint8_t t = 0; t < targets; ++t) e.points.push_back(reader.position());
+        }
+        events.push_back(std::move(e));
     }
     if (!reader.ok()) return false;
 

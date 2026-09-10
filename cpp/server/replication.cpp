@@ -448,6 +448,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.position(event.position);
             out.f32(static_cast<float>(event.radius));
             out.u8(event.flag);
+            // The one kind with a tail. Written after the fixed fields, so a
+            // reader that has already taken the kind byte knows whether to
+            // expect it; nothing else on this wire is variable-length.
+            if (event.kind == net::EventKind::Lightning) {
+                const std::size_t count =
+                    std::min(event.points.size(), net::kMaxLightningTargets);
+                out.u8(static_cast<std::uint8_t>(count));
+                for (std::size_t i = 0; i < count; ++i) out.position(event.points[i]);
+            }
             ++eventCount;
         }
     }

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 
+#include "server/replication.h"
 #include "shared/game/terrain.h"
 
 namespace flix {
@@ -292,8 +293,9 @@ bool playerIsDown(World& world, Entity player) {
 // ---------------------------------------------------------------------------
 
 void PetalSystem::run(World& world, const ContentRegistry& registry, double nowMillis, double dt,
-                      CommandBuffer& commands, const Terrain* terrain) {
+                      CommandBuffer& commands, const Terrain* terrain, EventQueue* events) {
     bindTo(world);
+    events_ = events;
     // A snapshot of handles, not a live query: everything this system does --
     // spawning a petal, breaking one, firing a volley -- is structural, and
     // none of it may happen while a query holds column pointers. Taking the
@@ -328,6 +330,11 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         placePetals(world, registry, player, aggregate, nowMillis, dt, terrain);
         runActions(world, registry, player, nowMillis, terrain);
     }
+
+    // Not left dangling between ticks, for the reason CombatSystem states: the
+    // queue is cleared once the snapshot has carried it, and a stray strike
+    // from a later system or a test must not write into it afterwards.
+    events_ = nullptr;
 }
 
 void PetalSystem::foldModifiers(World& world, const ContentRegistry& registry) {
@@ -1728,8 +1735,11 @@ void PetalSystem::emitDamageBurst(World& world, Entity player, Vec2 at, double r
     // a half ticks of life makes it fire on this tick's field pass and expire
     // on the next one's.
     //
-    // Deliberately not replicated: the wire has no strike or explosion effect,
-    // and dressing one up as a poison cloud would draw a lie.
+    // The burst entity itself is deliberately NOT replicated: it is a poison
+    // field standing in for an instant hit, and streaming it would draw a
+    // purple cloud that is not there. What the client sees of a strike is the
+    // Lightning event reportLightning sends, which describes the strike
+    // itself.
     const Transform* ownerAt = world.tryGet<Transform>(player);
     const Entity burst = world.create();
     world.add<GroundEffectTag>(burst);
@@ -1745,6 +1755,53 @@ void PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double d
     // reference hands it straight over without the flower's damage multiplier.
     emitDamageBurst(world, player, at, kLightningRadius,
                     damage > 0.0 ? damage : kLightningFallbackDamage);
+    reportLightning(world, player, at, kLightningRadius);
+}
+
+void PetalSystem::reportLightning(World& world, Entity player, Vec2 at, double radius) {
+    if (events_ == nullptr) return;
+    const Transform* ownerAt = world.tryGet<Transform>(player);
+    const Realm realm = ownerAt != nullptr ? ownerAt->realm : Realm::Overworld;
+
+    // The bolts are worked out HERE rather than left to the client, and they
+    // are worked out AGAIN rather than read off the burst: the burst is a
+    // damage field that combat resolves a tick later, by which time the mobs it
+    // killed have been destroyed and the client has been told to forget them.
+    // A bolt to a mob that is already gone is exactly the bolt the strike
+    // should draw.
+    //
+    // Centres inside the disc, which is the STRICTER half of the field's own
+    // rule: the field adds the victim's radius and so also catches a boss whose
+    // edge alone is in reach. Erring this way means every arm drawn belongs to
+    // a mob that was certainly hit, and the one it can miss is a body already
+    // wider than the flash.
+    collectMobsNear(world, at, radius, mobScratch_);
+    lightningTargets_.clear();
+    lightningTargets_.reserve(mobScratch_.size());
+    for (const Entity mob : mobScratch_) {
+        const Transform* transform = world.tryGet<Transform>(mob);
+        // The realm test is collectMobsNear's own blind spot, and it is not
+        // theoretical: the arena sits at (3000, 3000), which is an ordinary
+        // patch of overworld. Without it a strike out there draws arms to mobs
+        // in a duel nobody watching can see.
+        if (transform == nullptr || transform->realm != realm) continue;
+        lightningTargets_.push_back(transform->position);
+    }
+    if (lightningTargets_.empty()) return;
+
+    // Nearest first, and only when there are more than fit. A plain truncation
+    // would take whatever order the archetypes happen to hold, which is a
+    // direction, not a disc: the browser build shipped that bug and every bolt
+    // in a dense pile fanned the same way.
+    if (lightningTargets_.size() > net::kMaxLightningTargets) {
+        std::partial_sort(lightningTargets_.begin(),
+                          lightningTargets_.begin() + net::kMaxLightningTargets,
+                          lightningTargets_.end(), [at](const Vec2& a, const Vec2& b) {
+                              return distanceSq(a, at) < distanceSq(b, at);
+                          });
+        lightningTargets_.resize(net::kMaxLightningTargets);
+    }
+    events_->lightning(at, radius, realm, lightningTargets_);
 }
 
 void PetalSystem::explodePetal(World& world, Entity player, Vec2 at, double petalSize,

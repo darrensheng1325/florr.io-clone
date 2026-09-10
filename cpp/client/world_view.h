@@ -119,6 +119,8 @@ struct ViewEvent {
     Vec2 position;
     double radius = 0;
     std::uint8_t flag = 0;
+    /// Lightning only: where each bolt ends. Empty for every other kind.
+    std::vector<Vec2> points;
 };
 
 /// Every slot untouched, which is what a bar with no snapshot behind it yet
