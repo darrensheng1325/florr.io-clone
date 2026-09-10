@@ -58,6 +58,8 @@ void usage(const char* program) {
         "  --dead             join, then show the death card straight away\n"
         "  --tutorial         join with the onboarding tutorial card up\n"
         "  --stats            show the frame/ping/position counters\n"
+        "  --mobile           force the touch controls up, whatever the\n"
+        "                     settings file and the device say\n"
         "  --chat <line>      seed a transcript line (repeatable); markup is\n"
         "                     parsed exactly as a server line's would be\n",
         program);
@@ -112,6 +114,7 @@ int main(int argc, char** argv) {
         else if (arg == "--dead") config.autoDead = true;
         else if (arg == "--tutorial") config.autoTutorial = true;
         else if (arg == "--stats") config.showStats = true;
+        else if (arg == "--mobile") config.forceTouchControls = true;
         else if (arg == "--chat") config.seedChat.push_back(next("--chat"));
         else if (arg == "--user") config.autoUsername = next("--user");
         else if (arg == "--password") config.autoPassword = next("--password");

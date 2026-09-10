@@ -152,6 +152,12 @@ inline constexpr double kZoomKeyStep = 0.1;
 /// grants nothing, the same rule the server applies to the equipment bits.
 double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry);
 
+/// How far the loadout bar reaches up from the bottom edge of an in-game
+/// viewport. What anything else anchored to the bottom hangs above -- the bar
+/// is centred and already nearly touches the edge, so there is no room under
+/// it. Derived from the same constants the bar is laid out from.
+double inGameLoadoutBarHeight();
+
 /// Everything the settings menu owns. Kept in one struct so it can be written
 /// to disk and read back as a unit, and so nothing else has to know which of
 /// these the renderer reads and which the input layer does.
@@ -206,6 +212,14 @@ struct ClientSettings {
     /// scheme it has always shipped with, and defaulting to the browser's
     /// value would take it away from every existing player.
     bool useMouseControls = true;
+    /// Whether the on-screen touch controls are up: the stick, and the two
+    /// buttons that stand in for the extend/retract keys. The browser keeps
+    /// the same flag in `localStorage.requestMobile`, and resolves an unset
+    /// one from `(pointer: coarse)` -- a phone gets them without being asked,
+    /// and a desktop does not. `requestMobileChosen` is that "unset": until
+    /// the player has said either way, the answer is the device's.
+    bool requestMobile = false;
+    bool requestMobileChosen = false;
     /// The biome the player last chose to start in. Empty is the beginner
     /// ground. Remembered because it is a preference, not a game state.
     std::string spawnBiome;
@@ -220,6 +234,13 @@ struct ClientSettings {
     int tutorialStep = 0;
 
     ClientSettings();
+
+    /// The touch controls, resolved for a device that answers `coarse` to the
+    /// pointer query. A player's own choice wins; before they have made one,
+    /// a touchscreen gets the controls and a desktop does not.
+    bool touchControlsWanted(bool coarsePointer) const {
+        return requestMobileChosen ? requestMobile : coarsePointer;
+    }
 
     /// The key bound to an action, wherever that binding is kept.
     Key controlKey(ControlAction action) const;

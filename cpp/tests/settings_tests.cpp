@@ -160,3 +160,30 @@ TEST(a_menu_key_no_row_can_rebind_is_not_pinned_by_an_old_settings_file) {
 
     std::remove(path.c_str());
 }
+
+TEST(the_touch_control_choice_survives_the_settings_file_and_an_unmade_one_does_not) {
+    const std::string path = tempPath("touch.cfg");
+
+    // Nothing chosen: nothing written, so the next run still asks the device.
+    ClientSettings fresh;
+    CHECK(fresh.save(path));
+    ClientSettings reloaded;
+    CHECK(reloaded.load(path));
+    CHECK(!reloaded.requestMobileChosen);
+    CHECK(reloaded.touchControlsWanted(true));
+    CHECK(!reloaded.touchControlsWanted(false));
+
+    // A player who turned them OFF is the case a written value has to survive:
+    // resolving from the device again would hand a phone the stick back every
+    // single run.
+    ClientSettings chosen;
+    chosen.requestMobile = false;
+    chosen.requestMobileChosen = true;
+    CHECK(chosen.save(path));
+    ClientSettings after;
+    CHECK(after.load(path));
+    CHECK(after.requestMobileChosen);
+    CHECK(!after.touchControlsWanted(true));
+
+    std::remove(path.c_str());
+}

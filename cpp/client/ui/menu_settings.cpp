@@ -19,8 +19,10 @@
 //           reads for the panel keys and the two in-game switches; Show
 //           Hitboxes -> settings.render.hitboxes, Use Mouse Controls ->
 //           settings.useMouseControls, Enable Debug Menu button ->
-//           settings.showDebugButton. These are read elsewhere and persisted
-//           with the rest of ClientSettings.
+//           settings.showDebugButton, Request Mobile ->
+//           settings.requestMobile, which is what App puts the on-screen
+//           stick and its two buttons up from. These are read elsewhere and
+//           persisted with the rest of ClientSettings.
 //   local   every other switch and the mob-framerate slider. The rows are
 //           drawn because the reference draws them -- the row set is the
 //           panel's shape, not a claim about this client -- but a value
@@ -242,6 +244,7 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
         case kShowStats: return &settings.showStats;
         case kDebugMenuEnabled: return &settings.showDebugButton;
         case kUseMouseControls: return &settings.useMouseControls;
+        case kRequestMobile: return &settings.requestMobile;
         // Everything else lands in the panel's own copy, because ClientSettings
         // has no field for it: nothing outside this file could read one, and
         // nothing would write it to disk. A row moves up here the moment a
@@ -367,7 +370,13 @@ struct Painter {
         text(canvas(), caption, x + kCheckSize + 8.0, cy + 2.0 + kCheckSize * 0.5,
              bodyStyle(13.0, kPaper, kInk, 2.0));
 
-        if (click(row)) *value = !*value;
+        if (click(row)) {
+            *value = !*value;
+            // Touching this row IS the choice, and the choice is what stops
+            // the device's own answer from overruling it -- see
+            // ClientSettings::touchControlsWanted.
+            if (toggleId == kRequestMobile) ctx.settings.requestMobileChosen = true;
+        }
         cy += kRowStride;
     }
 

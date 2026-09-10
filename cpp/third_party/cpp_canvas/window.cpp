@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 #ifdef __EMSCRIPTEN__
 // The browser backend. Drawing already goes to a real
@@ -162,6 +163,49 @@ EM_JS(double, web_css_height, (const char* element), {
   const node = document.getElementById(UTF8ToString(element));
   return node ? node.clientHeight : 0;
 });
+
+// Whether the primary pointing device is a finger. The same query the browser
+// client asks, and the only thing a page can say about it before anything has
+// been touched.
+EM_JS(int, web_coarse_pointer, (), {
+  return (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 1 : 0;
+});
+
+// The invisible <input> that stands in for a focusable canvas.
+//
+// Invisible rather than hidden: display:none and visibility:hidden both refuse
+// focus, and a field that cannot be focused cannot summon a keyboard. The 16px
+// font is not decoration either -- iOS zooms the whole page when a smaller
+// field takes focus, and the zoom does not come back.
+//
+// Nothing is ever read off this element. It exists to be focused; the
+// keystrokes it produces bubble to the window, where the key handler above
+// already listens, and that is the whole of the path text takes.
+EM_JS(void, web_soft_keyboard, (int wanted), {
+  let node = document.getElementById('__flix_soft_keyboard');
+  if (!node) {
+    if (!wanted) return;
+    node = document.createElement('input');
+    node.id = '__flix_soft_keyboard';
+    node.type = 'text';
+    node.setAttribute('autocomplete', 'off');
+    node.setAttribute('autocapitalize', 'off');
+    node.setAttribute('autocorrect', 'off');
+    node.setAttribute('spellcheck', 'false');
+    node.setAttribute('enterkeyhint', 'go');
+    node.style.cssText =
+        'position:fixed;top:35%;left:50%;width:2px;height:2px;opacity:0;' +
+        'font-size:16px;border:none;padding:0;background:transparent;' +
+        'pointer-events:none;z-index:-1;';
+    // Never allowed to hold text: the value is not what the client reads, and
+    // a growing one would let a soft keyboard's autocorrect rewrite history
+    // the client already consumed.
+    node.addEventListener('input', () => { node.value = ''; });
+    document.body.appendChild(node);
+  }
+  if (wanted) node.focus({ preventScroll: true });
+  else node.blur();
+});
 #endif
 
 struct Window::Impl {
@@ -247,6 +291,95 @@ struct Window::Impl {
   float mouseX = 0, mouseY = 0, wheel = 0;
   std::string typed;
   bool shift = false, ctrl = false, alt = false;
+
+  // -- touch ----------------------------------------------------------------
+  // Contacts arrive from a DOM callback or the SDL queue, are parked here, and
+  // are turned into this frame's stream -- and into the mirrored mouse -- by
+  // drainTouches() at the top of the frame that will read them. The two-stage
+  // shape is the browser's requirement (see Impl::takePendingEvents) and the
+  // native path uses it too so the mirror rule below exists exactly once.
+  std::vector<TouchEvent> pendingTouches, touchEvents;
+  std::vector<TouchPoint> touches;
+  std::vector<std::int64_t> claimed;
+  std::int64_t mirrored = 0;
+  bool mirroring = false;
+  bool touchSeen = false;
+  /// Whether a finger has put the mirrored pointer over the window. A touch
+  /// device fires no mouseenter and has no OS pointer to ask about, so without
+  /// this every "is the pointer even in the window" test -- which is what the
+  /// title screen gates its buttons on -- answers no, forever.
+  bool touchInside = false;
+  Window::TouchClaimHandler touchClaim;
+  std::vector<WindowRect> keyboardRegions;
+
+  void recordTouch(TouchPhase phase, std::int64_t id, float x, float y) {
+    touchSeen = true;
+    pendingTouches.push_back(TouchEvent{phase, TouchPoint{id, x, y}});
+  }
+
+  /// Moves the parked contacts into this frame's stream, keeps the live set,
+  /// and mirrors the one unclaimed contact onto the left mouse button.
+  void drainTouches() {
+    touchEvents.swap(pendingTouches);
+    pendingTouches.clear();
+    for (const TouchEvent& event : touchEvents) {
+      const TouchPoint& point = event.point;
+      switch (event.phase) {
+        case TouchPhase::Began: {
+          touches.push_back(point);
+          // Asked once, on the way in: a control that wants this contact says
+          // so now, and never sees the mouse move under it afterwards.
+          if (touchClaim && touchClaim(point)) {
+            claimed.push_back(point.id);
+            break;
+          }
+          // A second unclaimed finger does NOT take the pointer from the first.
+          // Two mirrored contacts would be one mouse teleporting between them,
+          // which is worse than ignoring the second.
+          if (mirroring) break;
+          mirroring = true;
+          mirrored = point.id;
+          mouseX = point.x;
+          mouseY = point.y;
+          touchInside = true;
+          const auto left = static_cast<std::size_t>(MouseButton::Left);
+          mouseHeld[left] = true;
+          mouseDownEdge[left] = true;
+          break;
+        }
+        case TouchPhase::Moved: {
+          for (TouchPoint& live : touches) {
+            if (live.id == point.id) { live.x = point.x; live.y = point.y; }
+          }
+          if (mirroring && point.id == mirrored) {
+            mouseX = point.x;
+            mouseY = point.y;
+            touchInside = true;
+          }
+          break;
+        }
+        case TouchPhase::Ended: {
+          touches.erase(std::remove_if(touches.begin(), touches.end(),
+                                       [&](const TouchPoint& live) {
+                                         return live.id == point.id;
+                                       }),
+                        touches.end());
+          claimed.erase(std::remove(claimed.begin(), claimed.end(), point.id), claimed.end());
+          if (mirroring && point.id == mirrored) {
+            mirroring = false;
+            // The release lands where the finger left, not where it landed:
+            // a UI that dispatches its click on mouseup tests that position.
+            mouseX = point.x;
+            mouseY = point.y;
+            const auto left = static_cast<std::size_t>(MouseButton::Left);
+            mouseHeld[left] = false;
+            mouseUpEdge[left] = true;
+          }
+          break;
+        }
+      }
+    }
+  }
 #ifdef __EMSCRIPTEN__
   bool pointerInside = false;
 #endif
@@ -397,6 +530,11 @@ struct Window::Impl {
 
   static EM_BOOL onMouse(int type, const EmscriptenMouseEvent* event, void* userData) {
     Impl* impl = implOf(userData);
+    // The page's own mousedown/mouseup echo of a touch that was deliberately
+    // left unconsumed (see onTouch). That contact was already mirrored onto
+    // this same button as it happened; letting the echo through would press
+    // whatever it landed on a second time.
+    if (emscripten_get_now() < impl->ghostUntilMillis) return EM_TRUE;
     recordPointer(impl, event->targetX, event->targetY);
     recordModifiers(impl, event->shiftKey, event->ctrlKey, event->altKey, event->metaKey);
     if (type == EMSCRIPTEN_EVENT_MOUSEMOVE || type == EMSCRIPTEN_EVENT_MOUSEDOWN) {
@@ -436,6 +574,109 @@ struct Window::Impl {
     }
     return EM_TRUE;
   }
+
+  static EM_BOOL onTouch(int type, const EmscriptenTouchEvent* event, void* userData) {
+    Impl* impl = implOf(userData);
+    const float toDesign = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
+    TouchPhase phase = TouchPhase::Began;
+    if (type == EMSCRIPTEN_EVENT_TOUCHMOVE) phase = TouchPhase::Moved;
+    else if (type != EMSCRIPTEN_EVENT_TOUCHSTART) phase = TouchPhase::Ended;
+
+    bool leaveToThePage = false;
+    for (int i = 0; i < event->numTouches; ++i) {
+      const EmscriptenTouchPoint& point = event->touches[i];
+      // Only the contacts this event is ABOUT. A DOM touch event carries every
+      // finger on the screen, changed or not, and treating them all as moves
+      // would replay a stationary finger's position on every frame.
+      if (!point.isChanged) continue;
+      const float x = static_cast<float>(point.targetX) * toDesign;
+      const float y = static_cast<float>(point.targetY) * toDesign;
+      if (phase == TouchPhase::Began) {
+        // A tap on a field is the one gesture this window does NOT consume.
+        // Every browser refuses to raise its keyboard for a focus() made
+        // during a touch it has been told to ignore, and a consumed touch
+        // produces no click either -- so consuming it would leave no moment
+        // at all where the keyboard could be asked for. See onClick.
+        if (impl->onKeyboardField(x, y)) {
+          impl->passthrough = point.identifier;
+          impl->passthroughLive = true;
+        } else {
+          // Anywhere else takes the keyboard away, and needs no gesture to
+          // do it.
+          impl->lowerKeyboard();
+        }
+      }
+      if (impl->passthroughLive && point.identifier == impl->passthrough) {
+        leaveToThePage = true;
+        if (phase == TouchPhase::Ended) {
+          impl->passthroughLive = false;
+          // The page is about to replay this gesture as mousedown, mouseup
+          // and click. The first two are already in this frame's stream from
+          // the mirror, so they are dropped -- see onMouse.
+          impl->ghostUntilMillis = emscripten_get_now() + kGhostWindowMillis;
+        }
+      }
+      impl->recordTouch(phase, point.identifier, x, y);
+    }
+    // A finger on the canvas is the game's, whole: consumed so the page does
+    // not scroll, zoom, select, or -- the one that would double every tap --
+    // follow the touch with a synthesised mouse click of its own. The one
+    // exception is the tap that is asking for a keyboard, above.
+    return leaveToThePage ? EM_FALSE : EM_TRUE;
+  }
+
+  /// The keyboard, raised from the one event every mobile browser honours.
+  ///
+  /// It has to be a real gesture -- a browser will not open its keyboard for a
+  /// focus() made from a timer or an animation frame -- and of the events a
+  /// gesture produces, `click` is the one that works everywhere. The browser
+  /// build focuses its own hidden input from exactly here, which is the
+  /// evidence this follows: raising it from `touchstart` instead looks right,
+  /// passes a desktop browser's touch emulation, and does nothing at all on a
+  /// phone.
+  static EM_BOOL onClick(int type, const EmscriptenMouseEvent* event, void* userData) {
+    Impl* impl = implOf(userData);
+    const float toDesign = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
+    const float x = static_cast<float>(event->targetX) * toDesign;
+    const float y = static_cast<float>(event->targetY) * toDesign;
+    if (impl->onKeyboardField(x, y)) {
+      web_soft_keyboard(1);
+      impl->softKeyboardUp = true;
+    }
+    return EM_TRUE;
+  }
+
+  /// Whether a point is on one of the text fields the client last painted. See
+  /// the note on Window::setSoftKeyboardRegions for why the window is the one
+  /// holding this list at all.
+  bool onKeyboardField(float x, float y) const {
+    for (const WindowRect& region : keyboardRegions) {
+      if (x >= region.x && x <= region.x + region.w && y >= region.y &&
+          y <= region.y + region.h) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void lowerKeyboard() {
+    if (!softKeyboardUp) return;
+    web_soft_keyboard(0);
+    softKeyboardUp = false;
+  }
+
+  bool softKeyboardUp = false;
+  /// The contact whose gesture is being left to the page, so that a click
+  /// comes out of it.
+  std::int64_t passthrough = 0;
+  bool passthroughLive = false;
+  /// Until when the page's own mouse events are its replay of a touch this
+  /// window already mirrored, rather than a mouse. Long enough to cover the
+  /// mousedown/mouseup pair a browser synthesises after a touchend, which is
+  /// immediate on a canvas with `touch-action: none` and up to a third of a
+  /// second without one.
+  static constexpr double kGhostWindowMillis = 700.0;
+  double ghostUntilMillis = 0;
 
   static EM_BOOL onWheel(int type, const EmscriptenWheelEvent* event, void* userData) {
     // Sign flipped and normalised to notches: a browser's deltaY grows
@@ -499,6 +740,13 @@ struct Window::Impl {
       if (impl->down[i]) { impl->down[i] = false; impl->pendingReleased[i] = true; }
     }
     impl->shift = impl->ctrl = impl->alt = false;
+    // A contact whose lift happens somewhere the page cannot see is a stick
+    // held forever. Dropped whole rather than replayed as an end: whoever owns
+    // them reads the live set, and there is nothing left in it.
+    impl->touches.clear();
+    impl->claimed.clear();
+    impl->mirroring = false;
+    impl->touchInside = false;
     return EM_TRUE;
   }
 #endif
@@ -581,6 +829,18 @@ bool Window::open(int width, int height, const std::string& title, std::string& 
   // stay held.
   emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, impl_.get(), EM_FALSE, Impl::onMouse);
   emscripten_set_wheel_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onWheel);
+  // Down and move on the canvas; up and cancel on the window, for the same
+  // reason mouseup is: a finger that leaves the element still has to release
+  // whatever it was holding.
+  emscripten_set_touchstart_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onTouch);
+  emscripten_set_touchmove_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onTouch);
+  emscripten_set_touchend_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, impl_.get(), EM_FALSE,
+                                   Impl::onTouch);
+  emscripten_set_touchcancel_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, impl_.get(), EM_FALSE,
+                                      Impl::onTouch);
+  // Not an input path: the only thing this listens for is the moment a
+  // browser will let the on-screen keyboard be raised. See Impl::onClick.
+  emscripten_set_click_callback(canvasTarget, impl_.get(), EM_FALSE, Impl::onClick);
   emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, impl_.get(), EM_FALSE, Impl::onKey);
   emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, impl_.get(), EM_FALSE, Impl::onKey);
   emscripten_set_blur_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, impl_.get(), EM_FALSE, Impl::onBlur);
@@ -593,6 +853,12 @@ bool Window::open(int width, int height, const std::string& title, std::string& 
 #else
   close();
   if (SDL_Init(SDL_INIT_VIDEO) != 0) { errorOut = SDL_GetError(); return false; }
+
+  // SDL turns a finger into a mouse of its own by default. This window mirrors
+  // touch onto the mouse itself, and has to -- the browser backend has no SDL
+  // to do it -- so the platform's copy is switched off rather than left to
+  // double every tap.
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
   // ALLOW_HIGHDPI is what makes the drawable bigger than the window on a
   // Retina display. Without it the OS hands the renderer a 1x surface and
@@ -650,12 +916,24 @@ void Window::close() {
     emscripten_set_mouseleave_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
     emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE, nullptr);
     emscripten_set_wheel_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
+    emscripten_set_touchstart_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
+    emscripten_set_touchmove_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
+    emscripten_set_touchend_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE, nullptr);
+    emscripten_set_touchcancel_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE,
+                                        nullptr);
+    emscripten_set_click_callback(canvasTarget, nullptr, EM_FALSE, nullptr);
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE, nullptr);
     emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE, nullptr);
     emscripten_set_blur_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_FALSE, nullptr);
   }
   impl_->cursorRequested = CursorShape::Arrow;
   impl_->cursorApplied = CursorShape::Count;
+  impl_->pendingTouches.clear();
+  impl_->touchEvents.clear();
+  impl_->touches.clear();
+  impl_->claimed.clear();
+  impl_->mirroring = false;
+  impl_->touchInside = false;
 #ifdef __EMSCRIPTEN__
   impl_->pointerInside = false;
 #endif
@@ -680,6 +958,10 @@ bool Window::pump() {
   // the page was between frames. Taking the pending set IS the drain, and it
   // must NOT be preceded by a clear -- see Impl::takePendingEvents.
   impl_->takePendingEvents();
+  // After the edge state has been moved across, never before: the mirrored
+  // contact writes a mouse edge, and takePendingEvents ASSIGNS that array
+  // rather than merging into it.
+  impl_->drainTouches();
   // After that, so this frame's pointer positions are converted with the
   // geometry this frame will be drawn with, as the native path does too.
   impl_->refreshGeometry();
@@ -755,10 +1037,30 @@ bool Window::pump() {
                                                   : static_cast<float>(event.wheel.y);
         break;
 
+      case SDL_FINGERDOWN:
+      case SDL_FINGERMOTION:
+      case SDL_FINGERUP: {
+        // SDL reports a finger as a FRACTION of the window, not in points, so
+        // this multiplies by the point size before dividing by the same fit
+        // the mouse is divided by.
+        const double toDesign = impl_->fit > 0 ? 1.0 / impl_->fit : 1.0;
+        const float x = static_cast<float>(event.tfinger.x * impl_->pointWidth * toDesign);
+        const float y = static_cast<float>(event.tfinger.y * impl_->pointHeight * toDesign);
+        const TouchPhase phase = event.type == SDL_FINGERDOWN  ? TouchPhase::Began
+                                 : event.type == SDL_FINGERUP ? TouchPhase::Ended
+                                                              : TouchPhase::Moved;
+        impl_->recordTouch(phase, static_cast<std::int64_t>(event.tfinger.fingerId), x, y);
+        break;
+      }
+
       default:
         break;
     }
   }
+
+  // After the queue, for the same reason the web path drains after taking its
+  // pending set: the mirror writes this frame's mouse edges.
+  impl_->drainTouches();
 
   const SDL_Keymod mods = SDL_GetModState();
   impl_->shift = (mods & KMOD_SHIFT) != 0;
@@ -899,6 +1201,10 @@ bool Window::mouseReleased(MouseButton b) const {
 float Window::mouseX() const { return impl_->mouseX; }
 float Window::mouseY() const { return impl_->mouseY; }
 bool Window::pointerInside() const {
+  // A mirrored finger counts: it is where the pointer is, and it is the only
+  // pointer a touch-only device has. It stays counted after the lift, as a
+  // mouse left where it was released would.
+  if (impl_->touchInside) return true;
 #ifdef __EMSCRIPTEN__
   return impl_->pointerInside;
 #else
@@ -906,6 +1212,48 @@ bool Window::pointerInside() const {
 #endif
 }
 float Window::wheelDelta() const { return impl_->wheel; }
+
+const std::vector<TouchEvent>& Window::touchEvents() const { return impl_->touchEvents; }
+const std::vector<TouchPoint>& Window::touches() const { return impl_->touches; }
+bool Window::touchSeen() const { return impl_->touchSeen; }
+
+bool Window::coarsePointer() const {
+#ifdef __EMSCRIPTEN__
+  return web_coarse_pointer() != 0;
+#else
+  // A desktop window is driven by a mouse. A touchscreen laptop can still
+  // touch it -- touchSeen() is what answers that -- but "the primary pointing
+  // device is a finger" is a thing only a page can be asked.
+  return false;
+#endif
+}
+
+void Window::setTouchClaimHandler(TouchClaimHandler handler) {
+  impl_->touchClaim = std::move(handler);
+}
+
+void Window::setSoftKeyboardRegions(std::vector<WindowRect> regions) {
+#ifdef __EMSCRIPTEN__
+  impl_->keyboardRegions = std::move(regions);
+#else
+  (void)regions;
+#endif
+}
+
+void Window::dismissSoftKeyboard() {
+#ifdef __EMSCRIPTEN__
+  if (!impl_->softKeyboardUp) return;
+  // Never while a finger is still down, and never while the click that a
+  // field tap is waiting for has yet to arrive. The caller polls this every
+  // frame on "is anything holding the caret", and a tap does not focus the
+  // field it landed on until it is released -- so for those few frames the
+  // answer is honestly "nothing", and acting on it would take away the
+  // keyboard that same tap is in the middle of asking for.
+  if (!impl_->touches.empty()) return;
+  if (emscripten_get_now() < impl_->ghostUntilMillis) return;
+  impl_->lowerKeyboard();
+#endif
+}
 const std::string& Window::typedText() const { return impl_->typed; }
 bool Window::shiftHeld() const { return impl_->shift; }
 bool Window::ctrlHeld() const { return impl_->ctrl; }

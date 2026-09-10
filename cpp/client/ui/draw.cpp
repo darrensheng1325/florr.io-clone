@@ -300,6 +300,12 @@ void textField(Canvas& canvas, Rect r, const std::string& value, const std::stri
                bool focused, bool masked, double timeSeconds,
                const TextFieldStyle& style, const TextFieldState* state) {
     TextCaptureScope off(false);
+    // Every field painted through here is a field a finger can tap, focused or
+    // not -- and the unfocused ones are the point: raising the on-screen
+    // keyboard is the job of the touch that FOCUSES a field, so waiting for
+    // one to be focused before recording where it is would be waiting for the
+    // tap that has already happened. See ui::TextFieldRegions.
+    TextFieldRegions::instance().record(r);
     const std::uint32_t outlineBase = focused ? style.focusedOutline : style.outline;
     const std::uint32_t outline =
         outlineBase == 0xFFFFFFFFu ? hsvScale(style.fill, 0.8) : outlineBase;

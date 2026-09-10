@@ -11,6 +11,7 @@
 // SDL is an implementation detail and does not appear in this header.
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,6 +36,33 @@ enum class Key : std::uint16_t {
 };
 
 enum class MouseButton : std::uint8_t { Left = 0, Middle, Right, Count };
+
+// One finger on a touchscreen, in the same design units the mouse arrives in.
+//
+// `id` is the contact's, stable from the moment it lands until it lifts, and
+// is what a caller matches a move against -- two fingers on the screen produce
+// two interleaved streams and the position alone cannot tell them apart.
+struct TouchPoint {
+    std::int64_t id = 0;
+    float x = 0;
+    float y = 0;
+};
+
+enum class TouchPhase : std::uint8_t { Began, Moved, Ended };
+
+// A rectangle in design units. The window layer has no geometry type of its
+// own and must not borrow the application's, so it carries this one.
+struct WindowRect {
+    float x = 0;
+    float y = 0;
+    float w = 0;
+    float h = 0;
+};
+
+struct TouchEvent {
+    TouchPhase phase = TouchPhase::Began;
+    TouchPoint point;
+};
 
 // The pointer's shape. `Text` is the I-beam a text field asks for.
 enum class CursorShape : std::uint8_t { Arrow = 0, Hand, Text, Count };
@@ -146,6 +174,72 @@ public:
     /// builds track DOM enter/leave events; desktop builds ask SDL.
     bool pointerInside() const;
     float wheelDelta() const;
+
+    // -- touch ---------------------------------------------------------------
+    //
+    // A touchscreen is not a mouse with one button, but almost everything in a
+    // canvas UI wants it to be: every panel, button and drag in this client is
+    // written against mousePressed/mouseDown. So one contact -- the first one
+    // down -- is MIRRORED onto the left mouse button, and the rest of the
+    // client never learns the difference.
+    //
+    // The exception is whatever wants the raw stream: an on-screen stick has
+    // to track a finger while a second one holds a button, which one mirrored
+    // pointer cannot express. Such a control claims its contacts through
+    // setTouchClaimHandler below, and a claimed contact is kept out of the
+    // mirror entirely -- otherwise dragging the stick would also drag the
+    // mouse across the HUD behind it.
+
+    /// Every touch that began, moved or ended since the last pump, in arrival
+    /// order. Cleared at each pump, like the other edge state.
+    const std::vector<TouchEvent>& touchEvents() const;
+
+    /// The contacts currently down, claimed and mirrored alike.
+    const std::vector<TouchPoint>& touches() const;
+
+    /// Whether a finger has ever touched this window. The honest test for "is
+    /// this a touch device", where `coarsePointer()` is only the browser's
+    /// guess -- but it answers nothing until the player has touched something.
+    bool touchSeen() const;
+
+    /// Whether the primary pointing device is a coarse one -- a finger rather
+    /// than a mouse. The page's `(pointer: coarse)` media query in a browser,
+    /// and false in a desktop window, which is what it is there.
+    bool coarsePointer() const;
+
+    /// Consulted the instant a finger lands, with that contact's position in
+    /// design units. Returning true keeps it out of the mouse mirror, because
+    /// something else owns it.
+    ///
+    /// It must be a PURE hit test: it is asked once per contact, and the
+    /// control that answers still has to act on the event stream itself.
+    using TouchClaimHandler = std::function<bool(const TouchPoint&)>;
+    void setTouchClaimHandler(TouchClaimHandler handler);
+
+    // -- the on-screen keyboard ----------------------------------------------
+    //
+    // A canvas cannot take keyboard focus, so a phone browser never opens its
+    // keyboard for one however many text fields are painted on it. The answer
+    // is a real (invisible) <input> that IS focusable: focusing it summons the
+    // keyboard, and the keystrokes it produces bubble to the page and reach
+    // this window's own key handler exactly as a physical keyboard's do.
+    //
+    // The focus has to happen inside the touch that asked for it -- a browser
+    // refuses to raise the keyboard from a timer or an animation frame -- so
+    // the decision cannot wait for the frame that would notice the field was
+    // focused. The caller instead publishes where its fields ARE, and the
+    // touch handler answers for itself, in the gesture, before the frame runs.
+    //
+    // Native builds have a real keyboard and ignore all of this.
+
+    /// Where this frame's text fields are, in design units. A touch landing in
+    /// one raises the on-screen keyboard; a touch landing outside all of them
+    /// dismisses it.
+    void setSoftKeyboardRegions(std::vector<WindowRect> regions);
+
+    /// Takes the keyboard away, for a field that was closed by something other
+    /// than a touch -- Escape, a send, a panel closing under it.
+    void dismissSoftKeyboard();
 
     /// UTF-8 typed this frame, for text fields. Distinct from keyPressed:
     /// this is what the keyboard layout produced, not which key was struck.

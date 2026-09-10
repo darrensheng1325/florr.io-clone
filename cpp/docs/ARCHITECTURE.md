@@ -36,6 +36,7 @@ cpp/
   server/         headless authoritative simulation
   client/         SDL2 window, rendering, UI, prediction
     ui/markup.*   the HTML subset chat lines arrive in
+    ui/mobile_controls.*  the touch stick and its two buttons
     web/          the emscripten build's shell page
   third_party/
     cpp_canvas/   the vendored Canvas2D-alike renderer
@@ -173,6 +174,58 @@ the same function the server runs. It keeps unacknowledged inputs in a ring,
 and on each snapshot snaps to the authoritative position and replays the inputs
 the server has not yet acknowledged. In open movement the two agree exactly and
 nothing visibly corrects. Remote entities are interpolated one snapshot behind.
+
+## Touch
+
+A phone gets the same client, with three things added to it.
+
+**The mirrored pointer.** `Window` turns the first contact down into the left
+mouse button — position, press and release. Every panel, button and drag in
+the client is written against `mousePressed`/`mouseDown`, and none of them
+learns the difference. A finger that stays down keeps the pointer; a second
+one is ignored rather than teleporting it.
+
+**The claimed contacts.** An on-screen stick cannot be one mouse: it has to
+track a finger while another holds a button. `Window::setTouchClaimHandler` is
+asked the instant a contact lands, and a claimed one is kept out of the mirror
+entirely — otherwise dragging the stick would drag the pointer across the HUD
+underneath. `client/ui/mobile_controls.*` is what claims them: a virtual stick
+that moves and aims, and Attack/Retract standing in for the two keys. It is a
+port of the browser build's `src/graphics/mobile-controls.ts`, with every size
+multiplied by the design units a CSS pixel is worth on a phone (see the file's
+header) and shrunk further on a viewport too narrow to lay the three out side
+by side.
+
+They come up on a coarse pointer without being asked, and the Settings panel's
+**Request Mobile** row is what overrules that in either direction
+(`ClientSettings::touchControlsWanted`). `--mobile` forces them for a
+screenshot run, which is the only way a desktop window shows them.
+
+**The keyboard.** A canvas takes no keyboard focus, so a phone browser opens
+no keyboard for one however many text fields are painted on it. The web build
+keeps an invisible `<input>` that IS focusable, and focusing it summons the
+keyboard; the keystrokes bubble to the window, where the client's own key
+handler already listens.
+
+Two rules make that focus actually work on a phone, and both are easy to get
+wrong because a desktop browser's touch emulation forgives either:
+
+* It happens on **`click`**, not on `touchstart`. A browser only raises its
+  keyboard for a focus made from a real gesture, and `click` is the event
+  every one of them honours. (The browser build focuses its own hidden input
+  from exactly there, which is the evidence this follows.)
+* The tap that asks for a keyboard is the one gesture the window does **not**
+  `preventDefault`. A consumed touch produces no click at all, and a browser
+  will not raise its keyboard off a touch it was told to ignore. The mouse
+  events the page then synthesises from that gesture are dropped instead
+  (`Impl::ghostUntilMillis`) because the mirror already delivered them —
+  without that, a field tap lands twice, which the field's own click-streak
+  logic reads as a double-click.
+
+Deciding this inside the gesture is a frame earlier than any client code runs,
+so every field records its box as it is painted or hit-tested
+(`ui::TextFieldRegions`), the window is handed the set at the end of the
+frame, and the touch and click handlers answer from it.
 
 ## Rendering
 

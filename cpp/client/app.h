@@ -22,6 +22,7 @@
 #include "client/render/sprites.h"
 #include "client/render/world_renderer.h"
 #include "client/ui/menus.h"
+#include "client/ui/mobile_controls.h"
 #include "client/ui/tutorial.h"
 #include "shared/game/map_elements.h"
 #include "shared/core/types.h"
@@ -78,6 +79,10 @@ struct AppConfig {
     /// Paint the frame/ping/position counters the browser build gates behind
     /// its `showStats` setting.
     bool showStats = false;
+    /// Put the touch controls up whatever the settings file and the device
+    /// say. A desktop window reports a mouse and gets no stick, so this is the
+    /// only way a screenshot run can photograph them.
+    bool forceTouchControls = false;
     /// Force the death card up as soon as the auto-join lands. There is no
     /// other way for a scripted run to photograph it: reaching it for real
     /// means being killed, which a `--frames` run cannot arrange.
@@ -238,6 +243,12 @@ private:
     /// line, a login field, or a panel's own search/code box. While one is,
     /// a key is a character and nothing else: no movement, no hotkey.
     bool keyboardCaptured() const;
+
+    /// Whether this frame's press landed on the closed chat slot, which opens
+    /// it. The keyboard shortcut is the other way in, and the only way there
+    /// used to be -- which left the chat unreachable on a device with no
+    /// keyboard to press Enter on.
+    bool pressedChatBox() const;
 
     /// The caret and selection of the three places one can be. Exclusive by
     /// construction -- only one of the auth form, the chat line and the lobby
@@ -512,7 +523,28 @@ private:
     /// browser's does -- it is built by Game and destroyed with it.
     ui::Tutorial tutorial_;
 
+    // -- touch ---------------------------------------------------------------
+    /// The on-screen stick and its two buttons. Drawn and answered only in a
+    /// game: there is nothing on the title screen a thumb cannot already reach
+    /// through the mirrored pointer (see Window's touch section).
+    ui::MobileControls mobile_;
+    /// What the display said about its pointer when the window opened. Asked
+    /// once: it is a media query, and the answer does not change under a
+    /// running page in any way that matters.
+    bool coarsePointer_ = false;
+    /// Whether the touch controls are up this frame: the setting, resolved
+    /// against the device, and a game with no panel standing over them.
+    bool touchControlsVisible() const;
+    /// Publishes where this frame's text fields are, so a touch landing on one
+    /// can raise the on-screen keyboard from inside its own gesture. See
+    /// Window::setSoftKeyboardRegions.
+    void publishKeyboardRegions();
+
     // -- input -------------------------------------------------------------
+    /// The last aim this client sent. Read only on touch: a centred stick has
+    /// no direction to give, and the alternative -- the pointer, which on a
+    /// phone is wherever the last tap landed -- would swing the petals at it.
+    double lastAimAngle_ = 0;
     std::uint32_t inputSequence_ = 0;
     /// Accumulates real time so input is produced at the simulation rate rather
     /// than once per rendered frame -- a 144 Hz client must not send (and be

@@ -388,9 +388,15 @@ bool pressAt(Window& window, TextFieldState& state, std::size_t at, const std::s
 
 } // namespace
 
+TextFieldRegions& TextFieldRegions::instance() {
+    static TextFieldRegions regions;
+    return regions;
+}
+
 bool trackTextMouse(Window& window, TextFieldState& state, Rect box, const TextRun& run,
                     const std::string& value, double timeSeconds) {
     const Vec2 mouse{window.mouseX(), window.mouseY()};
+    TextFieldRegions::instance().record(box);
 
     if (state.dragging) {
         if (window.mouseDown(MouseButton::Left)) {
@@ -455,6 +461,7 @@ bool trackTextMouseMultiline(Window& window, TextFieldState& state, Rect box,
                              const std::string& value, double originX, double firstBaseline,
                              double lineHeight, double size, bool bold, double timeSeconds) {
     const Vec2 mouse{window.mouseX(), window.mouseY()};
+    TextFieldRegions::instance().record(box);
     const auto resolve = [&] {
         return indexAtPoint(value, originX, firstBaseline, lineHeight, size, bold, mouse);
     };

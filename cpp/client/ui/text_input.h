@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 #include "window.h"
 
@@ -161,6 +162,37 @@ struct TextFieldState {
 
 /// True while the caret should be painted.
 bool caretVisible(const TextFieldState&, double timeSeconds);
+
+/// Where this frame's text fields are.
+///
+/// A canvas takes no keyboard focus, so a phone browser never opens its
+/// keyboard for a painted field. Raising it means focusing a real element
+/// INSIDE the touch that asked for it -- the browser refuses to do it from a
+/// timer or an animation frame -- which is a frame earlier than any of this
+/// code runs. So each field records its box as it is hit-tested, the window is
+/// handed the set at the end of the frame, and its own touch handler answers
+/// from that. One frame stale, which a field that has not moved does not
+/// notice.
+///
+/// Filled from two places, and both are wanted: ui::textField, which is what
+/// paints a field, and trackTextMouse and its multiline twin, which is what
+/// hit-tests one. Between them they cover every field in the client -- the
+/// panels draw their own plates but hit-test through the shared path, and the
+/// auth form does the reverse -- so a new field is covered by existing.
+/// Recording a box twice costs nothing: the set is only ever asked whether a
+/// point is in any of them.
+class TextFieldRegions {
+public:
+    static TextFieldRegions& instance();
+
+    /// Drops last frame's set. Called once, at the top of the frame.
+    void beginFrame() { boxes_.clear(); }
+    void record(Rect box) { boxes_.push_back(box); }
+    const std::vector<Rect>& boxes() const { return boxes_; }
+
+private:
+    std::vector<Rect> boxes_;
+};
 
 /// Reads this frame from the window, applies it, and posts a copy or cut to
 /// the system clipboard. Returns true when `value` changed.

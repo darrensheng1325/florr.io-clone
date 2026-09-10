@@ -117,6 +117,9 @@
   }
   if (query.get('lobby') !== null) args.push('--lobby');
   if (query.get('stats') !== null) args.push('--stats');
+  // Forces the touch controls up on a desktop browser, which reports a mouse
+  // and would otherwise never show them. For looking at them, not for playing.
+  if (query.get('mobile') !== null) args.push('--mobile');
   for (const line of query.getAll('chat')) args.push('--chat', line);
 
   var Module = {

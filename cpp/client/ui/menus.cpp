@@ -239,6 +239,19 @@ LoadoutLayout layoutLoadout(Rect box, double scale) {
     return out;
 }
 
+} // namespace
+
+double inGameLoadoutBarHeight() {
+    // The primary row's top, measured from the bottom edge: everything
+    // layoutLoadout stacks between the two, at the in-game scale.
+    const double scale = kInGameLoadoutScale;
+    return kLoadoutBottomPad + (kLoadoutSecondaryMargin + kLoadoutSecondarySize +
+                                kLoadoutSecondaryMargin + kLoadoutPrimaryMargin +
+                                kLoadoutPrimarySize) * scale;
+}
+
+namespace {
+
 /// One slot's chrome: a darker rounded plate with a SHARP inner fill, never a
 /// stroke. Both insets are proportions of the slot so the secondary row reads
 /// as the same object at a smaller size.
@@ -423,6 +436,9 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "renderScale") renderScale = clamp(std::atof(value.c_str()), 0.25, 1.0);
         else if (key == "biome") spawnBiome = (value == "-" ? std::string() : value);
         else if (key == "mouseControls") useMouseControls = number != 0;
+        // The key being on disk at all is the choice: an absent one leaves the
+        // device to answer, which is what touchControlsWanted does with it.
+        else if (key == "requestMobile") { requestMobile = number != 0; requestMobileChosen = true; }
         else if (key == "tutorialDone") tutorialCompleted = number != 0;
         else if (key == "tutorialStep") tutorialStep = number;
         else if (key == "notifRead") readNotifications.push_back(value);
@@ -467,6 +483,11 @@ bool ClientSettings::save(const std::string& path) const {
          << "mouseControls " << (useMouseControls ? 1 : 0) << '\n'
          << "tutorialDone " << (tutorialCompleted ? 1 : 0) << '\n'
          << "tutorialStep " << tutorialStep << '\n';
+    // Written only once the player has actually chosen. Writing the resolved
+    // value instead would pin whatever the device answered on the first run,
+    // and a phone that opened the game on a desktop-shaped browser would be
+    // stuck without touch controls it never turned down.
+    if (requestMobileChosen) file << "requestMobile " << (requestMobile ? 1 : 0) << '\n';
     // Capped at the server's own retention: it keeps the last thousand
     // notifications, so a read mark older than that can never be asked about
     // again and would only grow this file forever. The tail is the newest.

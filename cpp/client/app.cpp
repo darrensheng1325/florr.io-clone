@@ -733,6 +733,7 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // first frame, because the camera's viewport and every panel's layout are
     // read straight off window_.width()/height().
     window_.setDesignSize(kDesignWidth, kDesignHeight);
+    coarsePointer_ = window_.coarsePointer();
 
     renderer_.setContent(&content());
     renderer_.setSprites(&sprites_);
@@ -788,6 +789,13 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
         errorOut = net_.lastError();
         return false;
     }
+
+    // The touch controls own their own contacts, and have to say so the
+    // instant a finger lands rather than on the frame that follows -- see the
+    // touch section of Window's header for why the answer cannot wait.
+    window_.setTouchClaimHandler([this](const TouchPoint& point) {
+        return touchControlsVisible() && mobile_.hits(point.x, point.y);
+    });
 
     if (config.autoMenu != MenuId::None) menus_.toggle(config.autoMenu);
 
@@ -920,6 +928,10 @@ void App::frame(double dt) {
     // focused field from the update phase and the panels record their text
     // from the draw phase, and both belong to the frame that is starting.
     ui::TextSelect::instance().beginFrame();
+    // Same reason, and the same one-frame contract: a field records its box as
+    // it is hit-tested, and the window is handed the set at the end of the
+    // frame so a touch can raise the keyboard from inside its own gesture.
+    ui::TextFieldRegions::instance().beginFrame();
 
     // The pointer starts every frame as an arrow and whatever is under it says
     // otherwise, which is how the reference works: `canvas.style.cursor` is
@@ -971,6 +983,18 @@ void App::frame(double dt) {
     const float uiScale = static_cast<float>(window_.uiScale());
     canvas.scale(uiScale, uiScale);
     camera_.setViewport(window_.width(), window_.height());
+    // Laid out every frame and before any screen runs: a phone that turns on
+    // its side changes the viewport between one frame and the next, and the
+    // claim handler is asked about a contact using whatever the last frame
+    // placed.
+    mobile_.layout(window_.width(), window_.height(), inGameLoadoutBarHeight());
+    // This frame's contacts, before any screen reads them. Here rather than in
+    // updatePlaying because the frames the controls are NOT up for are the
+    // ones that matter: dying, or a panel opening over a deflected stick, has
+    // to drop what it was holding, and neither of those runs updatePlaying at
+    // all -- a button left held would still be firing on the next game.
+    if (touchControlsVisible()) mobile_.update(window_.touchEvents());
+    else mobile_.reset();
 
     // Before any screen sees this frame's click. The browser's tutorial box is
     // a DOM element over the canvas: it takes the press first and the game
@@ -1038,6 +1062,11 @@ void App::frame(double dt) {
     if (menus_.takeLogoutRequest()) logout();
 
     // --- draw -------------------------------------------------------------
+    // Forgotten before the draw, and set again by whoever paints it. Both the
+    // chat's hit tests read the box the LAST frame painted, so a screen that
+    // stops painting it -- the settings switch off, a panel covering it, the
+    // title screen's own layout -- has to leave nothing behind to press.
+    chatBox_ = {};
     if (inWorld) {
         renderer_.ingestEvents(net_.view());
         renderer_.update(dt);
@@ -1105,6 +1134,9 @@ void App::frame(double dt) {
     // Last of all, over every other layer: the wipe is what hides the seam
     // between two scenes, so nothing may paint on top of it.
     drawSceneWipe(canvas);
+    // After every field has been hit-tested, which is the only point at which
+    // the set is complete.
+    publishKeyboardRegions();
     window_.present();
 }
 
@@ -1156,6 +1188,59 @@ void App::updateConnecting() {
         storedToken_.clear();
     }
     screen_ = Screen::Login;
+}
+
+bool App::touchControlsVisible() const {
+    // Playing only. There is nothing on the title screen, and nothing on the
+    // death card, a thumb cannot already reach through the mirrored pointer --
+    // and a stick over a dead flower steers nothing.
+    if (screen_ != Screen::Playing) return false;
+    // A panel standing over the controls takes the whole screen back: its own
+    // buttons and its drag-and-drop are what the finger is there for, and a
+    // stick underneath would swallow presses meant for it.
+    if (menus_.anyOpen()) return false;
+    // --mobile. A desktop window reports a mouse and would never show these,
+    // which makes this the only way a scripted run can photograph them.
+    if (config_.forceTouchControls) return true;
+    // `touchSeen` is the honest half of the test and `coarsePointer` the
+    // early one: a browser that calls itself a desktop until something is
+    // actually touched -- which is every tablet in "request desktop site" --
+    // answers the query with a mouse and the touch with a finger.
+    return menus_.settings().touchControlsWanted(coarsePointer_ || window_.touchSeen());
+}
+
+void App::publishKeyboardRegions() {
+    const std::vector<Rect>& boxes = ui::TextFieldRegions::instance().boxes();
+    std::vector<WindowRect> regions;
+    regions.reserve(boxes.size());
+    for (const Rect& box : boxes) {
+        regions.push_back(WindowRect{static_cast<float>(box.x), static_cast<float>(box.y),
+                                     static_cast<float>(box.w), static_cast<float>(box.h)});
+    }
+    window_.setSoftKeyboardRegions(std::move(regions));
+    // And take it away when nothing holds the caret any more. The page's own
+    // handler only dismisses on a touch that lands outside every field, which
+    // a line closed by Enter -- or by the panel it lived in shutting -- never
+    // gets, and the keyboard would stay up over a game nobody is typing into.
+    if (!keyboardCaptured()) window_.dismissSoftKeyboard();
+}
+
+bool App::pressedChatBox() const {
+    // The slot says "Press Enter to chat...", and on a phone there is no Enter
+    // to press. Clicking an input to focus it is what every other field in the
+    // client already does -- and what the reference's chat, which is a real
+    // DOM input, does by being one.
+    //
+    // Against the box the LAST frame painted, like everything else that
+    // hit-tests the chat: this runs before the draw pass, and the slot does not
+    // move between the two.
+    if (chatOpen_ || chatBox_.w <= 0) return false;
+    const Vec2 pointer{window_.mouseX(), window_.mouseY()};
+    // A panel over the slot owns the press. The tall lists start at x = 100
+    // and the slot at 115, so they really do overlap -- and the two panels
+    // that hide the chat entirely leave the box behind them.
+    if (menus_.capturesMouse(pointer)) return false;
+    return window_.mousePressed(MouseButton::Left) && chatBox_.contains(pointer);
 }
 
 bool App::keyboardCaptured() const {
@@ -1475,7 +1560,7 @@ void App::updateLobby(double dt) {
             nameField_.blur();
         }
     } else if (!menus_.handleKeys(window_)) {
-        if (window_.keyPressed(Key::Enter)) chatOpen_ = true;
+        if (window_.keyPressed(Key::Enter) || pressedChatBox()) chatOpen_ = true;
     }
 
     // A release anywhere ends the press, including one a panel swallowed --
@@ -1615,11 +1700,25 @@ void App::sendInputFrame(double dt) {
     const Vec2 cursorWorld = camera_.screenToWorld({window_.mouseX(), window_.mouseY()});
     const Vec2 toCursor = cursorWorld - net_.view().selfDrawnPosition();
 
+    // The on-screen stick, when there is one. It REPLACES the cursor half
+    // rather than joining it: with touch controls up the pointer is wherever
+    // the last tap landed, and letting that steer would send the flower
+    // running at whatever was last pressed for as long as nobody tapped
+    // anywhere else.
+    const bool touchControls = touchControlsVisible();
+    ui::MobileControls::Stick stick;
+    const bool stickPushed = touchControls && mobile_.stick(stick);
+
     if (keyboard.lengthSq() > 0) {
         const Vec2 direction = keyboard.normalized();
         input.moveAngle = direction.angle();
         input.moveStrength = 1.0;
-    } else if (settings.useMouseControls) {
+    } else if (stickPushed) {
+        // Deflection straight to speed, no floor: the same law the cursor
+        // follows, measured against the base radius instead of a distance.
+        input.moveAngle = stick.direction.angle();
+        input.moveStrength = stick.magnitude;
+    } else if (settings.useMouseControls && !touchControls) {
         const double distance = toCursor.length();
         input.moveAngle = distance > 1e-6 ? toCursor.angle() : 0.0;
         input.moveStrength = std::min(1.0, distance / kFullSpeedCursorDistance);
@@ -1631,9 +1730,18 @@ void App::sendInputFrame(double dt) {
         input.moveStrength = 0.0;
     }
 
-    // Aim always follows the cursor, even under keyboard movement: where the
-    // petals point and where you walk are separate decisions.
-    input.aimAngle = toCursor.lengthSq() > 1e-12 ? toCursor.angle() : 0.0;
+    // Aim follows the cursor, even under keyboard movement: where the petals
+    // point and where you walk are separate decisions. A thumb cannot make
+    // that second decision -- there is no second pointer to make it with --
+    // so a pushed stick aims as well as moves, and a centred one leaves the
+    // aim where it last was rather than snapping it to a stale tap.
+    if (stickPushed) input.aimAngle = stick.direction.angle();
+    else if (!touchControls) {
+        input.aimAngle = toCursor.lengthSq() > 1e-12 ? toCursor.angle() : 0.0;
+    } else {
+        input.aimAngle = lastAimAngle_;
+    }
+    lastAimAngle_ = input.aimAngle;
 
     const Vec2 pointer{window_.mouseX(), window_.mouseY()};
     // A press that landed on a line of chat is a text selection, not a swing.
@@ -1655,6 +1763,14 @@ void App::sendInputFrame(double dt) {
             input.flags |= net::InputDefend;
         }
     }
+    // Outside that guard on purpose: the two on-screen buttons are their own
+    // contacts and answer for themselves. None of what the guard is about --
+    // a press that landed on a panel, on a line of chat, or on the tutorial
+    // card -- can be true of a finger the stick's own hit test claimed.
+    if (touchControls) {
+        if (mobile_.attackPressed()) input.flags |= net::InputAttack;
+        if (mobile_.retractPressed()) input.flags |= net::InputDefend;
+    }
 
     net_.sendInput(input);
 }
@@ -1671,7 +1787,8 @@ void App::updatePlaying(double dt) {
         // button in the top strip's job alone.
         const bool consumed = menus_.handleKeys(window_);
         if (!consumed) {
-            if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat))) {
+            if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat)) ||
+                pressedChatBox()) {
                 chatOpen_ = true;
             }
         }
@@ -2211,6 +2328,12 @@ void App::drawHud(Canvas& canvas, double time) {
     drawMinimap(canvas);
 
     drawBossBars(canvas, altHeld);
+
+    // Over the HUD and under everything the menu system paints. A panel is the
+    // one thing that takes the controls away, and it takes them away entirely
+    // -- see touchControlsVisible -- so there is no case where a card lands on
+    // a stick that is still answering for presses under it.
+    if (touchControlsVisible()) mobile_.draw(canvas);
 
     // The loadout is NOT drawn here. The menu system's strip is the same set of
     // slots and is a live drop target; a second, inert copy of it a few pixels
@@ -3337,6 +3460,11 @@ void App::drawChat(Canvas& canvas, double time) {
 
 void App::drawChatField(Canvas& canvas, Rect box, double time) {
     chatBox_ = box;
+    // A closed slot answers for no keystrokes, so nothing hit-tests it and it
+    // would never reach the keyboard regions -- which is exactly the tap that
+    // has to raise the keyboard, because it is the tap that opens the line.
+    // While it IS open, trackTextMouse records it like every other field.
+    if (!chatOpen_) ui::TextFieldRegions::instance().record(box);
     // A dark translucent slot with a hairline white edge -- the reference's
     // chat input, which is the one control in the game that is not drawn in the
     // chunky plate style everything else uses.
