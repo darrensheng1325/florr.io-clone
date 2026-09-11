@@ -8,6 +8,7 @@
 
 #include "test.h"
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -287,15 +288,39 @@ TEST(teleport_moves_the_flower_and_refuses_a_point_off_the_map) {
     client.joinGame(1920, 1080, {}, "Boss");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }, 200));
 
-    CHECK(say(h, client, "/admin tp boss 12345 23456"));
+    // A point taken from the OVERWORLD'S OWN extent, not a pair of round
+    // numbers: every map states its size now, and the command refuses a
+    // coordinate past the map -- so a hard-coded point is a test that starts
+    // failing the moment an author resizes the world.
+    //
+    // And an OPEN one. The shipped map is about three fifths solid now --
+    // collision is a layer property and water, dirt and castle all collide --
+    // so the middle of the map is as likely to be inside a castle wall as not.
+    // `tp` puts the body exactly where it is told, and the very next movement
+    // substep shoves it out of a wall, which would read here as the command
+    // having missed. The nearest open tile to the geometric target is still a
+    // point nobody typed into this file, so the test still follows an author
+    // resizing the world.
+    const Terrain& terrain = h.server.terrain();
+    const Vec2 extent = terrain.realmExtent(Realm::Overworld);
+    int openTx = 0;
+    int openTy = 0;
+    CHECK(terrain.nearestOpenTile({extent.x * 0.5, extent.y * 0.25}, openTx, openTy,
+                                  Realm::Overworld));
+    const Vec2 openCentre = Terrain::tileCenter(openTx, openTy);
+    const double targetX = std::floor(openCentre.x);
+    const double targetY = std::floor(openCentre.y);
+    CHECK(!terrain.blocked({targetX, targetY}, Realm::Overworld));
+    CHECK(say(h, client, "/admin tp boss " + std::to_string(static_cast<long>(targetX)) + " " +
+                             std::to_string(static_cast<long>(targetY))));
     CHECK(sawText(client, "Teleported"));
 
     bool landed = false;
     Query<PlayerTag, Transform, PlayerAccount> flowers{h.server.world()};
     flowers.each([&](Entity, PlayerTag&, Transform& transform, PlayerAccount& account) {
         if (account.username != "Boss") return;
-        landed = std::abs(transform.position.x - 12345.0) < 1.0 &&
-                 std::abs(transform.position.y - 23456.0) < 1.0;
+        landed = std::abs(transform.position.x - targetX) < 1.0 &&
+                 std::abs(transform.position.y - targetY) < 1.0;
     });
     CHECK(landed);
 

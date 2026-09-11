@@ -30,6 +30,29 @@ class Terrain;
 class WorldMaps;
 struct MobConfig;
 
+/// One map cell's artwork orientation: the rotation to apply about the cell's
+/// centre, and whether the result is then mirrored across its own vertical
+/// axis. A canvas composes translate * rotate * scale, so this pair IS the
+/// matrix R(radians) * diag(mirror ? -1 : 1, 1).
+struct TileOrientation {
+    double radians = 0;
+    bool mirror = false;
+};
+
+/// The orientation Tiled's three flip bits name, for a cell's `flags` (the
+/// kTileFlip* bits; anything above them is ignored).
+///
+/// Tiled defines the ORDER these compose in: the ANTI-DIAGONAL flip first -- a
+/// transpose, (u,v) -> (v,u) -- then horizontal, then vertical. So the matrix
+/// a cell wants is V^v * H^h * D^d, and the eight of them are the eight
+/// symmetries of the square. Applying them in any other order draws three of
+/// the four rotations mirrored, and an edge tile that serves all four
+/// rotations of one corner is exactly where that shows.
+///
+/// Declared out here, rather than buried in the draw loop, so the mapping can
+/// be checked against Tiled's spec on its own.
+TileOrientation tileOrientation(std::uint8_t flags);
+
 /// One piece of an explosion's debris. Velocity and life are per second here;
 /// the browser build counts both per frame at 60 Hz.
 struct EffectParticle {
@@ -164,12 +187,11 @@ public:
     /// plain biome ground rather than nothing.
     void setTerrain(const Terrain* terrain) { terrain_ = terrain; }
 
-    /// Every world map's annotation layer and background, which is where the
-    /// ground artwork, the teleporters and the spawn zones the rarity glow
-    /// paints come from. The renderer picks the map of whichever realm the
-    /// view is in, frame by frame. Optional in the same way the terrain is:
-    /// without it the ground falls back to the section grid and the two
-    /// overlays simply do not draw.
+    /// Every world map's art and annotations: the tile layers the world is
+    /// PAINTED from, the teleporters, and the spawn zones the rarity glow
+    /// tints. The renderer picks the map of whichever realm the view is in,
+    /// frame by frame. Optional in the same way the terrain is: without it
+    /// there is nothing to paint and the realm draws as void.
     void setWorldMaps(const WorldMaps* maps) { worldMaps_ = maps; }
 
     /// A single map, taken as the OVERWORLD's. What a tool or a test that
@@ -217,26 +239,25 @@ public:
     const SectionTiming& sectionTiming() const { return timing_; }
 
 private:
-    /// A world realm's tile grid over its ground: every skinned air cell's
-    /// floor decoration, then every wall and water tile as the artwork its
-    /// style byte names (its own skin, or constants.h's skinForGround() of
-    /// the ground under it, and its edge mask), the other kinds as their own
-    /// art or flat colour.
+    /// A world realm, painted from its map's tile LAYERS: every visible cell,
+    /// bottom layer to top, each cell's artwork fitted to its 300-unit square
+    /// and turned by the flip bits Tiled gave it. Nothing here reads the
+    /// collision grid -- what a cell looks like and what it blocks are two
+    /// answers to two questions, and the picture is the map file's. Outside
+    /// the map, and in a cell every layer left empty, there is the black the
+    /// frame was cleared to.
     void drawTerrain(Canvas&, const Camera&, Realm realm) const;
-    /// The biome artwork, tiled every 400 world units from the realm's origin
-    /// and cut off at its extent.
-    void drawGround(Canvas&, const Camera&, Realm realm) const;
-    /// Paints ground over `area`. `fixedGround` pins every tile to one ground
-    /// type (what the maze wants); -1 asks the realm's map, cell by cell.
-    void drawGroundTiles(Canvas&, const Camera&, Rect area, Realm realm, int fixedGround) const;
-    int groundIndexAt(Vec2 at, Realm realm) const;
     /// The annotations of a realm: its entry in the catalogue, or the single
     /// map for the overworld when only that was handed over. Null for the
     /// arena, the maze and any realm nothing was staged for.
     const MapData* mapFor(Realm realm) const;
-    /// The maze realm: its biome's ground under rrolf-style walls, every
-    /// corridor junction rounded by a quarter-circle fillet, and the void
-    /// beyond its square left black.
+    /// Resolves `map`'s art file names to compiled documents, once per map.
+    /// Returns an empty span when there is nothing to paint with.
+    const std::vector<const SvgDocument*>& artFor(const MapData& map) const;
+    /// The maze realm: its biome's flat ground colour under rrolf-style walls,
+    /// every corridor junction rounded by a quarter-circle fillet, and the
+    /// void beyond its square left black. The maze has no map file and so no
+    /// artwork of its own -- terrain.h's kBiomes is its whole palette.
     void drawMaze(Canvas&, const Camera&) const;
     /// The arena realm: a grey gridded floor inside the ring, dark void
     /// outside it, and the red boundary the server clamps bodies to.
@@ -351,6 +372,12 @@ private:
     const Terrain* terrain_ = nullptr;
     const WorldMaps* worldMaps_ = nullptr;
     const MapData* map_ = nullptr;
+    /// The last map artFor() resolved, and its art in artFiles() order. One
+    /// entry is enough: a frame draws one realm, and a realm change is rare.
+    /// Null entries are files the data directory does not hold, which draw
+    /// nothing.
+    mutable const MapData* artMap_ = nullptr;
+    mutable std::vector<const SvgDocument*> art_;
     std::vector<Effect> effects_;
 
     /// Lightning arms still flashing, kept apart from the effect pool for the

@@ -578,7 +578,10 @@ TEST(an_arena_run_never_touches_the_account_it_is_played_from) {
 }
 
 TEST(a_maze_flower_and_an_overworld_flower_never_see_each_other) {
-    Harness h("two-realms");
+    // No bots: the world is one map with one door on it, so the bot
+    // population stands exactly where a joining player is put down and "each
+    // sees exactly one flower" could not otherwise be said at all.
+    Harness h("two-realms", {}, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient outside;
@@ -761,11 +764,18 @@ TEST(each_realm_draws_its_own_ground) {
     CHECK(arenaFloorDark < 0.01);
     CHECK(arenaVoidDark > 0.99);
 
-    // The overworld still paints its biome ground where the map is, and
-    // nothing at all outside it.
-    const double overworldDark = renderDark(Realm::Overworld, {kWorldHalf, kWorldHalf}, 40);
+    // The overworld, with NO map installed, is void everywhere.
+    //
+    // This is the change: the overworld's ground used to be a colour the
+    // engine chose from the section you stood in, so a renderer with no map at
+    // all still painted grass. It is the MAP's own tile layers now -- the art
+    // the author painted, read out of the staged map file -- and a renderer
+    // holding neither a map nor a terrain has nothing to draw. The maze and
+    // the arena are unaffected above because they are geometry rather than
+    // tiles, and they still answer for their own floor.
+    const double noMapDark = renderDark(Realm::Overworld, {kWorldHalf, kWorldHalf}, 16);
     const double offMapDark = renderDark(Realm::Overworld, {-40000.0, -40000.0}, 16);
-    CHECK(overworldDark < 0.01);
+    CHECK(noMapDark > 0.99);
     CHECK(offMapDark > 0.99);
 }
 
@@ -774,27 +784,40 @@ TEST(each_realm_draws_its_own_ground) {
 // ---------------------------------------------------------------------------
 
 TEST(a_respawn_into_another_realm_sends_the_client_that_realms_map) {
-    // Join the overworld, take the pad into the sewers, die there, respawn:
-    // the spawn choice is still the default, so the new body is on the
-    // overworld -- and the client has to be told, or it keeps drawing the
-    // sewers under a flower that is walking the garden.
-    Harness h("respawn-realm");
-    if (!h.ready) { CHECK(false); return; }
+    // Join the overworld, take the pad into the second map, die there,
+    // respawn: the spawn choice is still the default, so the new body is on
+    // the overworld -- and the client has to be told, or it keeps drawing the
+    // second map under a flower that is walking the first.
+    //
+    // A fixture world, because the shipped data is ONE map with no pads on it.
+    // What is under test is the RealmChange a cross-realm respawn sends, which
+    // needs two realms and does not care which maps they are.
+    const std::string dir = flix::testsupport::twoMapDataDir("respawnrealm");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("respawn-realm", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
     NetClient client;
     CHECK(joinAs(h, client, "spelunker", ""));
 
     const MapData* overworld = h.server.worldMaps().forRealm(Realm::Overworld);
     const MapElement* pad = nullptr;
-    for (const MapElement& element : overworld != nullptr ? overworld->elements()
-                                                          : std::vector<MapElement>{}) {
-        if (element.kind == MapElementKind::Teleporter && element.targetMap == "sewers") {
+    // NOT a ternary over `overworld->elements()` and an empty vector: the two
+    // branches have no common reference type, so the conditional yields a
+    // COPY, the range-for binds to that temporary, and every pointer taken
+    // into it dangles the moment the loop ends. It read as a pad at (0, 0)
+    // that no flower could ever stand on.
+    static const std::vector<MapElement> kNoElements;
+    for (const MapElement& element :
+         overworld != nullptr ? overworld->elements() : kNoElements) {
+        if (element.kind == MapElementKind::Teleporter && element.targetMap == "warren") {
             pad = &element;
         }
     }
     CHECK(pad != nullptr);
-    if (pad == nullptr) return;
+    if (pad == nullptr) { flix::testsupport::removeDataDir(dir); return; }
     bool found = false;
-    const Realm sewers = h.server.worldMaps().realmOfId("sewers", found);
+    const Realm sewers = h.server.worldMaps().realmOfId("warren", found);
     CHECK(found);
 
     World& world = h.server.world();
@@ -832,4 +855,5 @@ TEST(a_respawn_into_another_realm_sends_the_client_that_realms_map) {
     CHECK(h.stepUntil({&client}, [&] { return client.selfPlaced(); }));
     CHECK_NEAR(client.arrival().x, world.get<Transform>(reborn).position.x, 1.0);
     CHECK_NEAR(client.arrival().y, world.get<Transform>(reborn).position.y, 1.0);
+    flix::testsupport::removeDataDir(dir);
 }

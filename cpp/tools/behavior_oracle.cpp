@@ -10,8 +10,6 @@
 #include "shared/game/rarity.h"
 #include "server/systems/petals.h"
 #include "server/systems/combat.h"
-#include "server/systems/movement.h"
-#include "shared/game/terrain.h"
 
 namespace {
 
@@ -120,80 +118,13 @@ void emitMobHealthScenario() {
     emit("scenario/mob-health/dead", world.has<Dead>(mob));
 }
 
-void emitMovementScenario(const char* mapBundlePath) {
-    World world;
-    Terrain terrain;
-    std::string terrainError;
-    if (!terrain.loadMapBundle(mapBundlePath, terrainError)) {
-        throw std::runtime_error("could not load movement map: " + terrainError);
-    }
-    struct Sample { const char* name; Vec2 point; };
-    const Sample samples[] = {
-        {"center", {3000.0, 3000.0}}, {"above", {3000.0, 2990.0}},
-        {"below", {3000.0, 3010.0}}, {"right", {3070.0, 3000.0}},
-        {"upper-right", {3070.0, 2990.0}},
-    };
-    for (const Sample& sample : samples) {
-        emit(std::string("scenario/movement/tile/") + sample.name,
-             static_cast<double>(terrain.at(sample.point)));
-    }
-    // The oracle's movement scenario is an overworld one: it is the tile map's
-    // wall slide that the TypeScript build is compared against.
-    const Vec2 resolvedStart = terrain.resolveCircle({3000.0, 2940.0}, 20.0, Realm::Overworld);
-    emit("scenario/movement/resolve-start/x", resolvedStart.x);
-    emit("scenario/movement/resolve-start/y", resolvedStart.y);
-    MovementSystem movement;
-    const Entity player = world.create();
-    world.add<PlayerTag>(player);
-    world.add<Transform>(player, Transform{{3000.0, 2940.0}, 0.0});
-    world.add<Motion>(player, Motion{});
-    world.add<Body>(player, Body{kPlayerBaseRadius, 1.0});
-    world.add<PlayerInput>(player, PlayerInput{});
-    world.add<PlayerModifiers>(player, PlayerModifiers{});
-    world.add<Afflictions>(player, Afflictions{});
-    world.add<Health>(player, Health{100.0, 100.0, 0.0, 0.0});
-    world.add<Faction>(player, Faction{Team::Players, false});
-
-    struct Phase { const char* name; double angle; double strength; };
-    const Phase phases[] = {
-        {"wall-slide", kPi / 4.0, 1.0},
-        {"half-up", -kPi / 2.0, 0.5},
-        {"release", 0.0, 0.0},
-    };
-    double nowMillis = 0.0;
-    for (const Phase& phase : phases) {
-        PlayerInput& input = world.get<PlayerInput>(player);
-        input.current.moveAngle = phase.angle;
-        input.current.moveStrength = phase.strength;
-        for (int tick = 0; tick < 10; ++tick) {
-            movement.runPlayerPhase(world, terrain, nowMillis, net::kTickSeconds);
-            nowMillis += net::kTickMillis;
-            const Transform& tickTransform = world.get<Transform>(player);
-            const Motion& tickMotion = world.get<Motion>(player);
-            const std::string tickPrefix = std::string("scenario/movement/") + phase.name +
-                                           "/tick-" + std::to_string(tick + 1);
-            emit(tickPrefix + "/x", tickTransform.position.x);
-            emit(tickPrefix + "/y", tickTransform.position.y);
-            emit(tickPrefix + "/vx", tickMotion.velocity.x);
-            emit(tickPrefix + "/vy", tickMotion.velocity.y);
-        }
-        const Transform& transform = world.get<Transform>(player);
-        const Motion& motion = world.get<Motion>(player);
-        const std::string prefix = std::string("scenario/movement/") + phase.name;
-        emit(prefix + "/x", transform.position.x);
-        emit(prefix + "/y", transform.position.y);
-        emit(prefix + "/vx", motion.velocity.x);
-        emit(prefix + "/vy", motion.velocity.y);
-    }
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
     using namespace flix;
     try {
-        if (argc != 5) {
-            std::cerr << "usage: behavior_oracle <mobs.json> <petals.json> <mob_xp.json> <map_bundle.ts>\n";
+        if (argc != 4) {
+            std::cerr << "usage: behavior_oracle <mobs.json> <petals.json> <mob_xp.json>\n";
             return 2;
         }
 
@@ -293,7 +224,14 @@ int main(int argc, char** argv) {
             {"lentil", Rarity::Apex, 13},
         });
         emitMobHealthScenario();
-        emitMovementScenario(argv[4]);
+        // There used to be a movement scenario here, walked over the tile grid
+        // in src/map_bundle.ts so both builds could step the same walls. The
+        // map is a Tiled file now and the frozen TypeScript build cannot read
+        // one, so there is no map both sides can agree on any more -- and an
+        // oracle that stepped a DIFFERENT map would report a parity failure
+        // that means nothing. Movement against real terrain is covered by
+        // cpp/tests/movement_tests.cpp instead; behavior-parity.js skips the
+        // keys the TypeScript side still emits for it, and says why.
     } catch (const std::exception& ex) {
         std::cerr << ex.what() << '\n';
         return 2;

@@ -5,7 +5,6 @@
 
 #include "client/ui/draw.h"
 #include "shared/game/config.h"
-#include "shared/game/tiled_map.h"
 
 namespace flix {
 
@@ -14,36 +13,6 @@ namespace {
 /// The fallback fill for a sprite that could not be compiled. Config colours
 /// are stored as 0xRRGGBBAA by the loader; the drawing layer works in RGB.
 std::uint32_t rgbOf(std::uint32_t rgba) { return rgba >> 8; }
-
-/// The ground artwork of each ground type, in ground-id order.
-///
-/// These are the nine the map's 3x3 section grid used to hard-code, and they
-/// stay in that order so a ground id reads as the section it came from. What
-/// changed is who chooses: the map's `background` layer names one per cell, so
-/// the nine are a palette rather than a geography. The files are staged from
-/// `maps/ground/`, beside the map that names them.
-constexpr std::array<const char*, kSectionCount> kGroundArt = {
-    "land.svg", "desert.svg", "hel.svg",
-    "ocean.svg", "ant_hell.svg", "jungle.svg",
-    "sewers.svg", "computer.svg", "unknown.svg",
-};
-
-/// The bridge tile's texture, transcribed from MAP_CUSTOM_TILE_TYPES in
-/// map_bundle.ts. The source writes its seven planks as CSS matrices about a
-/// `transform-origin`, which is a browser-only composition; each is folded
-/// here into the equivalent rotation about the plank's own centre.
-constexpr const char* kBridgeArt = R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
-<rect x="0" y="0" width="400" height="400" fill="#bbbbbb"/>
-<rect x="2.5" y="2.5" width="395" height="50" fill="#999999" stroke="#666666" stroke-width="5"/>
-<rect x="2.5" y="347.5" width="395" height="50" fill="#999999" stroke="#666666" stroke-width="5"/>
-<rect x="40.016" y="99.169" width="30" height="30" fill="#999999" transform="rotate(15 55.016 114.169)"/>
-<rect x="32.593" y="191.994" width="30" height="30" fill="#999999" transform="rotate(-15 47.593 206.994)"/>
-<rect x="253.994" y="96.011" width="30" height="30" fill="#999999" transform="rotate(30 268.994 111.011)"/>
-<rect x="325.642" y="197.548" width="30" height="30" fill="#999999" transform="rotate(30 340.642 212.548)"/>
-<rect x="123.066" y="262.699" width="30" height="30" fill="#999999" transform="rotate(30 138.066 277.699)"/>
-<rect x="122.799" y="132.691" width="30" height="30" fill="#999999" transform="rotate(-15 137.799 147.691)"/>
-<rect x="228.508" y="288.600" width="30" height="30" fill="#999999" transform="rotate(-15 243.508 303.600)"/>
-</svg>)SVG";
 
 /// The sponge artwork, transcribed verbatim from `src/sponge_svg.ts`.
 ///
@@ -423,6 +392,8 @@ std::shared_ptr<SvgDocument> SpriteCache::compileArt(const std::string& source,
 
 bool SpriteCache::build(const ContentRegistry& content, const std::string& dataDir) {
     warnings_.clear();
+    dataDir_ = dataDir;
+    tileArt_.clear();
     mobs_.assign(content.mobCount(), Sprite{});
     petals_.assign(content.petalCount(), Sprite{});
 
@@ -452,66 +423,6 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         compile(config.image, config.colorRgba, "petal " + config.id, petals_[i]);
     }
 
-    for (std::size_t i = 0; i < kGroundArt.size(); ++i) {
-        if (!kGroundArt[i]) continue;
-        const std::string path = dataDir + "/" + kGroundArt[i];
-        auto document = std::make_shared<SvgDocument>(SvgDocument::fromFile(path));
-        if (document->empty()) {
-            // Ground artwork is optional: the flat biome colour still reads as
-            // ground, so a missing file must not stop the client.
-            warnings_.push_back("ground " + path + ": unreadable, falling back to a flat fill");
-            continue;
-        }
-        ground_[i] = std::move(document);
-    }
-    bridge_ = compileArt(kBridgeArt, "tile bridge");
-
-    // The wall, water and floor tiles of every skin in kTileSkinNames (the
-    // default family plus sewers, computer and unknown -- nothing is looked
-    // up for a biome that has no family), by bare file name out of the data
-    // directory, where the build stages maps/tiles/ flat. Optional in the
-    // same way the ground is: a missing file costs that tile its artwork --
-    // one warning, and the renderer falls back to the default skin's art or
-    // the flat colour -- never the client. A whole skin's art may be missing
-    // while it is still being drawn, and that must be fine.
-    //
-    // The file names are the tileset's class names plus `.svg`
-    // (scripts/lib/tileArt.js writes both from one table):
-    //   skin 0:   wall.svg  wall_edge_<sides>.svg  water_edge_<sides>.svg
-    //   skin s:   wall_<s>.svg  wall_<s>_edge_<sides>.svg  water_<s>.svg
-    //             water_<s>_edge_<sides>.svg  floor_<s>_<0..2>.svg
-    // with <sides> the mask spelled in fixed n, e, s, w order.
-    const auto loadTileFile = [&](const std::string& name, std::shared_ptr<SvgDocument>& out) {
-        const std::string path = dataDir + "/" + name;
-        auto document = std::make_shared<SvgDocument>(SvgDocument::fromFile(path));
-        if (document->empty()) {
-            warnings_.push_back("tile " + path + ": unreadable, falling back to a flat fill");
-            return;
-        }
-        out = std::move(document);
-    };
-    for (int skin = 0; skin < kTileSkinCount; ++skin) {
-        const std::string name = kTileSkinNames[skin];
-        const std::string wall = skin == 0 ? "wall" : "wall_" + name;
-        const std::string water = skin == 0 ? "water" : "water_" + name;
-        TileArtRow& walls = wallArt_[static_cast<std::size_t>(skin)];
-        TileArtRow& waters = waterArt_[static_cast<std::size_t>(skin)];
-        loadTileFile(wall + ".svg", walls[0]);
-        // The default water's plain tile is the flat fill and has no file to
-        // load; a biome's is its base art.
-        if (skin != 0) loadTileFile(water + ".svg", waters[0]);
-        for (std::uint8_t mask = 1; mask <= kEdgeMaskMax; ++mask) {
-            const std::string suffix = edgeMaskSuffix(mask);
-            loadTileFile(wall + "_edge_" + suffix + ".svg", walls[mask]);
-            loadTileFile(water + "_edge_" + suffix + ".svg", waters[mask]);
-        }
-        if (skin == 0) continue;   // the default family has no floor decorations
-        for (int variant = 0; variant < kFloorVariantsPerSkin; ++variant) {
-            loadTileFile("floor_" + name + "_" + std::to_string(variant) + ".svg",
-                         floorArt_[static_cast<std::size_t>(skin)][static_cast<std::size_t>(variant)]);
-        }
-    }
-
     return !mobs_.empty() && !petals_.empty();
 }
 
@@ -523,28 +434,29 @@ bool SpriteCache::petalDrawable(std::uint16_t index) const {
     return index < petals_.size() && petals_[index].usable;
 }
 
-const SvgDocument* SpriteCache::groundArt(int groundId) const {
-    if (groundId < 0 || groundId >= kSectionCount) return nullptr;
-    return ground_[static_cast<std::size_t>(groundId)].get();
-}
+const SvgDocument* SpriteCache::tileArt(const std::string& file) const {
+    // Tile artwork is staged FLAT: the build copies maps/tiles/*.svg into the
+    // data directory beside the maps, so a tileset's `tiles/grass_c_0.svg`
+    // arrives here as the bare name the map reader stripped it to. Nothing
+    // here composes a name -- which picture a cell wears was decided by the
+    // author's terrain brush and is in the map file.
+    const auto found = tileArt_.find(file);
+    if (found != tileArt_.end()) return found->second.get();
 
-const SvgDocument* SpriteCache::tileArt(Tile tile) const {
-    // Only the bridge carries artwork the flat colour cannot express: sewage
-    // is a solid fill in its own SVG, and block declares none at all. Wall
-    // and water go through edgeArt(), which knows which sides they show.
-    return tile == Tile::Sand ? bridge_.get() : nullptr;
-}
-
-const SvgDocument* SpriteCache::edgeArt(Tile tile, std::uint8_t skin, std::uint8_t mask) const {
-    if (mask > kEdgeMaskMax || skin >= kTileSkinCount) return nullptr;
-    if (tile == Tile::Wall) return wallArt_[skin][mask].get();
-    if (tile == Tile::Water) return waterArt_[skin][mask].get();   // [0][0] is empty by design
-    return nullptr;
-}
-
-const SvgDocument* SpriteCache::floorArt(std::uint8_t skin, std::uint8_t variant) const {
-    if (skin == 0 || skin >= kTileSkinCount || variant >= kFloorVariantsPerSkin) return nullptr;
-    return floorArt_[skin][variant].get();
+    // A name that will not load is remembered as a null document, which is
+    // what makes the warning fire exactly once however many cells ask for it.
+    // A map naming art nobody has drawn yet is a content gap, not a crash: the
+    // cell draws nothing and the black underneath shows.
+    if (file.empty()) {
+        tileArt_.emplace(file, nullptr);
+        return nullptr;
+    }
+    auto document = std::make_shared<SvgDocument>(SvgDocument::fromFile(dataDir_ + "/" + file));
+    if (document->empty()) {
+        warnings_.push_back("tile " + file + ": unreadable, drawing nothing");
+        document.reset();
+    }
+    return tileArt_.emplace(file, std::move(document)).first->second.get();
 }
 
 void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y, double diameter,

@@ -269,39 +269,6 @@ constexpr double kTeleporterCull = 140.0;
 constexpr std::uint32_t kInvulnHealth = 0xFAFFC9u;
 constexpr double kInvulnFadeSeconds = 0.5;
 
-/// The base fill of each ground type's artwork, in ground-id order. Painted
-/// only until the art has loaded, or if its file could not be read at all.
-constexpr std::uint32_t kGroundFallback[kSectionCount] = {
-    0x1EA761u,  // Garden
-    0xEAE4D0u,  // Desert
-    0xA31414u,  // Hel
-    0x4AA7F7u,  // Ocean
-    0x8E6140u,  // Ant Hell
-    0x15A12Fu,  // Jungle
-    0x633500u,  // Sewers
-    0x000000u,  // Computer
-    0x000000u,  // Unknown
-};
-
-/// One ground tile is 400 world units of artwork, drawn two units oversized so
-/// that neighbouring tiles never leave a seam.
-constexpr double kGroundTileSize = 400.0;
-constexpr double kGroundOverlap = 2.0;
-
-/// The fill of maps/tiles/water.svg: a water tile with no exposed side is this
-/// flat colour, and one with edges wears the matching water_edge_* artwork.
-constexpr std::uint32_t kWaterFill = 0x4169E1u;
-
-constexpr std::uint32_t kTileColor(Tile tile) {
-    switch (tile) {
-        case Tile::Water: return kWaterFill;
-        case Tile::Sand:  return 0xBBBBBBu;   // bridge: the base under its planks
-        case Tile::Stone: return 0x786828u;   // sewage: a solid fill in its own art
-        case Tile::Block: return 0x00FF00u;
-        default: return 0x000000u;
-    }
-}
-
 /// Damage is shown as a whole number however large it gets -- abbreviating it
 /// would read as a different game from the browser build.
 std::string formatDamage(double value) {
@@ -412,12 +379,10 @@ double hash01(std::uint32_t a, std::uint32_t b) {
     return static_cast<double>(h ^ (h >> 16)) / 4294967296.0;
 }
 
-/// The colour a wall tile falls back to when its artwork could not be read:
-/// the fill of maps/tiles/wall.svg.
-constexpr std::uint32_t kWallFill = 0x99550Cu;
-/// Every solid tile is drawn 1.5 units oversized on each side, so the software
+/// Every tile is drawn 1.5 units oversized on each side, so the software
 /// rasteriser's anti-aliased edges never leave a hairline seam between two
-/// tiles of one wall.
+/// cells of one continuous surface. Symmetric about the cell's centre, so a
+/// tile that is turned by its flip bits stays registered with its neighbours.
 constexpr double kTileOverlap = 1.5;
 
 void moveToScreen(Canvas& canvas, const Camera& camera, Vec2 world) {
@@ -453,6 +418,46 @@ Rect intersection(Rect a, Rect b) {
 }
 
 } // namespace
+
+/// The eight symmetries of the square, indexed by
+/// (kTileFlipDiagonal | kTileFlipVertical | kTileFlipHorizontal).
+///
+/// Worked out from Tiled's rule -- anti-diagonal first, then horizontal, then
+/// vertical -- as the matrix V^v * H^h * D^d, in a coordinate system whose y
+/// axis points DOWN (the canvas'), so a positive rotation turns clockwise:
+///
+///     D    = [[0, 1], [1, 0]]          transpose, (u,v) -> (v,u)
+///     H    = [[-1, 0], [0, 1]]
+///     V    = [[1, 0], [0, -1]]
+///     R(t) = [[cos t, -sin t], [sin t, cos t]]
+///
+/// and a canvas rotate-then-scale is R(t) * diag(-1, 1) when `mirror` is set.
+/// Reading the rows off: H*D = [[0,-1],[1,0]] = R(+pi/2), the quarter turn
+/// CLOCKWISE that Tiled documents for D|H; V*D = R(-pi/2), its anticlockwise
+/// twin for D|V; and the four with no D are the plain reflections and the half
+/// turn.
+///
+/// All eight were checked against that derivation by rendering an asymmetric
+/// glyph through this function and comparing it, pixel for pixel, with the
+/// same glyph's unturned rasterisation permuted by V^v * H^h * D^d: every one
+/// of the eight matched exactly, none of the eight drew the same picture as
+/// any other, and swapping D|H with D|V -- the likeliest way to get this
+/// wrong -- was caught. If you change a row, redo that; the map is painted
+/// almost entirely from rotations of a handful of Wang edge tiles, so a wrong
+/// row here is wrong on most of the screen.
+TileOrientation tileOrientation(std::uint8_t flags) {
+    static constexpr TileOrientation kOrientations[8] = {
+        {0.0, false},          // 0:   as drawn
+        {0.0, true},           // H:   mirrored
+        {kPi, true},           // V:   mirrored, half turn
+        {kPi, false},          // HV:  half turn
+        {-kPi * 0.5, true},    // D:   transpose
+        {kPi * 0.5, false},    // DH:  quarter turn clockwise
+        {-kPi * 0.5, false},   // DV:  quarter turn anticlockwise
+        {kPi * 0.5, true},     // DHV: anti-transpose
+    };
+    return kOrientations[flags & 7u];
+}
 
 void WorldRenderer::ingestEvents(WorldView& view) {
     const auto isPlayer = [&view](std::uint32_t netId) {
@@ -843,14 +848,6 @@ void WorldRenderer::update(double dt) {
     if (mobEyes_.size() > kMaxMobShadows) mobEyes_.clear();
 }
 
-void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera, Realm realm) const {
-    // The realm's own rectangle, not the default world's: a corridor map is a
-    // fraction of the overworld's size, and ground painted past its edge would
-    // show through where the file has no tiles at all.
-    const Vec2 extent = terrain_ ? terrain_->realmExtent(realm) : Vec2{kWorldSize, kWorldSize};
-    drawGroundTiles(canvas, camera, Rect{0, 0, extent.x, extent.y}, realm, -1);
-}
-
 const MapData* WorldRenderer::mapFor(Realm realm) const {
     if (worldMaps_ != nullptr) return worldMaps_->forRealm(realm);
     // No catalogue: the single map handed over by setMapData() is the
@@ -858,80 +855,20 @@ const MapData* WorldRenderer::mapFor(Realm realm) const {
     return realm == Realm::Overworld ? map_ : nullptr;
 }
 
-/// Which ground artwork covers a point of a realm.
-///
-/// The realm's map's `background` layer, when it has one. A map that predates
-/// the layer -- the TypeScript bundle has no way to carry it -- falls back to
-/// the 3x3 section grid the layer replaced, so an old data directory still
-/// draws the world it always did rather than a black one.
-int WorldRenderer::groundIndexAt(Vec2 at, Realm realm) const {
-    const MapData* map = mapFor(realm);
-    if (map != nullptr && map->hasBackground()) return map->groundAt(at);
-    return sectionAt(at);
-}
-
-void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect world,
-                                    Realm realm, int fixedGround) const {
-    const Rect visible = camera.visibleWorld(0);
-    const double zoom = camera.zoom();
-
-    // Anchored to the world origin, never to the camera: a tiling that moved
-    // with the viewer would slide its pattern over the ground as you walk.
-    const double startX = std::floor(visible.left() / kGroundTileSize) * kGroundTileSize;
-    const double startY = std::floor(visible.top() / kGroundTileSize) * kGroundTileSize;
-    const int tilesX = static_cast<int>(std::ceil(visible.w / kGroundTileSize)) + 1;
-    const int tilesY = static_cast<int>(std::ceil(visible.h / kGroundTileSize)) + 1;
-
-    for (int j = 0; j <= tilesY; ++j) {
-        for (int i = 0; i <= tilesX; ++i) {
-            const double tileX = startX + i * kGroundTileSize;
-            const double tileY = startY + j * kGroundTileSize;
-            // Sampled at the ground tile's CENTRE, which is what keeps a
-            // 400-unit artwork tile whole over a 300-unit background grid: the
-            // layer chooses the art, it does not chop it up.
-            const int ground = fixedGround >= 0
-                                   ? fixedGround
-                                   : groundIndexAt({tileX + kGroundTileSize * 0.5,
-                                                    tileY + kGroundTileSize * 0.5}, realm);
-            // Outside the map, and anywhere the map paints no ground, there is
-            // none -- the void stays the black the frame was cleared to.
-            if (ground < 0) continue;
-
-            // Origin floored and the tile drawn oversized, both in world units,
-            // exactly as the browser build does inside its camera transform.
-            const Rect tile{std::floor(tileX - kGroundOverlap * 0.5),
-                            std::floor(tileY - kGroundOverlap * 0.5),
-                            kGroundTileSize + kGroundOverlap, kGroundTileSize + kGroundOverlap};
-            const Rect visiblePart = intersection(tile, world);
-            if (visiblePart.w <= 0 || visiblePart.h <= 0) continue;
-
-            const SvgDocument* art = sprites_ ? sprites_->groundArt(ground) : nullptr;
-            canvas.save();
-            // The clip is only ever doing something at the edge of the map: a
-            // tile the world rect does not cut is drawn wholly inside its own
-            // box either way, and building a full coverage mask for it was
-            // most of what this loop spent on clipping.
-            const bool cropped = visiblePart.w < tile.w || visiblePart.h < tile.h;
-            if (cropped) clipWorldRect(canvas, camera, visiblePart);
-            if (art) {
-                const Vec2 at = camera.worldToScreen({tile.x, tile.y});
-                // The zoom is already in the box, so the cache sees the size
-                // this is really drawn at and bakes one bitmap per zoom step.
-                if (!drawCachedArt(canvas, *art, at.x, at.y, tile.w * zoom, tile.h * zoom)) {
-                    art->renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
-                                      static_cast<float>(tile.w * zoom),
-                                      static_cast<float>(tile.h * zoom), 0.0f);
-                }
-            } else {
-                const Vec2 at = camera.worldToScreen({visiblePart.x, visiblePart.y});
-                ui::setFill(canvas, kGroundFallback[ground]);
-                canvas.fillRect(static_cast<float>(at.x), static_cast<float>(at.y),
-                                static_cast<float>(visiblePart.w * zoom),
-                                static_cast<float>(visiblePart.h * zoom));
-            }
-            canvas.restore();
-        }
+const std::vector<const SvgDocument*>& WorldRenderer::artFor(const MapData& map) const {
+    if (artMap_ == &map) return art_;
+    // Every file the map names, resolved in one go the first time the realm is
+    // drawn. Doing it per cell would hash a file name per tile per layer per
+    // frame; doing it lazily per file would put a disk read inside whichever
+    // frame first walked far enough east. A map's palette is tens of files, so
+    // the whole of it is cheaper than either.
+    art_.clear();
+    art_.reserve(map.artFiles().size());
+    for (const std::string& file : map.artFiles()) {
+        art_.push_back(sprites_ ? sprites_->tileArt(file) : nullptr);
     }
+    artMap_ = &map;
+    return art_;
 }
 
 namespace {
@@ -992,12 +929,22 @@ void WorldRenderer::drawMaze(Canvas& canvas, const Camera& camera) const {
     const Rect visible = camera.visibleWorld(0);
     if (!visible.intersects(square)) return;
 
-    // 1. Ground: the biome's own tiles, the way that biome's overworld is
-    //    painted, clipped to the maze's square. One ground type for the whole
-    //    maze -- it has no background layer of its own, and every cell of it is
-    //    the same biome anyway.
-    const int ground = kMazeBiomeSections[static_cast<std::size_t>(maze.biome())];
-    drawGroundTiles(canvas, camera, square, Realm::Maze, ground);
+    // 1. Ground: the flat floor colour of the biome this maze borrows, over
+    //    the maze's square. The maze is not authored in Tiled and has no map
+    //    file, so it has no tile artwork to paint with -- terrain.h's kBiomes
+    //    is the whole palette it has ever had a claim on, and one colour is
+    //    right for it anyway: every cell of a maze is the same biome.
+    const int section = kMazeBiomeSections[static_cast<std::size_t>(maze.biome())];
+    {
+        const Rect floor = intersection(visible, square);
+        if (floor.w > 0 && floor.h > 0) {
+            const Vec2 at = camera.worldToScreen({floor.x, floor.y});
+            ui::setFill(canvas, tileColor(section, Tile::Ground));
+            canvas.fillRect(static_cast<float>(at.x), static_cast<float>(at.y),
+                            static_cast<float>(floor.w * camera.zoom()),
+                            static_cast<float>(floor.h * camera.zoom()));
+        }
+    }
 
     // 2. Walls: a single translucent black path, filled once. Filling cell by
     //    cell at partial alpha leaves antialiased hairline seams along every
@@ -1099,122 +1046,133 @@ void WorldRenderer::drawArena(Canvas& canvas, const Camera& camera) const {
 }
 
 void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm realm) const {
-    // Everything outside the world is pure black: the browser build clears its
-    // frame to it and simply skips any tile that falls off the map.
+    // Everything outside the map is pure black: the browser build clears its
+    // frame to it and simply skips any cell that is not there.
     ui::setFill(canvas, 0x000000u);
     canvas.fillRect(0, 0, static_cast<float>(camera.viewportWidth()),
                     static_cast<float>(camera.viewportHeight()));
 
-    drawGround(canvas, camera, realm);
-    if (!terrain_) return;
+    // The PICTURE of a realm is its map file's tile layers, read off disk by
+    // every client. The collision grid that arrives over the wire is the
+    // server's answer to a different question and is never drawn: a cell looks
+    // like whatever the author painted there, and blocks because of which
+    // LAYER it was painted on, and the two are allowed to have nothing to do
+    // with each other. Nothing in here reads a Tile.
+    const MapData* map = mapFor(realm);
+    if (map == nullptr || map->layers().empty()) return;
 
-    // The realm's own grid. Its dimensions are the map file's, not a
-    // constant: a smaller map has fewer tiles to walk, a larger one more.
-    const Rect visible = camera.visibleWorld(kTileSize);
+    const int cols = map->width();
+    const int rows = map->height();
+    if (cols <= 0 || rows <= 0) return;
+
+    // The cells whose artwork can reach the screen, and NOT ONE MORE. A cell
+    // is drawn over exactly its own square grown by kTileOverlap, so that
+    // overlap is the whole margin this wants. A kTileSize margin -- the
+    // reflex, and what this used to ask for -- buys a whole extra ring of
+    // cells all the way round: measured on a 1280x720 view of garden.tmj,
+    // 60 cells against 32, for artwork that is off screen before it is
+    // drawn.
+    const Rect visible = camera.visibleWorld(kTileOverlap);
     const int x0 = std::max(0, static_cast<int>(std::floor(visible.left() / kTileSize)));
     const int y0 = std::max(0, static_cast<int>(std::floor(visible.top() / kTileSize)));
-    const int x1 = std::min(terrain_->tileCols(realm) - 1,
-                            static_cast<int>(std::floor(visible.right() / kTileSize)));
-    const int y1 = std::min(terrain_->tileRows(realm) - 1,
-                            static_cast<int>(std::floor(visible.bottom() / kTileSize)));
+    const int x1 = std::min(cols - 1, static_cast<int>(std::floor(visible.right() / kTileSize)));
+    const int y1 = std::min(rows - 1, static_cast<int>(std::floor(visible.bottom() / kTileSize)));
+    if (x1 < x0 || y1 < y0) return;
+
+    const std::vector<const SvgDocument*>& art = artFor(*map);
+    if (art.empty()) return;
+
+    // The reader guarantees width*height cells on every layer, and the cell
+    // loop below indexes on that rather than going through the bounds-checked
+    // cellAt() per tile per layer. Checked once here so a malformed map draws
+    // a black realm instead of reading off the end of a layer.
+    const std::size_t cellCount = static_cast<std::size_t>(cols) * static_cast<std::size_t>(rows);
+    for (const TiledLayer& layer : map->layers()) {
+        if (layer.cells.size() != cellCount) return;
+    }
 
     const double zoom = camera.zoom();
+    const double side = (kTileSize + kTileOverlap * 2.0) * zoom;
+    const double half = side * 0.5;
 
-    // One artwork fitted into one tile's box, clipped to it: the wall and
-    // water files draw exactly their 300-unit cell, and the bridge's planks
-    // are free to overflow theirs the way the ground artwork does.
-    const auto drawTileArt = [&](const SvgDocument& art, Rect bounds) {
-        const Vec2 at = camera.worldToScreen({bounds.x, bounds.y});
+    // A cell's compiled artwork, or null: an empty cell, a tile whose art
+    // index is out of the palette, or a file the data directory does not
+    // hold. All three draw nothing, and none of them is an error -- a map is
+    // free to name art nobody has drawn yet, and that must cost that cell its
+    // picture rather than the frame.
+    const auto resolve = [&art](const TiledCell& cell) -> const SvgDocument* {
+        if (cell.art < 0) return nullptr;
+        const std::size_t slot = static_cast<std::size_t>(cell.art);
+        return slot < art.size() ? art[slot] : nullptr;
+    };
+
+    // One cell's artwork, fitted to its oversized square and turned by its flip
+    // bits. The unturned case -- which is every cell of a hand-painted centre
+    // and most of a map -- skips the transform entirely and draws into an
+    // axis-aligned box, because a save/rotate/restore around a tile costs more
+    // than the tile does.
+    //
+    // Both cases hand drawCachedArt the SAME box, and that is deliberate: what
+    // the web build bakes is the tile UNTURNED, and the rotation is in the
+    // canvas transform the blit goes through. So one bitmap serves all eight
+    // orientations and the cache key needs no orientation in it. Baking the
+    // turned picture instead would need the flip bits in that key -- without
+    // them every rotation of one tile would collide on the first one baked,
+    // and every edge tile in the map is painted as four rotations of one
+    // picture.
+    const auto drawCell = [&](const SvgDocument& document, int tx, int ty, std::uint8_t flags) {
+        const TileOrientation orientation = tileOrientation(flags);
+        if (orientation.radians == 0.0 && !orientation.mirror) {
+            const Vec2 at = camera.worldToScreen(
+                {tx * kTileSize - kTileOverlap, ty * kTileSize - kTileOverlap});
+            if (!drawCachedArt(canvas, document, at.x, at.y, side, side)) {
+                document.renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
+                                      static_cast<float>(side), static_cast<float>(side), 0.0f);
+            }
+            return;
+        }
+        const Vec2 centre =
+            camera.worldToScreen({(tx + 0.5) * kTileSize, (ty + 0.5) * kTileSize});
         canvas.save();
-        clipWorldRect(canvas, camera, bounds);
-        if (!drawCachedArt(canvas, art, at.x, at.y, bounds.w * zoom, bounds.h * zoom)) {
-            art.renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
-                             static_cast<float>(bounds.w * zoom),
-                             static_cast<float>(bounds.h * zoom), 0.0f);
+        canvas.translate(static_cast<float>(centre.x), static_cast<float>(centre.y));
+        if (orientation.radians != 0.0) canvas.rotate(static_cast<float>(orientation.radians));
+        if (orientation.mirror) canvas.scale(-1.0f, 1.0f);
+        if (!drawCachedArt(canvas, document, -half, -half, side, side)) {
+            document.renderFitted(canvas, static_cast<float>(-half), static_cast<float>(-half),
+                                  static_cast<float>(side), static_cast<float>(side), 0.0f);
         }
         canvas.restore();
     };
-    const auto fillTile = [&](std::uint32_t color, Rect bounds) {
-        const Vec2 at = camera.worldToScreen({bounds.x, bounds.y});
-        ui::setFill(canvas, color);
-        canvas.fillRect(static_cast<float>(at.x), static_cast<float>(at.y),
-                        static_cast<float>(bounds.w * zoom),
-                        static_cast<float>(bounds.h * zoom));
-    };
 
-    const auto tileBounds = [](int tx, int ty) {
-        return Rect{tx * kTileSize - kTileOverlap, ty * kTileSize - kTileOverlap,
-                    kTileSize + kTileOverlap * 2.0, kTileSize + kTileOverlap * 2.0};
-    };
-
-    // Which SKIN a wall or water cell wears (constants.h): its own when the
-    // map painted a skinned variant into it, else what skinForGround() says
-    // for the ground it stands on, read off the realm's background layer --
-    // so the overworld's plain walls in its sewers, computer and unknown
-    // thirds come out in those biomes' art without a single cell of the map
-    // being repainted, and everywhere else stay the default brown wall (the
-    // table maps the other six grounds to skin 0 on purpose). No background
-    // layer, or a void cell: the default family.
-    const MapData* map = mapFor(realm);
-    const bool groundKnown = map != nullptr && map->hasBackground();
-    const auto effectiveSkin = [&](std::uint8_t own, int tx, int ty) -> std::uint8_t {
-        if (own != 0 || !groundKnown) return own;
-        return skinForGround(map->groundAt(Terrain::tileCenter(tx, ty)));
-    };
-    // The artwork for a family x skin x mask, falling back to the default
-    // skin's when the biome's file is missing: the art for a skin may not have
-    // been drawn yet, and a wall that lost its texture to that would be a
-    // regression, not a fallback.
-    const auto edgeArtFor = [&](Tile tile, std::uint8_t skin, std::uint8_t mask) -> const SvgDocument* {
-        if (!sprites_) return nullptr;
-        const SvgDocument* art = sprites_->edgeArt(tile, skin, mask);
-        if (art == nullptr && skin != 0) art = sprites_->edgeArt(tile, 0, mask);
-        return art;
-    };
-
-    // Floor decorations first, in a pass of their own: an air cell whose map
-    // painted a skinned floor tile into it draws that stamp over the ground.
-    // Only the cell's OWN skin counts here -- the ground fallback above would
-    // otherwise stamp variant 0 onto every plain air cell of the world -- and
-    // the pass comes before the walls so a wall's overlap always lands on top
-    // of its neighbour's stamp rather than under it.
-    if (sprites_) {
-        for (int ty = y0; ty <= y1; ++ty) {
-            for (int tx = x0; tx <= x1; ++tx) {
-                if (terrain_->atTile(tx, ty, realm) != Tile::Ground) continue;
-                const std::uint8_t style = terrain_->styleAt(tx, ty, realm);
-                if (styleSkin(style) == 0) continue;
-                const SvgDocument* art = sprites_->floorArt(styleSkin(style), styleFloorVariant(style));
-                if (art) drawTileArt(*art, tileBounds(tx, ty));
-            }
-        }
-    }
-
+    // Cell by cell rather than layer by layer, so `covers_everything` can be
+    // honoured: a cell whose dirt tile fills its whole square opaquely has no
+    // need of the grass under it, and on this map that is most of the upper
+    // layers. The scan runs top down to find the lowest layer that can still
+    // be seen, then paints upward from it.
+    const std::size_t layerCount = map->layers().size();
     for (int ty = y0; ty <= y1; ++ty) {
+        const std::size_t row = static_cast<std::size_t>(ty) * static_cast<std::size_t>(cols);
         for (int tx = x0; tx <= x1; ++tx) {
-            const Tile tile = terrain_->atTile(tx, ty, realm);
-            if (tile == Tile::Ground) continue;   // air: the ground (and its stamp) shows through
-            const Rect bounds = tileBounds(tx, ty);
-
-            // A wall or water tile's edges and skin are the MAP's choice,
-            // carried as a style byte beside the tile id: scripts/edgeTiles.js
-            // decided which sides face air and wrote the matching tileset
-            // variant, and the renderer only picks that variant's artwork.
-            // Nothing here looks at the neighbours, so what Tiled shows the
-            // author is what the player sees. Default-skin water with no
-            // edges is the flat fill -- its plain artwork is that colour and
-            // nothing else; a biome's plain water is that biome's base art.
-            if (tile == Tile::Wall || tile == Tile::Water) {
-                const std::uint8_t style = terrain_->styleAt(tx, ty, realm);
-                const std::uint8_t skin = effectiveSkin(styleSkin(style), tx, ty);
-                const SvgDocument* art = edgeArtFor(tile, skin, styleEdgeMask(style));
-                if (art) drawTileArt(*art, bounds);
-                else fillTile(tile == Tile::Wall ? kWallFill : kWaterFill, bounds);
-                continue;
+            const std::size_t index = row + static_cast<std::size_t>(tx);
+            std::size_t bottom = 0;
+            for (std::size_t layer = layerCount; layer-- > 0;) {
+                const TiledCell& cell = map->layers()[layer].cells[index];
+                if ((cell.flags & kTileCoversEverything) == 0) continue;
+                // Only art that is actually THERE hides what is under it. A
+                // covering tile whose file the data directory does not hold
+                // draws nothing, and taking its word for the cell would turn
+                // one missing picture into a black hole with the ground it
+                // was painted over blanked out too.
+                if (resolve(cell) == nullptr) continue;
+                bottom = layer;
+                break;
             }
-            const SvgDocument* art = sprites_ ? sprites_->tileArt(tile) : nullptr;
-            if (art) drawTileArt(*art, bounds);
-            else fillTile(kTileColor(tile), bounds);
+            for (std::size_t layer = bottom; layer < layerCount; ++layer) {
+                const TiledCell& cell = map->layers()[layer].cells[index];
+                const SvgDocument* document = resolve(cell);
+                if (document == nullptr) continue;
+                drawCell(*document, tx, ty, cell.flags);
+            }
         }
     }
 }

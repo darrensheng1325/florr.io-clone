@@ -402,7 +402,11 @@ TEST(the_drawn_flower_tracks_the_server_without_ever_stepping_backwards) {
 }
 
 TEST(a_disconnect_removes_the_player_from_everyone_else) {
-    Harness h("disconnect");
+    // No bots: the world is one map with one small door, so the bot
+    // population stands in the same place a joining player does. "Alice sees
+    // exactly one flower once Bob is gone" is a statement about the
+    // disconnect, and it cannot be made in a crowd.
+    Harness h("disconnect", {}, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient alice;
@@ -582,7 +586,9 @@ TEST(logging_out_ends_the_session_at_both_ends) {
 }
 
 TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
-    Harness h("volley");
+    // No bots: they join at the same door this flower does now, and a farming
+    // bot kills the hornet under test before it ever fires.
+    Harness h("volley", {}, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
@@ -593,11 +599,9 @@ TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
     // Where THIS client's flower stands, so the hornet can be put in its face.
     //
     // Matched by the viewer's own net id rather than by taking the first
-    // PlayerTag in the world: the harness world also holds bots, and the first
-    // flower in it is one of them tens of thousands of units away. A hornet
-    // anchored out there fires shots this viewer's stream never carries, and
-    // the test then turns on whether an unrelated hornet happened to wander
-    // into view and fire inside the step budget.
+    // PlayerTag in the world: even with the bots off, the only flower that
+    // must be found is this client's. A hornet anchored on somebody else
+    // fires shots this viewer's stream never carries.
     World& world = h.server.world();
     const std::uint32_t selfNetId = client.view().self().netId;
     Query<PlayerTag, NetId, Transform> flowers(world);

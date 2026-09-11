@@ -12,12 +12,10 @@
 // map without a single bounds check of its own.
 //
 // A tile is its rectangle. Collision, line of sight and the push-out all work
-// on the plain 300-unit squares; the edges a wall or water tile is DRAWN with,
-// the biome skin it wears and the decoration an air cell shows are tileset
-// artwork chosen by scripts/edgeTiles.js, carried here only as a per-cell
-// STYLE byte (constants.h; styleAt / edgeMaskAt / skinAt / floorVariantAt)
-// for the renderer to read. Nothing in this file computes a style, and
-// nothing collides with one.
+// on the plain 300-unit squares. What a cell LOOKS like is not here at all:
+// the artwork is the map file's layers (tiled_map.h), which the client reads
+// for itself, and only this grid of three values -- ground, wall, water --
+// ever travels over the wire.
 
 #include <array>
 #include <cstdint>
@@ -240,7 +238,7 @@ public:
     Terrain();
 
     /// Builds the legacy procedural map for `seed`. Equal seeds give
-    /// byte-identical grids; production instead loads map_bundle.ts below.
+    /// byte-identical grids; production instead loads an authored map below.
     ///
     /// Ends by flood-filling from the spawn and carving a corridor to anything
     /// the noise walled off, so the postcondition is always isConnected().
@@ -251,41 +249,34 @@ public:
     /// side of a threshold.
     void generate(std::uint64_t seed);
 
-    /// Loads the tile grid from whichever map format `path` names: the Tiled
-    /// map the game is authored in, or the TypeScript bundle it used to ship
-    /// as. Pair it with worldMapPath() to pick the file.
+    /// Loads a map's collision grid. A map is a Tiled `.tmj` and nothing else;
+    /// the grid is DERIVED from the layers the author painted, by the rule in
+    /// shared/game/tiled_map.h: a tile layer whose `has_collision` property is
+    /// set blocks wherever it has a tile, and no other layer blocks at all.
+    ///
+    /// Prints what that rule resolved to -- which layers collide, and the wall
+    /// / water / ground counts -- once per map, because a tick box in the
+    /// layer panel is otherwise invisible until somebody walks through a wall.
     ///
     /// `realm` says WHICH world this map is. Every world realm carries its own
     /// grid with its own dimensions, so a second map need not be the size of
     /// the first -- a corridor level is a hundred tiles across and would
     /// otherwise have to be drawn inside a 200-square sheet of wall.
+    ///
+    /// loadTiledMap() is the same function under the name that says what the
+    /// file is; loadWorldMap() is the name the rest of the engine asks by.
     bool loadWorldMap(const std::string& path, std::string& errorOut,
                       Realm realm = Realm::Overworld);
-
-    /// Loads the tile layer of a Tiled `.tmj`. See shared/game/tiled_map.h.
     bool loadTiledMap(const std::string& path, std::string& errorOut,
                       Realm realm = Realm::Overworld);
-
-    /// Loads MAP_TILE_RLE from TypeScript's generated map_bundle.ts, which is
-    /// itself built from the Tiled map by scripts/encodeMap.js. The bundle
-    /// carries no dimensions, so it is always the historical square.
-    bool loadMapBundle(const std::string& path, std::string& errorOut,
-                       Realm realm = Realm::Overworld);
 
     /// Replaces one realm's grid with an authoritative network copy.
     ///
     /// The dimensions travel WITH the tiles: a client is told the shape of the
-    /// map it is being dropped into, because it has no map file of its own to
-    /// read it out of and a grid interpreted at the wrong width is a world
-    /// sheared diagonally.
-    ///
-    /// `styles` is the parallel grid of style bytes (constants.h: skin in the
-    /// high nibble, edge mask or floor variant in the low, so any value
-    /// 0..255), or EMPTY for a map with no variants, which reads as all zero.
-    /// Any other size refuses the grid.
+    /// map it is being dropped into, because a grid interpreted at the wrong
+    /// width is a world sheared diagonally.
     bool setTiles(const std::vector<std::uint8_t>& tiles, int cols, int rows,
-                  Realm realm = Realm::Overworld,
-                  const std::vector<std::uint8_t>& styles = {});
+                  Realm realm = Realm::Overworld);
 
     /// Drops a realm's grid, so the realm reads as solid everywhere again.
     void clearRealm(Realm realm);
@@ -310,38 +301,6 @@ public:
 
     Tile at(Vec2 p, Realm realm = Realm::Overworld) const {
         return atTile(toTileCoord(p.x), toTileCoord(p.y), realm);
-    }
-
-    /// The raw style byte of a cell, as the map authored it (constants.h).
-    /// A renderer's question only: nothing collides with a style. Zero off
-    /// the grid and everywhere on a map that carries no styles.
-    std::uint8_t styleAt(int tx, int ty, Realm realm = Realm::Overworld) const {
-        const Grid& g = grid(realm);
-        if (g.styles.empty() || tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) return 0;
-        return g.styles[static_cast<std::size_t>(ty) * static_cast<std::size_t>(g.cols) +
-                        static_cast<std::size_t>(tx)];
-    }
-
-    /// The sides a wall or water tile shows an edge on (constants.h's kEdge*
-    /// bits): the style's low nibble. Zero for an air cell, whose low nibble
-    /// is a floor variant instead, and zero off the grid.
-    std::uint8_t edgeMaskAt(int tx, int ty, Realm realm = Realm::Overworld) const {
-        if (atTile(tx, ty, realm) == Tile::Ground) return 0;
-        return styleEdgeMask(styleAt(tx, ty, realm));
-    }
-
-    /// The biome family a cell's artwork is drawn from: the style's high
-    /// nibble, 0 for the default family (and for a cell that leaves the
-    /// choice to the ground it stands on -- see the renderer).
-    std::uint8_t skinAt(int tx, int ty, Realm realm = Realm::Overworld) const {
-        return styleSkin(styleAt(tx, ty, realm));
-    }
-
-    /// The floor decoration an AIR cell shows: the style's low nibble. Zero
-    /// for any other tile kind, whose low nibble is its edge mask.
-    std::uint8_t floorVariantAt(int tx, int ty, Realm realm = Realm::Overworld) const {
-        if (atTile(tx, ty, realm) != Tile::Ground) return 0;
-        return styleFloorVariant(styleAt(tx, ty, realm));
     }
 
     /// A realm's grid dimensions, in tiles. Zero for the arena, the maze and
@@ -530,11 +489,6 @@ public:
     std::size_t tileCount(Realm realm = Realm::Overworld) const {
         return grid(realm).tiles.size();
     }
-    /// The raw style grid: tileCount() bytes parallel to tiles(), or EMPTY
-    /// when the realm's map carries none. styleAt() is the per-cell read.
-    const std::vector<std::uint8_t>& styles(Realm realm = Realm::Overworld) const {
-        return grid(realm).styles;
-    }
 
 private:
     static constexpr int kTileCoordLimit = 1 << 20;
@@ -569,11 +523,6 @@ private:
         int cols = 0;
         int rows = 0;
         std::vector<std::uint8_t> tiles;
-        /// Style bytes parallel to `tiles`, or empty when the map carries
-        /// none (the generated map, the TypeScript bundle, a map never run
-        /// through scripts/edgeTiles.js). Empty and all-zero read the same;
-        /// empty is just the cheaper spelling of it.
-        std::vector<std::uint8_t> styles;
         /// The connectivity root generate() chose, as a tile index.
         int spawnTile = 0;
     };
@@ -587,10 +536,9 @@ private:
     }
 
     /// Installs a grid of `cols` x `rows`, rejecting a shape the engine cannot
-    /// hold, a tile it has no Tile for, or a style grid that is neither empty
-    /// nor the tiles' size. Shared by every loader and by the wire.
-    bool install(Realm realm, std::vector<std::uint8_t> tiles, int cols, int rows,
-                 std::vector<std::uint8_t> styles);
+    /// hold or a tile it has no Tile for. Shared by every loader and by the
+    /// wire.
+    bool install(Realm realm, std::vector<std::uint8_t> tiles, int cols, int rows);
 
     void generateSections(Rng& rng);
     void carveAntHell(Rng& rng);
@@ -613,10 +561,7 @@ private:
 // The tile run-length encoding
 // ---------------------------------------------------------------------------
 //
-// The format `map_bundle.ts` stores MAP_TILE_RLE in, and the one a tile grid
-// travels over the wire in -- and, since the same shape fits, the one the
-// style bytes travel in beside it. One codec for all three, because a second
-// would be a second thing to keep in step with a decoder that already exists.
+// The format a tile grid travels over the wire in.
 //
 // A run is a header byte, an optional two-byte extension, then the value:
 //
@@ -624,21 +569,18 @@ private:
 //   if extended: count += (hi << 8) | lo
 //   value
 //
-// A raw grid is a byte per tile, which for the shipped world is forty
-// kilobytes -- already close to the socket's backpressure ceiling, and a
-// larger map would sail past it. Maps are overwhelmingly long runs of the same
-// tile, so this costs a few hundred bytes instead; a style grid is mostly
-// runs of one skin's plain cells and costs about the same.
+// A raw grid is a byte per tile, which for a 512-square map is a quarter of a
+// megabyte -- far past the socket's backpressure ceiling. Maps are
+// overwhelmingly long runs of the same tile, so this costs a few hundred bytes
+// instead.
 
 /// Encodes a row-major grid. Never fails: every byte value encodes.
 std::vector<std::uint8_t> encodeTileRle(const std::vector<std::uint8_t>& tiles);
 
 /// Decodes one, refusing a stream that does not yield exactly `expected`
-/// values or that carries a value above `maxValue` -- the last Tile for a tile
-/// grid; a style grid uses every byte value, so 255 for one.
+/// values or that carries a value the engine has no Tile for.
 bool decodeTileRle(const std::uint8_t* data, std::size_t size, std::size_t expected,
-                   std::vector<std::uint8_t>& out, std::string& errorOut,
-                   std::uint8_t maxValue = static_cast<std::uint8_t>(Tile::Block));
+                   std::vector<std::uint8_t>& out, std::string& errorOut);
 
 /// Writes one realm's grid in the wire's MapGrid shape (net/protocol.h).
 void writeMapGrid(ByteWriter& out, const Terrain& terrain, Realm realm);

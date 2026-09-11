@@ -731,20 +731,21 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     renderer_.setContent(&content());
     renderer_.setSprites(&sprites_);
     // NetClient keeps this object alive for the entire connection and replaces
-    // its grid with the authoritative TypeScript map when a game is joined.
+    // its grid with the server's authoritative one when a game is joined.
     renderer_.setTerrain(&net_.terrain());
-    // The annotation layers -- ground art, teleporter pads, the rarity glow's
-    // bands -- of every staged map, by realm. A pointer to a member that is
-    // filled a few lines down: the renderer reads it per frame, never now.
+    // Every staged map, by realm: the TILE ART the renderer paints the world
+    // with, plus the annotations -- teleporter pads, the rarity glow's bands.
+    // A pointer to a member that is filled a few lines down: the renderer
+    // reads it per frame, never now.
     renderer_.setWorldMaps(&worldMaps_);
     net_.contentHash = content().contentHash();
 
-    // The client reads the maps for what they MEAN, never for what is solid:
-    // the tile grids arrive over the wire, authoritative, and a second copy off
-    // disk would be a second answer about where the walls are. Passing no
-    // Terrain is how that is said in one place rather than remembered in
-    // several. Maps it cannot read cost the picker its choices, not the client
-    // its start.
+    // The client reads the maps for what they MEAN and what they LOOK LIKE,
+    // never for what is solid: the tile grids arrive over the wire,
+    // authoritative, and a second copy off disk would be a second answer about
+    // where the walls are. Passing no Terrain is how that is said in one place
+    // rather than remembered in several. Maps it cannot read cost the picker
+    // its choices and the world its art, not the client its start.
     std::string mapWarning;
     if (!worldMaps_.load(config.dataDir, nullptr, mapWarning)) {
         std::fprintf(stderr, "[map] %s; the spawn picker will offer the default only\n",
@@ -2063,7 +2064,8 @@ const SvgDocument* App::titleBackground(const std::string& backdrop) {
     // `desert` gets the desert without saying anything. Anything unrecognised
     // tiles the garden's, which is what the browser build did too.
     static const std::unordered_map<std::string, std::string> kFiles = {
-        {"default", "land.svg"},  {"land", "land.svg"},     {"desert", "desert.svg"},
+        {"default", "land.svg"},  {"land", "land.svg"},     {"garden", "land.svg"},
+        {"desert", "desert.svg"},
         {"ocean", "ocean.svg"},   {"hel", "hel.svg"},       {"ant_hell", "ant_hell.svg"},
         {"sewers", "sewers.svg"}, {"jungle", "jungle.svg"}, {"computer", "computer.svg"},
         {"unknown", "unknown.svg"},
@@ -2866,9 +2868,9 @@ void App::drawBossBars(Canvas& canvas, bool altHeld) {
 namespace {
 
 /// The minimap's section grid for a world map: one section per kSectionSize
-/// square of the map's extent, rounded up so a map that is not a multiple of
-/// the section -- most of the temporary biome maps -- still shows its last
-/// strip of tiles. The overworld comes out as the reference's 3x3.
+/// square of the map's extent, rounded up so a map whose size is not a whole
+/// number of sections still shows its last strip of tiles. Every map says its
+/// own size, so this is computed rather than assumed.
 struct SectionGrid {
     int cols = 1;
     int rows = 1;
@@ -2997,10 +2999,18 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
         for (int tx = minTileX; tx <= maxTileX; ++tx) {
             const Tile tile = terrain.atTile(tx, ty, realm);
             if (tile == Tile::Ground) continue;
-            // Solid ground reads as one black silhouette whatever kind of wall
-            // it is; only the passable oddities keep a colour of their own.
+            // Walls are one black silhouette whatever kind of wall they are --
+            // castle, dirt, a boulder -- because the shape is what a player
+            // reads a minimap for. WATER is the exception: it blocks like a
+            // wall (tileBlocks() is true of it) but it is the one blocker the
+            // map format still distinguishes, and a river drawn in the same
+            // black as a castle turns a recognisable coastline into a blob.
+            // The tileset's `water` tag exists for exactly this and for
+            // nothing else -- it never decides whether a cell blocks, only
+            // what kind of blocker it is.
             std::uint32_t colour = 0x000000u;
-            if (!tileBlocks(tile)) colour = tile == Tile::Water ? 0x4169E1u : 0xFF5500u;
+            if (tileIsWater(tile)) colour = 0x4169E1u;
+            else if (!tileBlocks(tile)) colour = 0xFF5500u;
             setFill(map, colour);
             map.fillRect(static_cast<float>(tx * kTileSize * scale - scrollX * scale),
                          static_cast<float>(ty * kTileSize * scale - scrollY * scale),

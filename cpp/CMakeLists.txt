@@ -29,6 +29,11 @@ elseif(FLIX_BUILD STREQUAL "dev")
   string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO
                  "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
   add_compile_options(-fno-omit-frame-pointer)
+  # What a development build compiles differently. Today that is one thing:
+  # the account abuse limits are not enforced (server/account_limits.h). It is
+  # a compile definition rather than a runtime flag so that a release build
+  # cannot be talked into turning them off.
+  add_compile_definitions(FLIX_DEV_BUILD)
 else()
   message(FATAL_ERROR "FLIX_BUILD must be dev or release, not '${FLIX_BUILD}'")
 endif()
@@ -233,40 +238,59 @@ if(NOT FLIX_MAP_FILES)
 endif()
 message(STATUS "flowrix: staging maps ${FLIX_MAP_FILES}")
 
-# The terrain tileset's tile art: the plain wall and water tiles and the thirty
-# wall_edge_* / water_edge_* variants scripts/edgeTiles.js --art generates.
-# Globbed, unlike the maps, because the set is defined by the tileset rather
-# than by a list anyone maintains by hand, and a variant the tileset names but
-# the directory lacks is a warning in the client rather than a broken build.
+# Every tileset the manifest's maps name. A Tiled map references its external
+# tilesets by a path relative to itself, so the readers resolve them beside the
+# staged .tmj -- which only works if they are staged too. Read out of the maps
+# at configure time rather than globbed, for the same reason the maps come out
+# of the manifest: a .tsj no map names is not map data, and one a map names but
+# the tree lacks should fail the build rather than the server.
+set(FLIX_MAP_TILESETS)
+foreach(map IN LISTS FLIX_MAP_FILES)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${map})
+  file(READ ${map} FLIX_MAP_TEXT)
+  string(REGEX MATCHALL "\"source\"[ \t]*:[ \t]*\"[^\"]+\"" FLIX_TILESET_REFS "${FLIX_MAP_TEXT}")
+  foreach(ref IN LISTS FLIX_TILESET_REFS)
+    string(REGEX REPLACE "^.*:[ \t]*\"([^\"]+)\"$" "\\1" source "${ref}")
+    get_filename_component(name "${source}" NAME)
+    if(name MATCHES "\\.tsj$")
+      list(APPEND FLIX_MAP_TILESETS ${CMAKE_CURRENT_SOURCE_DIR}/../maps/${name})
+    endif()
+  endforeach()
+endforeach()
+if(NOT FLIX_MAP_TILESETS)
+  message(FATAL_ERROR "no map in maps/maps.json names a tileset")
+endif()
+list(REMOVE_DUPLICATES FLIX_MAP_TILESETS)
+message(STATUS "flowrix: staging tilesets ${FLIX_MAP_TILESETS}")
+
+# The tile art: one SVG per tile of every tileset above. Globbed, unlike the
+# maps, because the set is defined by the tilesets rather than by a list anyone
+# maintains by hand, and a file the tileset names but the directory lacks is a
+# warning in the client rather than a broken build.
 file(GLOB FLIX_TILE_ART CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../maps/tiles/*.svg)
+
+# The nine ground artworks. No longer map data -- the map's own bottom layer is
+# the ground now -- but the title screen still paints its backdrop with them
+# (App::titleBackground loads land.svg, desert.svg and the rest by bare name),
+# so they still ship. Globbed: the backdrop picks one by name at run time and a
+# missing one is a blank backdrop, not a broken build.
+file(GLOB FLIX_GROUND_ART CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/*.svg)
 
 set(FLIX_DATA_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/mobs.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/petals.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/mob_drops.json
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/map_bundle.ts
     ${CMAKE_CURRENT_SOURCE_DIR}/../maps/maps.json
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/terrain.tsj
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground.tsj
     # Every map maps.json names. Read out of the manifest rather than globbed,
     # so adding a map is one edit in one file and the build fails loudly if the
     # manifest names one that is not there -- which is better than a server
     # that boots with a realm missing.
     ${FLIX_MAP_FILES}
-    # The ground artwork the map's background layer names. From maps/, not from
-    # src/: the browser build keeps its own copies of these because it is
-    # frozen, and the map's art belongs with the map.
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/land.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/desert.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/ocean.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/hel.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/ant_hell.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/sewers.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/jungle.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/computer.svg
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/unknown.svg
-    # The terrain tileset's tile art -- see the note below.
+    # The tilesets those maps name, and the tile art the tilesets name.
+    ${FLIX_MAP_TILESETS}
     ${FLIX_TILE_ART}
+    # The title screen's backdrops.
+    ${FLIX_GROUND_ART}
     ${CMAKE_CURRENT_SOURCE_DIR}/data/mob_xp.json)
 
 set(FLIX_DATA_STAGED)
@@ -275,18 +299,13 @@ foreach(source IN LISTS FLIX_DATA_SOURCES)
   list(APPEND FLIX_DATA_STAGED ${FLIX_DATA_DIR}/${name})
 endforeach()
 
-# world.tmj names both tilesets as siblings, which the flat copy below
-# preserves. The ground art is staged flat too, which is how sprites.cpp finds
-# it by bare file name.
-#
-# The TERRAIN tileset's tile art is staged flat for the same reason. It used
-# not to be: the engine painted walls from a pattern of its own and grew their
-# outlines at runtime, so the palette's SVGs were Tiled's business alone. The
-# outlines are TILES now -- a wall or water cell's exposed sides are chosen by
-# scripts/edgeTiles.js and written into the map as wall_edge_*/water_edge_*
-# variants -- and the client draws exactly the file Tiled shows, looked up by
-# bare name (sprites.cpp's edgeArt). What the author sees is what is drawn,
-# and that is only true if the same files ship.
+# The whole set is staged FLAT, by bare file name, and that is what makes the
+# references inside the files resolve. A map names its tilesets as siblings and
+# a tileset names its tile art under `tiles/`; both readers look for them beside
+# the map, and the client looks up a tile's art by bare name (sprites.cpp), so
+# `maps/tileset.tsj` and `maps/tiles/grass_c_0.svg` both land directly in the
+# data directory. What the author sees in Tiled is what is drawn, and that is
+# only true if the same files ship.
 #
 # A plain `copy`, not `copy_if_different`: the outputs must come out strictly
 # newer than the inputs, or every build would see them as still out of date and
@@ -306,7 +325,7 @@ add_dependencies(flowrix_server flix_data)
 if(EMSCRIPTEN)
   # Content goes INSIDE the wasm, not beside it. --embed-file rather than
   # --preload-file, for three reasons: the client reads mobs.json, petals.json,
-  # the map bundle, the biome SVGs and the fonts synchronously during start(),
+  # the maps and their art and the fonts synchronously during start(),
   # so there is nothing to gain from a separate fetch it would have to wait for
   # anyway; a single artifact cannot half-deploy, which a .wasm and a stale
   # .data next to it can; and the server build has no page to run a preload

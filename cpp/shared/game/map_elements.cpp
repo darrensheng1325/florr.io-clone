@@ -54,6 +54,26 @@ bool bodyInsideWall(const Terrain& terrain, Vec2 centre, double halfSize, Realm 
     return false;
 }
 
+/// Somewhere a body can actually stand, as near `hint` as the map allows.
+///
+/// The last resort of every spawn picker below. Handing back a rectangle's
+/// raw centre used to be that last resort, on the reasoning that the movement
+/// step pushes a body out of a wall -- which is true of a wall FACE and not of
+/// a body that started in the middle of a block. The shipped map is more than
+/// half solid, so a rectangle whose fifty samples all missed is no longer an
+/// exotic case and its centre is as likely to be inside a block as not.
+///
+/// Terrain::findOpenSpawn samples a disc around the hint and then, if that
+/// fails, walks rings of tiles outward from it, so it always answers with open
+/// ground when the realm has any within reach. `reach` is sized from the
+/// rectangle, which keeps the answer inside the area the author drew whenever
+/// that area has one open cell in it at all.
+Vec2 openGroundNear(const Terrain& terrain, Realm realm, Rng& rng, const Rect& area) {
+    const Vec2 centre{area.x + area.w * 0.5, area.y + area.h * 0.5};
+    const double reach = std::max(area.w, area.h) * 0.5;
+    return terrain.findOpenSpawn(rng, centre, reach, realm);
+}
+
 /// A colour property, as Tiled writes one. Its colour picker emits `#AARRGGBB`
 /// (or `#RRGGBB`); a map may also just type a number. The alpha is dropped --
 /// the buttons are opaque plates and a half-transparent one reads as broken.
@@ -79,7 +99,7 @@ bool parseColor(const Json& value, std::uint32_t& out) {
     return true;
 }
 
-/// `sewers_east` -> `Sewers East`. What a spawn button says when the map did
+/// `garden_east` -> `Garden East`. What a spawn button says when the map did
 /// not bother to give it a label, which is most of them.
 std::string titleCase(const std::string& id) {
     std::string out;
@@ -133,6 +153,40 @@ bool onSegment(Vec2 a, Vec2 b, Vec2 at) {
     if (std::fabs(cross) > kEdgeEpsilon * length) return false;
     const double dot = (at.x - a.x) * dx + (at.y - a.y) * dy;
     return dot >= -kEdgeEpsilon && dot <= length * length + kEdgeEpsilon;
+}
+
+/// `maps/garden.tmj` -> `garden`. A map's id is its file stem, so the manifest
+/// need not repeat it and a teleporter's `targetMap` reads like a file name.
+std::string stemOf(const std::string& fileName) {
+    const std::size_t slash = fileName.find_last_of("/\\");
+    const std::string base = slash == std::string::npos ? fileName : fileName.substr(slash + 1);
+    const std::size_t dot = base.find_last_of('.');
+    return dot == std::string::npos ? base : base.substr(0, dot);
+}
+
+/// `Garden East!` -> `garden_east`. The inverse of titleCase(), and what a
+/// door with no id of its own is called.
+///
+/// Tiled gives an object a NAME field and a property bag, and an author
+/// filling in the label their button should say has already typed the only
+/// human name the door has. Deriving an id from it beats refusing the door:
+/// lower-cased, with every run of punctuation or space collapsed to one
+/// underscore, so the id stays something a teleporter or a settings file can
+/// hold. Empty when the label had no letters or digits at all.
+std::string slugOf(const std::string& label) {
+    std::string out;
+    bool pending = false;
+    for (const char c : label) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (std::isalnum(u)) {
+            if (pending && !out.empty()) out.push_back('_');
+            pending = false;
+            out.push_back(static_cast<char>(std::tolower(u)));
+        } else {
+            pending = true;
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -249,79 +303,10 @@ void MapData::reset(Realm realm) {
     displayName_.clear();
     biome_.clear();
     defaultMobGroup_.clear();
-    // A bundle has no background layer, and saying so is what makes the
-    // renderer fall back to the section grid rather than paint nothing.
-    background_.clear();
-    groundPalette_.clear();
-    backgroundWidth_ = backgroundHeight_ = 0;
+    artFiles_.clear();
+    layers_.clear();
+    width_ = height_ = 0;
     realm_ = realm;
-}
-
-bool MapData::load(const std::string& bundlePath, std::string& errorOut, Realm realm) {
-    reset(realm);
-
-    std::ifstream input(bundlePath, std::ios::binary);
-    if (!input) {
-        errorOut = "could not open TypeScript map bundle: " + bundlePath;
-        return false;
-    }
-    const std::string source((std::istreambuf_iterator<char>(input)),
-                             std::istreambuf_iterator<char>());
-
-    // The array is plain JSON inside a TypeScript literal, so it is sliced out
-    // and handed to the JSON parser rather than lexed again here.
-    constexpr const char* kMarker = "export const MAP_ELEMENTS";
-    const std::size_t marker = source.find(kMarker);
-    if (marker == std::string::npos) {
-        errorOut = "MAP_ELEMENTS is missing from " + bundlePath;
-        return false;
-    }
-    // Past the '=' first. The declaration reads
-    //   export const MAP_ELEMENTS: MapElement[] = [
-    // so the first '[' after the name belongs to the TYPE, not the value, and
-    // slicing from it yields an empty array that parses perfectly.
-    const std::size_t assign = source.find('=', marker);
-    const std::size_t begin = assign == std::string::npos ? std::string::npos
-                                                          : source.find('[', assign);
-    if (begin == std::string::npos) {
-        errorOut = "MAP_ELEMENTS is not an array in " + bundlePath;
-        return false;
-    }
-    // Scan for the matching bracket rather than the next "];": the elements
-    // nest arrays of their own, and every one of them would end the slice early.
-    int depth = 0;
-    std::size_t end = std::string::npos;
-    bool inString = false;
-    for (std::size_t i = begin; i < source.size(); ++i) {
-        const char c = source[i];
-        if (inString) {
-            if (c == '\\') ++i;
-            else if (c == '"') inString = false;
-            continue;
-        }
-        if (c == '"') inString = true;
-        else if (c == '[') ++depth;
-        else if (c == ']' && --depth == 0) { end = i; break; }
-    }
-    if (end == std::string::npos) {
-        errorOut = "MAP_ELEMENTS is unterminated in " + bundlePath;
-        return false;
-    }
-
-    Json root;
-    std::string parseError;
-    if (!Json::parse(source.substr(begin, end - begin + 1), root, parseError) || !root.isArray()) {
-        errorOut = "MAP_ELEMENTS did not parse: " + parseError;
-        return false;
-    }
-
-    adopt(root);
-    return true;
-}
-
-bool MapData::loadWorldMap(const std::string& path, std::string& errorOut, Realm realm) {
-    return isTiledMapPath(path) ? loadTiled(path, errorOut, realm)
-                                : load(path, errorOut, realm);
 }
 
 bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm realm) {
@@ -329,25 +314,59 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
 
     TiledMap map;
     if (!map.load(path, errorOut)) return false;
+
+    // The id is the file stem unless a caller already named this map. It is
+    // needed BEFORE the defaults below, because two of them fall back to it.
+    if (id_.empty()) id_ = stemOf(path);
+
     const Json& properties = map.properties();
     displayName_ = properties["displayName"].asString();
+    // A map that never says which biome it is IS its own biome. The picker's
+    // first row is biomes, so a silent map would otherwise share a nameless
+    // tab with every other silent map -- and `garden.tmj` should not have to
+    // write "garden" into a property bag to be the garden.
     biome_ = properties["biome"].asString();
+    if (biome_.empty()) biome_ = id_;
+    // And a map's default mob group is its biome unless it says otherwise:
+    // mobs.json's groups are named after biomes, so the two agree by default
+    // and only a map that deliberately disagrees has to say so.
     defaultMobGroup_ = properties["defaultMobGroup"].asString();
+    if (defaultMobGroup_.empty()) defaultMobGroup_ = biome_;
+
     adopt(map.elements());
-    background_ = map.background();
-    groundPalette_ = map.groundPalette();
-    backgroundWidth_ = map.width();
-    backgroundHeight_ = map.height();
+
+    artFiles_ = map.artFiles();
+    layers_ = map.layers();
+    width_ = map.width();
+    height_ = map.height();
+
+    // What the file resolved to, once, at load. An author who leaves every
+    // property blank still gets told which biome and which mob group their map
+    // ended up being, and which door ids the picker will offer -- otherwise the
+    // defaults above are invisible until something spawns wrong.
+    std::string doors;
+    for (const MapElement* point : playerSpawns_) {
+        if (!doors.empty()) doors += ", ";
+        doors += point->spawnId;
+        if (!point->pickable) doors += " (not pickable)";
+    }
+    // stdout, not stderr: this is what the map RESOLVED to, not something
+    // wrong with it. stderr stays the channel that means a map needs fixing,
+    // so "no [map] lines on stderr" is still a meaningful thing to check.
+    std::fprintf(stdout,
+                 "[map] %s: %dx%d tiles, biome \"%s\", mobs \"%s\", %d art files, %d layers, "
+                 "doors: %s\n",
+                 id_.c_str(), width_, height_, biome_.c_str(), defaultMobGroup_.c_str(),
+                 static_cast<int>(artFiles_.size()), static_cast<int>(layers_.size()),
+                 doors.empty() ? "none" : doors.c_str());
     return true;
 }
 
-int MapData::groundAt(Vec2 at) const {
-    if (background_.empty()) return -1;
-    const int tx = static_cast<int>(std::floor(at.x / kTileSize));
-    const int ty = static_cast<int>(std::floor(at.y / kTileSize));
-    if (tx < 0 || ty < 0 || tx >= backgroundWidth_ || ty >= backgroundHeight_) return -1;
-    return background_[static_cast<std::size_t>(ty) * static_cast<std::size_t>(backgroundWidth_) +
-                       static_cast<std::size_t>(tx)];
+TiledCell MapData::cellAt(std::size_t layer, int tx, int ty) const {
+    if (layer >= layers_.size()) return {};
+    if (tx < 0 || ty < 0 || tx >= width_ || ty >= height_) return {};
+    return layers_[layer].cells[static_cast<std::size_t>(ty) * static_cast<std::size_t>(width_) +
+                                static_cast<std::size_t>(tx)];
 }
 
 /// The one element parser, shared by both map formats.
@@ -431,16 +450,30 @@ void MapData::adopt(const Json& array) {
         elements_.push_back(std::move(element));
     }
 
-    // The picker's row, in button order. A spawn point with no id at all is
-    // dropped: it is unreachable by name, so a teleporter could not aim at it
-    // and a saved preference could not name it -- an unfinished object rather
-    // than a usable one.
-    for (const MapElement& element : elements_) {
+    // Every door needs an id: it is how a teleporter aims at one, how a saved
+    // preference names one, and how a join request asks for one. Three places
+    // an author might have put it, in order, so a map drawn entirely with
+    // Tiled's default fields still has working doors:
+    //
+    //   1. the `spawnId` property, or the object's NAME (tiled_map folds the
+    //      name into the property before it gets here);
+    //   2. a slug of the door's `label` -- if they typed "Garden" on the
+    //      button, the door is `garden`;
+    //   3. the MAP's id, which every map has.
+    //
+    // Only a map with several unnamed doors can now collide, and that shows up
+    // as a duplicate id rather than as a door that silently vanished.
+    for (MapElement& element : elements_) {
         if (element.kind != MapElementKind::PlayerSpawn) continue;
+        if (element.spawnId.empty()) element.spawnId = slugOf(element.label);
+        if (element.spawnId.empty()) element.spawnId = id_;
         if (element.spawnId.empty()) {
             std::fprintf(stderr, "[map] a player spawn rectangle has no spawnId; ignored\n");
             continue;
         }
+    }
+    for (const MapElement& element : elements_) {
+        if (element.kind != MapElementKind::PlayerSpawn || element.spawnId.empty()) continue;
         playerSpawns_.push_back(&element);
     }
     // Stable, so `order` breaks ties by map order rather than arbitrarily: two
@@ -577,13 +610,14 @@ Vec2 MapData::defaultSpawn(Rng& rng, const Terrain& terrain,
         if (findOpenPoint(*zone, rng, terrain, spawn, mobs)) return spawn;
     }
 
+    // Every candidate inside every door and every beginner band was solid or
+    // crowded. The first door is still where the author meant people to
+    // arrive, so the search starts from it -- but it starts, rather than
+    // stopping there: see openGroundNear().
     if (!playerSpawns_.empty()) {
-        // Every candidate was solid. The rectangle's centre is still a better
-        // guess than the middle of the map, and movement pushes a body out of
-        // a wall.
-        return playerSpawns_.front()->centre();
+        return openGroundNear(terrain, realm_, rng, playerSpawns_.front()->bounds);
     }
-    if (!common.empty()) return common.front()->centre();
+    if (!common.empty()) return openGroundNear(terrain, realm_, rng, common.front()->bounds);
     const Vec2 extent = terrain.realmExtent(realm_);
     return terrain.findOpenSpawn(rng, {extent.x * 0.5, extent.y * 0.5}, 600.0, realm_);
 }
@@ -599,28 +633,17 @@ bool MapData::spawnAt(const std::string& spawnId, Rng& rng, const Terrain& terra
     if (point == nullptr) return false;
     if (findOpenPoint(*point, rng, terrain, out, mobs)) return true;
     // The rectangle exists but nothing inside it was clear. Its centre is
-    // still where the author meant people to arrive, and the movement step
-    // pushes a body out of whatever it landed in.
-    out = point->centre();
+    // still where the author meant people to arrive, so that is where the
+    // search for standable ground starts -- on a map that is mostly wall the
+    // centre itself is often solid, and a body started inside a block is one
+    // the movement step cannot reliably push out.
+    out = openGroundNear(terrain, realm_, rng, point->bounds);
     return true;
 }
 
 // ---------------------------------------------------------------------------
 // WorldMaps
 // ---------------------------------------------------------------------------
-
-namespace {
-
-/// `maps/sewers.tmj` -> `sewers`. A map's id is its file stem, so the manifest
-/// need not repeat it and a teleporter's `targetMap` reads like a file name.
-std::string stemOf(const std::string& fileName) {
-    const std::size_t slash = fileName.find_last_of("/\\");
-    const std::string base = slash == std::string::npos ? fileName : fileName.substr(slash + 1);
-    const std::size_t dot = base.find_last_of('.');
-    return dot == std::string::npos ? base : base.substr(0, dot);
-}
-
-} // namespace
 
 void WorldMaps::adoptSingle(MapData map) {
     maps_.clear();
@@ -665,9 +688,12 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
             return false;
         }
     } else {
-        // No manifest: one map, in whichever format this directory was staged
-        // with. Every test harness and the offline build take this path.
-        files.push_back(worldMapPath(dataDir));
+        // The manifest is not optional. It is the only thing that says which
+        // realm is which map, and a directory without one is a staging bug
+        // rather than a shape to guess at -- guessing is what let a server
+        // boot with a realm missing.
+        errorOut = dataDir + "/maps.json is missing; it is what names the maps";
+        return false;
     }
 
     if (static_cast<int>(files.size()) > kMaxWorldMaps) {
@@ -684,10 +710,10 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
         const std::string path = files[i].find('/') == std::string::npos
                                      ? dataDir + "/" + files[i]
                                      : files[i];
-        if (terrain != nullptr && !terrain->loadWorldMap(path, errorOut, realm)) return false;
+        if (terrain != nullptr && !terrain->loadTiledMap(path, errorOut, realm)) return false;
         maps_[i].setId(stemOf(files[i]));
         std::string annotationError;
-        if (!maps_[i].loadWorldMap(path, annotationError, realm)) {
+        if (!maps_[i].loadTiled(path, annotationError, realm)) {
             // The annotation layer is optional: a map without one still has
             // walls and can be walked around. Losing it silently is what is
             // not acceptable.
@@ -729,7 +755,7 @@ void WorldMaps::index() {
     // A spawn id that only one map uses is offered unqualified, because that
     // is what an author types into a teleporter and what a settings file
     // written before a second map existed already holds. Ambiguous ids are
-    // qualified, so `sewers:entrance` and `world:entrance` stay distinct.
+    // qualified, so `garden:entrance` and `warren:entrance` stay distinct.
     // Counted over EVERY door, pickable or not: an id is qualified by what
     // exists, not by what is offered, so a sublevel door an admin names
     // resolves to the same door a pad arrives at.
@@ -760,9 +786,9 @@ void WorldMaps::index() {
             choice.color = point->color;
             choice.realm = worldRealm(static_cast<int>(slot));
             choice.backdrop = point->backdrop.empty() ? point->spawnId : point->backdrop;
-            choice.biome = !point->biome.empty() ? point->biome
-                         : !map.biome().empty()  ? map.biome()
-                                                 : map.id();
+            // The map's own biome already defaults to its id, so a door that
+            // says nothing lands in its map's tab.
+            choice.biome = point->biome.empty() ? map.biome() : point->biome;
             for (std::size_t i = 0; i < map.elements().size(); ++i) {
                 if (&map.elements()[i] == point) {
                     choice.element = static_cast<int>(i);

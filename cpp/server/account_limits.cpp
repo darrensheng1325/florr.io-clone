@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 namespace flix {
@@ -229,9 +230,27 @@ AccountLimiter::Bucket& AccountLimiter::bucketFor(std::unordered_map<std::string
     return bucket;
 }
 
+AccountLimiter::AccountLimiter() {
+    if (enforced_) return;
+    // Once per process, however many limiters a test builds: a server running
+    // with its abuse defences off is something an operator has to be able to
+    // see in the log, and a dev build that reached a machine it should not
+    // have is worth shouting about.
+    static bool announced = false;
+    if (announced) return;
+    announced = true;
+    std::fprintf(stderr,
+                 "[ABUSE] development build: account creation and login limits are NOT enforced\n");
+}
+
 LimitVerdict AccountLimiter::spendRegistration(const std::string& key,
                                                const std::function<int()>& accountsToday,
                                                double nowMillis) {
+    // Nothing is counted, so nothing is refused and no bucket is touched: a
+    // dev build that is later switched back on starts from a full allowance
+    // rather than from whatever an afternoon of testing had drained.
+    if (!enforced_) return LimitVerdict{};
+
     Bucket& bucket =
         bucketFor(registerBuckets_, key, kRegisterBurst, kRegisterRefillPerSecond, nowMillis);
 
@@ -265,6 +284,7 @@ LimitVerdict AccountLimiter::spendRegistration(const std::string& key,
 }
 
 LimitVerdict AccountLimiter::spendLoginAttempt(const std::string& key, double nowMillis) {
+    if (!enforced_) return LimitVerdict{};
     Bucket& bucket = bucketFor(loginBuckets_, key, kLoginBurst, kLoginRefillPerSecond, nowMillis);
     if (bucket.tokens < 1) {
         return denied(LimitScope::Address, waitSeconds(bucket.tokens, kLoginRefillPerSecond),

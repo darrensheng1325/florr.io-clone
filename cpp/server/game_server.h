@@ -84,6 +84,17 @@ struct ServerConfig {
     /// port the game itself uses. Empty means the build directory the server
     /// module was loaded from. Unused natively.
     std::string webRoot;
+    /// How many bots to keep in the world, or -1 for the usual population
+    /// (kBotTargetTotalPlayers minus the humans online). Zero is a world with
+    /// no bots in it at all.
+    ///
+    /// Here for the tests. The world is one map now, so its bots stand in the
+    /// same door a joining player does -- which is what a live server WANTS
+    /// and what makes "these two flowers are the only ones in sight" or "this
+    /// mob lived long enough to fire" impossible to state. `/admin
+    /// set_bot_count` is the same knob at run time; this is the one a harness
+    /// can set before the first tick.
+    int botCount = -1;
 };
 
 class GameServer : public net::TransportHandler {
@@ -418,9 +429,9 @@ private:
     /// Which realm this session's next body belongs in, from its spawn choice.
     Realm spawnRealmFor(const Session&) const;
     /// The door the session's spawn choice names, or null for the default and
-    /// for the two realms that have no map. A sublevel door (pickable false)
-    /// only resolves for an admin session: everyone else reaches those
-    /// through a pad from the biome's main area.
+    /// for the two realms that have no map. A door a map marks `pickable:
+    /// false` only resolves for an admin session: everyone else reaches one
+    /// through a pad.
     const SpawnChoice* chosenDoor(const Session&) const;
     /// Tells a client which map its body is standing on now: the arrival
     /// point and the realm's whole tile grid. Resets the server-side view so

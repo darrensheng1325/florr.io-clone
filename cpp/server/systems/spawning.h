@@ -1,12 +1,14 @@
 #pragma once
 // Keeping the world populated: what appears, where, and what is recycled.
 //
-// A 60000x60000 map cannot hold a full population. What is simulated instead
-// is a moving neighbourhood: mobs appear inside each player's buffered
-// viewport, and a mob nobody has
-// been near for long enough is recycled. The map is dense exactly where
-// someone is looking and empty everywhere else, so the tick cost scales with
-// the number of players rather than with the area of the world.
+// A map of any size worth walking across cannot hold a full population. What
+// is simulated instead is a moving neighbourhood: mobs appear inside each
+// player's buffered viewport, and a mob nobody has been near for long enough
+// is recycled. The map is dense exactly where someone is looking and empty
+// everywhere else, so the tick cost scales with the number of players rather
+// than with the area of the world. (The tuning below is still derived from
+// the reference's 60000-unit square, which is where its numbers came from;
+// every actual map states its own size and is measured against that.)
 //
 // Two ceilings sit above that. A per-section cap keeps one biome from being
 // stripped to feed another, and a global cap keeps a crowd of players from
@@ -252,8 +254,8 @@ public:
         Vec2 position;
         /// The realm this flower is standing in. Spawn bands only serve
         /// viewers in their OWN map: two maps' coordinates overlap
-        /// numerically, and a band that ignored this would stock the sewers
-        /// because somebody was standing at the same numbers in the garden.
+        /// numerically, and a band that ignored this would stock a second map
+        /// because somebody was standing at the same numbers in the first.
         Realm realm = Realm::Overworld;
         /// Half the reported viewport plus the spawn buffer, per axis: the box
         /// a mob has to be inside to count as seen, the rectangle this
@@ -334,7 +336,7 @@ public:
     ///
     /// kInvalidIndex when the group is empty, unknown, or admits nothing at
     /// this tier -- all three are "no spawn this attempt" rather than a
-    /// fallback, because a fallback here would put garden mobs in the sewers.
+    /// fallback, because a fallback here would put one map's mobs on another.
     std::uint16_t chooseGroupMob(const ContentRegistry& content, std::uint16_t group,
                                  Rarity rarity, Rng& rng) const;
 
@@ -550,6 +552,20 @@ private:
 
     Census census_;
     double nextPopulationMillis_ = 0;
+
+    /// The overworld's rectangle, read off the terrain at the top of every
+    /// run().
+    ///
+    /// The density fill and the boss pass are overworld-only by construction,
+    /// and both need the map's extent to know where its border band is -- but
+    /// several of the helpers they reach through (sampleZonePoint,
+    /// randomPointInZoneType) are handed no Terrain and would each have to
+    /// grow a parameter for it. Cached once a tick instead. It is a MAP fact,
+    /// not a constant: the shipped world is 19200 units square, not the
+    /// historical 60000, and a hard-coded square let ambient mobs spawn flush
+    /// against the real map's right and bottom walls while correctly refusing
+    /// its left and top.
+    Vec2 overworldExtent_{kWorldSize, kWorldSize};
 
     /// Rebuilt when `worldMaps` or the content changes, which in the server is
     /// once. Bands from EVERY staged map, each tagged with its realm.

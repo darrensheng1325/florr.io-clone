@@ -41,12 +41,11 @@ local storage. See `cpp/docs/ARCHITECTURE.md`, "The offline build".
 | `npm start` | Build server and run `dist/server.js` |
 | `npm run dev` | Webpack dev watch |
 | `npm run dev:server` | Run server under `ts-node-dev` |
-| `npm run build:map` | Compile `maps/world.tmj` into `src/map_bundle.ts` after editing the map in Tiled |
 | `npm run svg2skin -- art.svg` | Convert an SVG into custom-skin commands |
 
 ### Biomes
 
-The world is divided into biomes (ocean, desert, jungle, etc.) with their own mobs, rarities, and scaling. The map is authored in [Tiled](https://www.mapeditor.org) and lives in `maps/world.tmj`, with the tile palette in `maps/terrain.tsj` — see [`maps/README.md`](maps/README.md).
+The world is divided into biomes (ocean, desert, jungle, etc.) with their own mobs, rarities, and scaling. The maps are authored in [Tiled](https://www.mapeditor.org) and live in `maps/`, listed by `maps/maps.json` with their tile palette in `maps/tileset.tsj` and one SVG per tile in `maps/tiles/`. There is no build step: the engine reads the `.tmj` files directly. See [`maps/README.md`](maps/README.md).
 
 ### Custom skins from SVG
 
@@ -76,7 +75,7 @@ shapes when the artwork exceeds the 24-shape limit.
 - **PvP arena** with dedicated spawner and rendering
 - **Bots** for populating servers
 - **Daily streak** rewards and a tutorial flow for new players
-- **Tiled map** (`maps/world.tmj`) for the world's terrain, spawn zones, biomes and teleporters
+- **Tiled maps** (`maps/*.tmj`, listed by `maps/maps.json`) for the world's art layers, collision, spawn zones, doors and teleporters
 - **SVG → skin converter** (`SvgToSkin.html`, `scripts/svg-to-skin.js`) for turning artwork into custom-skin commands
 - **Persistence** via custom JSON database
 - **HTTPS** support (drop `cert.crt` / `cert.key` at the project root). If that
@@ -129,8 +128,8 @@ src/
 cpp/                        # native physics module (built with make)
 assembly/                   # AssemblyScript sources
 assets/                     # images and SVGs
-scripts/                    # build helpers (e.g. encodeMap.js, compressbundle.js)
-maps/                       # the world map, in Tiled format
+scripts/                    # build helpers (e.g. compressbundle.js, svg-to-skin.js)
+maps/                       # the world maps, in Tiled format (see maps/README.md)
 MapEditor.html              # the retired map editor; Tiled replaced it
 SvgToSkin.html              # standalone SVG → skin command converter
 ```

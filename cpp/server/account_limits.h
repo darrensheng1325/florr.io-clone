@@ -51,6 +51,22 @@ inline constexpr double kRefusalLogIntervalMillis = 10000;
 /// defence into the memory exhaustion it is defending against.
 inline constexpr std::size_t kMaxTrackedAddresses = 20000;
 
+/// Whether these limits are ENFORCED at all.
+///
+/// A DEVELOPMENT build does not enforce them. Every limit here is keyed on the
+/// address, and everything that talks to a dev server comes from one: the
+/// fifth headless login of an afternoon is indistinguishable from the fifth of
+/// an attack, and a screenshot rig cannot wait out a ten-minute refill. A
+/// RELEASE build always enforces -- this is the defence a nine-thousand
+/// account spam run bought (see the header note), so the switch is a compile
+/// definition set only by the dev flavour (cpp/CMakeLists.txt) and there is no
+/// way to ask a shipping server to go without it.
+#ifdef FLIX_DEV_BUILD
+inline constexpr bool kAccountLimitsEnforcedByDefault = false;
+#else
+inline constexpr bool kAccountLimitsEnforcedByDefault = true;
+#endif
+
 /// Which limit refused an attempt.
 enum class LimitScope { None, Address, Daily, Global };
 
@@ -73,6 +89,15 @@ std::string addressKey(const std::string& peer);
 
 class AccountLimiter {
 public:
+    /// Says once, on stderr, when this build is not enforcing anything.
+    AccountLimiter();
+
+    /// Whether a spend costs anything. False in a development build; a test
+    /// that exercises the limits themselves turns it back on, which is also
+    /// what makes those tests say out loud that they are about enforcement.
+    bool enforced() const { return enforced_; }
+    void setEnforced(bool on) { enforced_ = on; }
+
     /// Spend one registration attempt's budget.
     ///
     /// `accountsToday` reports what the database says this address already
@@ -121,6 +146,7 @@ private:
     void sweep(std::unordered_map<std::string, Bucket>& table, double burst,
                double refillPerSecond, double nowMillis);
 
+    bool enforced_ = kAccountLimitsEnforcedByDefault;
     double lastRefusalLogMillis_ = 0;
     int suppressedRefusals_ = 0;
 

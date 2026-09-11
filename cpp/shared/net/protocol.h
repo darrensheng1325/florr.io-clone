@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 20;
+inline constexpr std::uint16_t kProtocolVersion = 21;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -186,25 +186,20 @@ enum class ServerMessage : std::uint8_t {
 //   u16 rows           the map's own dimensions -- maps are not all one size
 //   u32 byteCount
 //   u8  bytes[]        the tile ids, run-length encoded (terrain.h)
-//   u32 styleByteCount
-//   u8  styleBytes[]   the STYLE bytes, one per cell in the same order and the
-//                      same encoding; any value 0..255 (constants.h: the skin
-//                      in the high nibble, the edge mask -- or, for an air
-//                      cell, the floor-decoration variant -- in the low)
 //
 // The dimensions travel WITH the tiles because the client has no map file to
 // read them out of, and a grid interpreted at the wrong width is a world
-// sheared diagonally. The encoding is there because a raw grid of the shipped
-// world is forty kilobytes -- already close to the socket's backpressure
-// ceiling, and a larger map would sail past it.
+// sheared diagonally. The encoding is there because a raw grid of a large map
+// is a quarter of a megabyte -- far past the socket's backpressure ceiling.
 //
-// The styles are a second stream rather than bits packed into the tile byte
-// so the tile stream stays the one map_bundle.ts is encoded in. They travel
-// at all because the client draws them and has no map file to read them out
-// of either; a map authored without variants sends a stream of zeros, which
-// the encoding folds to a few bytes. A generated realm (the arena, the maze)
-// sends 0x0 with both streams empty. (Version 20: the second stream widened
-// from a 0..15 edge mask to the full style byte.)
+// COLLISION ONLY. What a cell looks like is not on this wire at all: the
+// artwork is the map file's own tile layers, which the client reads out of the
+// staged data directory for itself (shared/game/tiled_map.h), and this grid is
+// the authoritative three-value shape the server collides with -- derived on
+// the server from which layers the author marked as colliding, so a client
+// never has to agree with one about it. A generated realm (the arena, the
+// maze) sends 0x0 with an empty stream. (Version 21: one tile stream, where
+// there used to be two.)
 
 /// What a notification announces. The stripe down a card's left edge is the
 /// only thing that distinguishes them, and the browser sends the same five as

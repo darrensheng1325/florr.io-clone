@@ -402,10 +402,17 @@ Vec2 GameServer::pickBotSpawn(const std::vector<MobDisc>& blockers) {
         }
     }
     if (!anchors.empty()) {
-        // Every sampled area was crowded or walled over. The centre of one of
-        // them is still inside the spawnable set, and movement pushes a body
-        // out of a wall.
-        return anchors[rng_.below(static_cast<std::uint32_t>(anchors.size()))]->centre();
+        // Every sampled area was crowded or walled over -- routine on a map
+        // that is more than half solid. The centre of one of them is still
+        // inside the spawnable set, but on such a map the centre is as likely
+        // to be inside a block as not, so it is where the search for open
+        // ground STARTS rather than the answer. findOpenSpawn samples a disc
+        // around it and then rings of tiles outward, so a bot is never born
+        // inside a block the movement step cannot push it out of.
+        const MapElement& area =
+            *anchors[rng_.below(static_cast<std::uint32_t>(anchors.size()))];
+        const double reach = std::max(area.bounds.w, area.bounds.h) * 0.5;
+        return terrain_->findOpenSpawn(rng_, area.centre(), reach, Realm::Overworld);
     }
     const MapData* overworld = worldMaps_.forRealm(Realm::Overworld);
     if (overworld == nullptr) return terrain_->spawnPoint(Realm::Overworld);

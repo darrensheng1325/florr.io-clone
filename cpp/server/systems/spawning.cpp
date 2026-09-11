@@ -107,20 +107,15 @@ double nearestViewerLuck(const std::vector<SpawnSystem::Viewer>& viewers, Realm 
     return nearest == nullptr ? kNeutralSpawnLuck : nearest->luck;
 }
 
-/// The overworld's own rectangle. The density fill and the boss pass are
-/// overworld-only by construction (see fillNeighbourhoods / runSpecialMobs),
-/// so the paths that serve them alone measure against this rather than
-/// asking the terrain; a band fill asks terrain.realmExtent(zone.realm).
-constexpr Vec2 kOverworldExtent{kWorldSize, kWorldSize};
-
 /// The border band, which is the thickness of the boundary wall. A mob
 /// standing in it is half inside the edge of the world, so the reference
 /// refuses the point outright rather than moving it
 /// (isInOutOfBoundsZone, src/server/shared/positions.ts:25-30).
 ///
 /// `extent` is the rectangle of the realm the point is in: every map is its
-/// own coordinate space with its own size, so the overworld's 60000 is the
-/// wrong number for a sixty-tile biome map.
+/// own coordinate space with its own size -- the shipped world is 64 tiles
+/// square -- so a single world constant is the wrong number for all but one
+/// of them.
 bool inBorderBand(Vec2 position, Vec2 extent) {
     return position.x < kWorldBoundaryThreshold ||
            position.x > extent.x - kWorldBoundaryThreshold ||
@@ -155,8 +150,8 @@ bool zoneInView(const Rect& bounds, Realm realm,
                 const std::vector<SpawnSystem::Viewer>& viewers) {
     for (const SpawnSystem::Viewer& viewer : viewers) {
         // Same map first: two maps' coordinates overlap numerically, so a
-        // viewport test alone would stock the sewers because somebody was
-        // standing at the same numbers in the garden.
+        // viewport test alone would stock a second map because somebody was
+        // standing at the same numbers in the first.
         if (viewer.realm != realm) continue;
         if (bounds.left() < viewer.position.x + viewer.half.x &&
             bounds.right() > viewer.position.x - viewer.half.x &&
@@ -552,6 +547,10 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
                       const std::vector<RealmPoint>& players, Rng& rng, double nowMillis, double dt,
                       CommandBuffer& commands) {
     bind(world);
+    // The overworld's own size, off the terrain, before anything samples a
+    // point: the map says how big it is and the border band is a fraction of
+    // THAT, not of a compile-time square. See overworldExtent_.
+    overworldExtent_ = terrain.realmExtent(Realm::Overworld);
     rebuildZones(content);
     gatherViewers(world, players);
 
@@ -611,8 +610,8 @@ void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& pla
         Viewer viewer;
         viewer.position = position;
         // The realm is the caller's fact about the point, not something the
-        // pairing below discovers: a coordinate on garden_1's door and the
-        // same numbers in the overworld are two different places, and a
+        // pairing below discovers: a coordinate on a second map's door and
+        // the same numbers in the overworld are two different places, and a
         // viewer filed under the wrong one stocks the wrong map.
         viewer.realm = player.realm;
         double nearestDistSq = kViewerMatchRadius * kViewerMatchRadius;
@@ -721,7 +720,7 @@ bool SpawnSystem::placementAllowed(const Terrain& terrain, const std::vector<Vie
     if (sectionOut < 0) return false;
     // The border band is refused outright, before anything else is asked about
     // the point.
-    if (inBorderBand(position, kOverworldExtent)) return false;
+    if (inBorderBand(position, overworldExtent_)) return false;
     if (terrain.blocked(position, Realm::Overworld)) return false;
     // A spawn rectangle owns its own population, at its own tier. The density
     // fill stays out of one entirely: letting it in is what fills a legendary
@@ -1079,9 +1078,9 @@ bool SpawnSystem::sampleZonePoint(const SpawnZone& zone, Rng& rng, Vec2& out) co
     // alone (its pickers skip every other realm's zones), so the overworld's
     // extent is the right one by construction.
     for (int attempt = 0; attempt < kZonePlacementAttempts; ++attempt) {
-        const Vec2 candidate = samplePointInRect(zone.bounds, kOverworldExtent, rng);
+        const Vec2 candidate = samplePointInRect(zone.bounds, overworldExtent_, rng);
         if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
-        if (inBorderBand(candidate, kOverworldExtent)) continue;
+        if (inBorderBand(candidate, overworldExtent_)) continue;
         out = candidate;
         return true;
     }
@@ -1430,10 +1429,10 @@ Entity SpawnSystem::spawnSpecialMob(World& world, const Terrain& terrain,
     // A rectangle is allowed to hang over the border band. One retry, then the
     // boss is given up on until the next pass. The overworld's extent, because
     // this pass places on the overworld alone.
-    if (inBorderBand(at, kOverworldExtent)) {
+    if (inBorderBand(at, overworldExtent_)) {
         Vec2 retry;
         if (!randomPointInZoneType(zoneTier, rng, retry) ||
-            inBorderBand(retry, kOverworldExtent)) {
+            inBorderBand(retry, overworldExtent_)) {
             return NULL_ENTITY;
         }
         at = retry;
@@ -1478,9 +1477,10 @@ Entity SpawnSystem::spawnSpecialMob(World& world, const Terrain& terrain,
 
 bool SpawnSystem::randomPointInZoneType(Rarity tier, Rng& rng, Vec2& out) const {
     // The boss pass places on the OVERWORLD, so only that map's plots are
-    // candidates. zones_ holds every staged map's bands, and a biome map's
-    // mythic block sits at small numbers that are the beginner garden on
-    // world.tmj -- sampling it would stand a super there.
+    // candidates. zones_ holds every staged map's bands, and two maps' bands
+    // sit at the same coordinates as often as not -- a second map's mythic
+    // block at small numbers would stand a super in the overworld's beginner
+    // ground.
     const auto eligible = [&](const SpawnZone& zone) {
         return zone.tier == tier && zone.realm == Realm::Overworld;
     };
@@ -1550,9 +1550,9 @@ bool SpawnSystem::randomPointInZoneTypeInSection(Rarity tier, int section, Rng& 
         if (minX >= maxX || minY >= maxY) continue;
 
         const Vec2 candidate =
-            samplePointInRect(Rect{minX, minY, maxX - minX, maxY - minY}, kOverworldExtent, rng);
+            samplePointInRect(Rect{minX, minY, maxX - minX, maxY - minY}, overworldExtent_, rng);
         if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
-        if (inBorderBand(candidate, kOverworldExtent)) continue;
+        if (inBorderBand(candidate, overworldExtent_)) continue;
         out = candidate;
         return true;
     }

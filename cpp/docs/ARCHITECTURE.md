@@ -296,8 +296,8 @@ the software framebuffer in Wasm. The builds otherwise differ in three places.
   or as a QUIC stream that split and coalesced them however it liked.
 
 * **Where the content lives.** `--embed-file`, not `--preload-file`: mobs.json,
-  petals.json, the map bundle, the biome SVGs and the fonts are inside the
-  wasm. The client reads all of them synchronously during `start()`, so there
+  petals.json, the maps with their tilesets and tile art, the title screen's
+  ground SVGs and the fonts are inside the wasm. The client reads all of them synchronously during `start()`, so there
   is nothing to gain from a fetch it would have to wait for; a single artifact
   cannot half-deploy the way a `.wasm` and a stale `.data` beside it can; and
   the server has no page to run a preload from at all.

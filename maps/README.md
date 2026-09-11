@@ -1,147 +1,267 @@
-# The world map
+# The world maps
 
-The map lives here, in [Tiled](https://www.mapeditor.org)'s format. Open
-`world.tmj` in Tiled and edit it; there is no other map source.
+Every world the server runs lives here, in [Tiled](https://www.mapeditor.org)'s
+own format. Open a `.tmj` in Tiled and edit it; there is no other map source and
+there is no build step.
 
 ```
 maps/
-  world.tmj      the map: the ground, the tile grid and every annotation
-  terrain.tsj    the tile palette, one tile per game tile id
-  tiles/*.svg    what each terrain tile is drawn as
-  ground.tsj     the ground palette, one tile per ground artwork
-  ground/*.svg   the ground artwork itself
+  maps.json      the manifest: which maps exist, in the order that fixes realms
+  garden.tmj     a map: its art layers, its collision and every annotation
+  tileset.tsj    the tile palette: one entry per tile, and its art
+  tiles/*.svg    one artwork per tile
+  ground/*.svg   the nine title-screen backdrops (not map data any more)
+  README.md      this
 ```
 
-## Three rules the format rests on
+## The manifest
 
-**One Tiled pixel is one world unit.** The map's tile size is 300×300, which is
-`WALL_TILE_SIZE` in `src/constants.ts` and `kTileSize` in
-`cpp/shared/game/constants.h`. Because they match, an object's `x`/`y`/`width`/
-`height` in the file is already a world rectangle and nothing is scaled on the
-way in. Both readers refuse a map saved at a different tile size rather than
-guess a scale factor — there isn't one that is right for the grid *and* the
-objects.
+`maps.json` is the authority on which maps exist, and its **order is the
+contract**: entry 0 is realm 0, entry 1 is realm 1, and so on. A client and a
+server that read this file agree about which realm is which map, which is what
+makes a teleporter's `targetMap` and a saved spawn choice mean the same thing on
+both ends. Reorder it and everyone standing in a map moves to another one.
 
-**The tileset is the palette.** Each tile in `terrain.tsj` carries the game's
-tile id as a `tileId` property, so Tiled's global tile ids are translated rather
-than assumed to line up. Adding a tile type means adding a tile to the tileset.
-Its other properties are the ones `TileTypeConfig` has:
+A map's **id is its file stem** — `garden.tmj` is the map `garden` — and that is
+what a teleporter aims at and what qualifies a spawn point's id. At most
+`kMaxWorldMaps` (62) maps can be loaded at once. The directory is never scanned:
+a map nobody listed is not a realm, and a listed map that is missing fails the
+build rather than the server.
+
+The manifest and every map's bytes are covered by the content hash, so a client
+running a different map than the server it dials is refused at the handshake
+rather than discovered by walking into a wall nobody else can see.
+
+## A map is a Tiled map, in Tiled's idiom
+
+There is no house format layered over Tiled's. A map has as many tile layers as
+the author wants, drawn bottom to top in file order; it may name any number of
+tilesets; tiles may be flipped and rotated; and the edge and corner art is
+chosen by Tiled's **terrain (Wang) brushes**, not by a script of ours. Two
+conventions carry the rest: one about the grid, which is checked on load rather
+than assumed, and one about what a layer means.
+
+**One Tiled pixel is one world unit.** The tile size is 300×300, which is
+`kTileSize` in `cpp/shared/game/constants.h`. Because they match, an object's
+`x`/`y`/`width`/`height` in the file is already a world rectangle and nothing is
+scaled on the way in. A map saved at a different tile size is refused rather
+than guessed at — there is no scale factor that is right for the grid *and* the
+objects. An infinite or non-orthogonal map is refused for the same reason.
+
+**A layer's name is a note to the author; its `has_collision` is not.**
+`background`, `water`, `dirt`, `castle` mean nothing to the game, there is no
+layer that "is" the terrain, and nothing reads a layer by name. The one thing
+the game does read off a layer is a custom boolean, `has_collision`, and that
+boolean is the whole of collision — see below. Otherwise the layers are drawn
+bottom to top and that is all they do.
+
+### Flips
+
+Tiled packs three flip bits into the top of a gid — horizontal `0x80000000`,
+vertical `0x40000000`, anti-diagonal `0x20000000` — because one edge tile serves
+all four rotations of itself. The reader carries them through per cell
+(`kTileFlipHorizontal` / `Vertical` / `Diagonal`) and the renderer applies them
+in **Tiled's order: the anti-diagonal flip first (transpose), then horizontal,
+then vertical**. Any other order draws three of the four rotations wrong.
+
+Collision masks the bits off: a rotated wall is still a wall.
+
+## Collision: the layer's `has_collision`
+
+**Layers with collision enabled are walls; layers with it disabled are not.**
+A tile layer may carry one custom boolean in Tiled, under *Layer → Custom
+Properties*:
 
 | property | meaning |
 | --- | --- |
-| `tileId` | the id stored in the grid — 0 air, 1 wall, 2 water, 3+ custom |
-| `solid` / `water` | what the tile does. `constants.h` is the authority; a tileset that disagrees is reported at load, because a tile drawn walkable and collided with as wall is a lie to whoever is editing |
-| `style` | `flat`, `wall` or `water` — how the browser client paints it |
-| `color`, `borderColor` | the fill the renderer uses when there is no texture |
-| `textureSvg` | the tile art this tile is really painted with, as a path. **Present only for tiles the game textures**; `tiles/air.svg`, `tiles/water.svg` and `tiles/block.svg` are palette art for the editor and are not map data |
-| `builtin` | ids 0–2, which `constants.ts` registers itself and the bundle must not redefine |
+| `has_collision` | anything painted on this layer blocks movement |
 
-Tile art is 300×300 so a tile fills exactly one cell in Tiled. The game never
-reads those attributes — `graphics/map-drawing.ts` stretches whatever it is
-handed to one tile, and `SvgDocument::renderFitted` maps the viewBox into
-whatever box it is given — so the size is for the editor's benefit alone.
+Per cell, over every layer of the map:
 
-Palette art is exactly what the renderer draws and nothing more. `air` is an
-empty image because air is where the ground shows through; `water` and `block`
-are the flat fills `world_renderer.cpp`'s `kTileColor()` paints. Water's jagged
-shoreline is *not* in the art: the renderer draws it as a separate pass over
-every exposed edge, from an outline generated out of the tile's own coordinates
-(`jaggedEdge()` in `terrain.h`), so it belongs to a pair of tiles rather than to
-one and no single palette image could be honest about it.
+```
+blocked <- ANY layer with has_collision = true has a NON-EMPTY tile here
+kind    <- the TOPMOST blocking tile here is tagged `water` ? water : wall
+else       ground
+```
 
-**The background layer is the ground.** It used to be `sectionAt()`: which
-third of the map you stood in decided what the ground was painted with, and the
-nine artworks were nailed to a 3×3 grid nobody could move. The `background`
-layer says it per cell, over `ground.tsj` — the same nine artworks, now a
-palette rather than a geography, so a map can put a patch of desert inside the
-garden.
+A layer with `has_collision` absent or false **never** blocks, whatever art it
+holds; a map that sets it nowhere has no walls at all. The art is not consulted
+about whether a cell blocks — the same grass tile is solid on a colliding layer
+and walkable on a layer below it.
 
-Ground tiles carry `groundId` where terrain tiles carry `tileId`. That is what
-keeps the two layers apart: a ground tile painted into the terrain layer is a
-gid the terrain reader cannot resolve, and it says so instead of silently
-becoming a wall.
+This is a layer property rather than a tile property because a layer is a thing
+the author can see, name and toggle in Tiled, and paints a whole region of
+wall in one go. Collision used to be a `solid` boolean on each tile in the
+tileset, and a Wang brush is exactly the thing that defeats that: a brush paints a
+family's centre, edge and corner tiles interchangeably, so one corner tile
+nobody remembered to tag was a hole in a wall that no amount of repainting
+would close, and finding it meant walking into it. A layer has one switch and
+the author has already decided which layer the walls go on.
 
-The renderer still tiles ground artwork every 400 units, as it always has, and
-samples the background layer once per artwork tile at that tile's centre — the
-layer chooses the art, it does not chop it up. That is also why the seams still
-land exactly where they did: a ground tile's centre is at least 200 units from
-a section boundary, and the 300-unit cell containing it has its own centre
-within 150 units, so the two never end up on opposite sides.
+The cost is that **stacking no longer subtracts.** A bridge drawn over a pond
+does not make the cell walkable if the pond's layer collides: the pond cell is
+still non-empty and still blocks. To open a hole through a colliding layer you
+erase the cell on that layer — the brush's eraser, not a tile painted on top of
+it. Sequencing is a drawing question now and a collision question never.
 
-## Tile skins
+Only three tile values ever come out of the reader — ground, wall and water —
+and the engine's `Tile` enum, `tileBlocks()` and `tileIsWater()` are unchanged.
+Water blocks movement, as it always has.
 
-`terrain.tsj` holds four families of wall / water art. Ids 0–35 are the
-**default** family: the six builtin tiles (air, wall, water, bridge, sewage,
-block) and the default wall's and water's 15 edge variants each. After that come
-three biome **skins**, 35 ids apiece — a wall base, its 15 edge variants, a
-water base, its 15 edge variants, and three floor decorations:
+### The tileset's `water`, which is a kind and not a verdict
 
-| skin | name | ids | classes |
-| --- | --- | --- | --- |
-| 0 | default | 0–35 | `wall`, `wall_edge_<sides>`, `water`, `water_edge_<sides>` |
-| 1 | sewers | 36–70 | `wall_sewers[_edge_<sides>]`, `water_sewers[_edge_<sides>]`, `floor_sewers_<0-2>` |
-| 2 | computer | 71–105 | `wall_computer[_edge_<sides>]`, … |
-| 3 | unknown | 106–140 | `wall_unknown[_edge_<sides>]`, … |
+A tile in `tileset.tsj` may carry a `water` boolean. It answers **what kind of
+blocker this cell is**, never **whether it blocks**:
 
-`tilecount` is 141, so `ground.tsj` sits at firstgid 142 in every map. An edge
-variant's `<sides>` lists its exposed sides in the fixed order n, e, s, w
-(`wall_edge_ne`); `scripts/edgeTiles.js --apply` picks the variant for every
-cell, so a map is authored with the base tiles and the lips follow.
+| property | meaning |
+| --- | --- |
+| `water` | a blocking cell whose topmost blocker is tagged this reads as water rather than wall |
+| `covers_everything` | a drawing hint, not collision: see below |
 
-A skinned tile is still plain air, wall or water to the game (`tileId` 0–2);
-the skin and edge mask travel as a per-cell style byte the C++ side reads off
-the tileset (`skin`, `edges`, `variant` properties). A wall or water cell of
-the default family takes its look from the ground beneath it: on sewers,
-computer or unknown ground it is drawn with that skin, on any other ground it is
-the default brown wall / flat water (`skinForGround()` in `constants.h`). That
-is how the overworld's three skinned thirds get their walls without the map
-naming a skin, and why the garden, desert, hel, ocean, ant_hell and jungle
-sublevels are painted with the default `wall` and `water` and carry no floor
-decorations.
+The difference is visible rather than physical — the minimap paints water its
+own colour, and `tileIsWater()` is what anything asking "is this thing in the
+drink" reads — because water already blocked before any of this. Tagging a
+tile `water` and painting it on a non-colliding layer produces plain ground:
+the kind is only ever asked about a cell that is already blocked.
 
-The art is generated, not drawn by hand. `scripts/lib/tileArt.js` owns the
-geometry every family shares (lip and shoreline profiles, corner joins, the
-tileset entry, the id layout) and `scripts/tileArt/<skin>.js` owns one family's
-look. To add a family:
+With `solid` gone there is nothing left in the tileset that can contradict the
+engine: `water` is a label on a decision the layer already made.
 
-1. append its name to `SKIN_NAMES` and its colours to `SKIN_PALETTE` in
-   `scripts/lib/tileArt.js` — the next 35 ids are its block;
-2. write `scripts/tileArt/<name>.js` (copy `sewers.js`; it must export `name`,
-   `wall`, `water` and exactly three `floors` stamps);
-3. add the name to `kTileSkinNames` in `cpp/shared/game/constants.h` at the same
-   index, and map its ground to it in `skinForGround()`;
-4. if the generator should paint sublevels with it, add the biome to `SKINNED`
-   in `scripts/generateBiomeMaps.js` and give it a `skin` and `floors`;
-5. `node scripts/edgeTiles.js --art` (writes `tiles/*.svg` and `terrain.tsj`),
-   then `npm run build:map` — the ground tileset's firstgid moves with
-   `tilecount`, and every map is remapped for you.
+### What is tagged today
 
-`node scripts/edgeTiles.js --art --skin <name> --out <dir>` previews one family
-without touching the tileset. The renderer draws a wall or water cell whose skin
-has no art file with the default family's art for the same mask, so a partly
-drawn family never leaves holes.
+`tileset.tsj`'s 77 tiles carry two tags between them:
 
-## Layers
+| tag | tiles |
+| --- | --- |
+| `water` | `ocean_c_0`…`ocean_c_3`, `water_c_0`, `water_l_0`, `water_tl_0`, `water_tri_0`, `sewage_c_0`, `sewage_l_0`, `sewage_tl_0`, `sewage_tri_0` — 12 |
+| `covers_everything` | the full-square centre tiles: `desert_c_0`…`desert_c_4`, `grass_c_0`…`grass_c_3`, `ocean_c_0`…`ocean_c_3`, `pvp_c_0`…`pvp_c_3`, `castle_c_0`, `dirt_c_0`, `dirt2_c_0`, `dirt2_c_1`, `water_c_0`, `sewage_c_0` — 23 |
+
+Everything else is untagged, which now costs nothing: an untagged tile on a
+colliding layer is a wall like any other.
+
+`garden.tmj` puts its four layers to work as `background` (no collision) under
+`water`, `dirt` and `castle` (all three colliding), which makes about **55% of
+the map solid**. That is deliberate: it is a castle and its grounds, not an
+open field. The one door sits in the open corner at the bottom left, where 42
+of the 56 cells it covers are ground.
+
+### `covers_everything`
+
+A tile with `covers_everything` fills its whole 300-unit square opaquely, so
+nothing painted under it can show through. The renderer uses it to stop drawing
+a cell's stack early. It is a drawing hint and nothing about the game depends on
+it; a tile that claims it wrongly shows as art missing under a translucent edge,
+never as a collision bug.
+
+## The object layers
+
+Annotations are grouped by kind, one Tiled object layer each, so a set can be
+hidden while another is worked on. **These three layer names are read**, unlike
+the tile layers':
 
 | layer | holds |
 | --- | --- |
-| `background` | the ground: which artwork each cell is painted with |
-| `terrain` | the tile grid — collision. Air is left empty, so the background shows through |
-| `spawns` | `spawn` **polygons**, with `spawnType` and an optional `mobs` distribution |
-| `biomes` | `biome` rectangles, with `biomeName`, `backgroundTexture` and `spawnTable` |
-| `teleporters` | `teleporter` **points**, with `teleportToX` / `teleportToY` and an optional `serverPort` |
+| `spawns` | mob bands and mob regions — **polygons** |
+| `player_spawns` | doors: where a player arrives — rectangles |
+| `teleporters` | pads: where a player leaves — points |
 
-Objects are grouped by kind so each set can be hidden while you work on
-another. The game never sees the grouping: every reader filters by kind before
-it looks at order, so only the order *within* a layer is observable, and that
-is preserved.
+The game never sees the grouping beyond the kind: every reader filters by kind
+before it looks at order, so only the order *within* a layer is observable, and
+that is preserved.
 
-### What a spawn zone spawns
+### `spawns` — bands and regions
 
-A zone says two independent things. `spawnType` is the **tier** — `common`
-through `ultra` — and is still where the map's difficulty progression lives.
-`mobs` is the **distribution**: what actually appears there, as weighted rows of
-mob ids and presets.
+A `spawn` object answers up to two independent questions, and which properties
+it carries decides which kind of object it is:
+
+| property | meaning |
+| --- | --- |
+| `spawnType` | the **tier**: `common` … `ultra`. Makes this a **band**. |
+| `mobs` | the **distribution**: what actually appears here |
+
+- A shape with `spawnType` is a **band**. It owns a population of its own,
+  stocked to a density scaled by the outline's area, and the ambient fill stays
+  out of it. This is where the map's difficulty progression lives.
+- A shape with only `mobs` is a **region**: it says what grows on this ground
+  and owns nothing. The ambient fill spawns inside it freely, at its own natural
+  tier spread, and asks the region only *what*.
+
+The two have different shapes on purpose: danger runs in bands along a
+coastline, while "this is the desert" covers a quarter of the map.
+
+Bands are **polygons**. Draw one with Tiled's polygon tool and it can follow a
+coastline or a canyon; a rectangle over the same ground either spills mobs onto
+the next tier's territory or leaves a wedge of its own permanently empty. Every
+broadphase question still goes to the bounding box — is this zone near a
+viewport, is it worth looking at — and only three go to the outline: is this
+point inside, how large is it, where inside should this mob go. **The boundary
+is inside**, as it was when these were rectangles. A rectangle object still
+loads and stays a rectangle.
+
+### `player_spawns` — doors
+
+A door is where a player arrives: from the title screen's picker, from a
+teleporter, or on respawn.
+
+| property | meaning |
+| --- | --- |
+| `spawnId` | what a teleporter or a saved preference names this door by. Unique within its map; the server qualifies it as `<map id>:<spawn id>` |
+| `label` | what the picker's button says. Empty falls back to the id, title cased |
+| `color` | the button's colour, `#rrggbb` |
+| `order` | where the button sits in its row; ties break by map order |
+| `backdrop` | the artwork tiled behind the picker while this button is chosen, by file name. Empty falls back to the spawn id, so a door called `desert` gets `desert.svg` |
+| `biome` | which tab of the picker files this door. Empty falls back to the map's `biome`, then to the map's id |
+| `pickable` | whether the title screen **offers** this door. Default `true` |
+
+**A door needs no properties at all.** Three places an author might have put the
+id are tried in order, so a door drawn with Tiled's default fields still works:
+
+1. the `spawnId` property, or the object's **name** (Tiled's name field);
+2. a slug of the `label` — lower-cased, every run of punctuation or space
+   collapsed to one underscore, so `"Garden"` becomes `garden`;
+3. the **map's id**, which every map has.
+
+That is why the one nameless door in `garden.tmj`, whose only distinguishing
+property is `label: "Garden"`, is the pickable door `garden`.
+
+Only a map with several unnamed doors can now collide, and that shows up as a
+duplicate id rather than as a door that silently vanished.
+
+`pickable` is the main-area rule: a biome's sublevels are entered from its main
+area through a pad, so their doors are arrival points and nothing more, and only
+the main area's door is a button. A non-pickable door is still joinable — by an
+admin, by name.
+
+### `teleporters` — pads
+
+| property | meaning |
+| --- | --- |
+| `targetMap` | the id of the map this pad leads to |
+| `targetSpawn` | the door in that map to arrive at. Empty means its default |
+| `teleportToX`, `teleportToY` | an explicit arrival point in the target map's coordinates, for a pad that wants somewhere no door covers. `targetSpawn` wins when both are given |
+
+A pad naming no map is scenery: it charges up and goes nowhere, and that is
+reported at load rather than at the moment a player stands on it. Stepping
+through one is a `RealmChange`, because each map is its own coordinate space —
+as is a respawn that crosses maps.
+
+## The map's own properties
+
+Set these in Tiled under *Map → Map Properties → Custom Properties*.
+
+| property | meaning | default |
+| --- | --- | --- |
+| `displayName` | what the map is called in a message | the map's id |
+| `biome` | which tab of the spawn picker this map's doors file under | **the map's id** |
+| `defaultMobGroup` | the mob group a band with no `mobs` of its own spawns from | **`biome`** |
+
+Both defaults exist so that a one-biome map does not have to say its own name
+three times. `garden.tmj` declares none of them and is therefore the map
+`garden`, in biome `garden`, growing `garden` mobs.
+
+## Mob groups
+
+A distribution row is a **name and a weight**:
 
 ```
 mobs = garden 50% hornet 50%
@@ -149,103 +269,124 @@ mobs = ocean 20% jellyfish 80%
 mobs = hornet
 ```
 
-A row is a name and a weight. The name is a **preset** when it matches one of
-the nine mob-spawn sections — `garden`, `desert`, `hel`, `ocean`, `ant_hell`,
-`jungle`, `sewers`, `computer`, `unknown` — and a **mob id** otherwise. A preset
-defers to that section's own ambient table, weights and all, so `ocean` in a
-garden zone spawns exactly what the ocean would. A named mob is taken directly,
-which also bypasses the ambient table's exclusions: naming a `neverAmbient` mob
-is one of the two ways one reaches the world at all.
-
-Weights are relative, so they need not sum to 100 — `ocean 1 jellyfish 4` is the
-same zone as `ocean 20% jellyfish 80%`. Commas, percent signs and `=` are all
-just separators. A bare name takes weight 1, so `hornet` alone is a zone of
-nothing but hornets. A name the content does not define is reported once on
-stderr rather than silently spawning nothing forever.
-
-**Omitting `mobs` is the default and means what it always meant**: roll the
-ambient table of whichever section the mob lands in. Every zone on the shipped
-map still does that — six of them straddle two sections, where "the section the
-mob landed in" is not a constant, so the default is deliberately not written out
-as a preset.
-
-### Spawn zones are polygons
-
-A mob tier band is an outline, not a box. Draw one with Tiled's polygon tool
-(or drag a vertex onto an existing zone) and it can follow a coastline or a
-canyon; a rectangle over the same ground either spills mobs onto the next
-tier's territory or leaves a wedge of its own permanently empty.
-
-Everything the spawner does in bulk still works on the zone's **bounding box** —
-which sections it touches, whether it is near anyone's viewport, whether it is
-worth looking at — and only three questions go to the outline: is this point in
-this zone, how large is it, and where inside it should this mob go. That split
-is why the change is cheap: the box is a superset of the outline, so every
-broadphase stayed exactly as it was.
-
-- **Placement** samples the bounding box and throws away what falls outside the
-  outline. A zone covering a small fraction of its box just spends more of its
-  attempts; it does not spawn in the corners.
-- **Population** is scaled by the outline's area, so a diagonal band is not
-  packed at twice the density of a rectangular zone beside it.
-- **The boundary is inside.** The rectangles these replaced were tested
-  inclusively on every edge, so a mob standing exactly on a border was in that
-  zone, and it still is.
-
-Biomes and teleporters are unchanged — a rectangle and a point. A spawn zone
-saved as a plain rectangle object still loads and stays a rectangle; the
-converter writes the four corners instead so the shape is one you can add a
-vertex to without converting it first.
-
-One caveat worth knowing: `src/constants.ts` declares the `polygon` field so
-`map_bundle.ts` typechecks, but nothing in `src/` reads it. The unmaintained
-TypeScript server therefore still treats every zone as its bounding box.
-
-A biome's spawn table is a list of records, which Tiled has no property type
-for, so it travels as a JSON string in the `spawnTable` property — Tiled edits
-it in its multi-line string editor:
+The name is a **mob group** when `src/mobs.json` defines one by that name, and a
+**mob id** otherwise; groups win, so naming a group is never ambiguous. The
+groups today are `garden`, `desert`, `ocean`, `hel`, `ant_hell`, `jungle`,
+`sewers` and `computer` — there is no separate list of them, they are the union
+of the names the mobs claim:
 
 ```json
-[ {"tier": "legendary", "weight": 5, "mobType": "hornet"} ]
+"groups": ["garden", "jungle"]           // in both, at spawn_weight
+"groups": {"garden": 1, "jungle": 0.4}   // weighted per group
 ```
 
-A row's `mobType` is the only way a mob the ambient roll refuses ever reaches
-the world. Dropping it turns a dummy biome into ordinary garden ground.
+A weight of zero is meaningful and kept: a centipede's body segments belong to
+the garden — tools should say so — but are only ever spawned by the head.
 
-## After editing
+Weights are relative and need not sum to 100: `ocean 1 jellyfish 4` is the same
+distribution as `ocean 20% jellyfish 80%`. Commas, percent signs, `=` and
+newlines are all just separators. A bare name takes weight 1. A name the content
+does not define is reported once on stderr rather than silently spawning nothing
+forever.
 
-```
-npm run build:map      # maps/world.tmj -> src/map_bundle.ts
-```
+Whether a name is a group or a mob is resolved **at spawn time**, by the
+spawner, never here: the map layer has no view of the content registry and must
+not grow one. Resolving it at load is what made the old nine hard-coded section
+presets impossible to add to.
 
-The C++ client and server read `maps/world.tmj` directly (see
-`cpp/shared/game/tiled_map.h`); the bundle exists for the TypeScript server,
-which wants the map as an importable module rather than a file to open. Both
-come from this one file, so nothing is authored twice — but the bundle is a
-build output, so regenerate it before you ship.
+Naming a mob directly also bypasses the group's exclusions, which is how a
+`neverAmbient` mob reaches the world at all.
 
-`cpp/tests/tiled_map_tests.cpp` compares the two readers tile for tile and
-rectangle for rectangle, and checks that the background layer still answers
-exactly what `sectionAt()` used to at every point the renderer samples. If any
-of that ever drifts, that is what says so.
+## Art and staging
 
-The bundle carries no background layer — there is nowhere in it to put one — so
-a data directory holding only `map_bundle.ts` falls back to the section grid and
-draws the world it always did.
+The build stages this directory **flat, by bare file name**, into the data
+directory beside the binaries (`cpp/CMakeLists.txt`). That flatness is what
+makes the references inside the files resolve: a map names its tilesets as
+siblings, a tileset names its art under `tiles/`, and the client's sprite cache
+looks a tile's art up by bare name. `maps/tileset.tsj` and
+`maps/tiles/grass_c_0.svg` both land directly in the data directory.
+
+- The **maps** come out of `maps.json`, never globbed.
+- The **tilesets** are read out of the maps at configure time, so a map that
+  starts naming a second `.tsj` stages it on the next build.
+- The **tile art** and the **ground art** are globbed, because the tileset — not
+  a list anyone maintains — decides what exists.
+
+So **adding a tile is two things**: drop a `.svg` in `tiles/`, add a tile to
+`tileset.tsj` in Tiled (and tag it `water` if that is what it is). Nothing is
+generated and nothing is regenerated. Whether it blocks is decided later, by
+which layer it gets painted on.
+
+Art files are 256×256 drawn at the 300-unit grid size (`tilerendersize: grid`),
+but the size is for Tiled's benefit alone: `SvgDocument::renderFitted` maps a
+viewBox into whatever box it is handed, so the client fits every tile to its
+300-unit cell whatever the art's own dimensions say. A file the tileset names
+but the directory lacks is one warning in the client, not a failure — the cell
+simply does not draw. Outside the map is black void.
+
+The nine `ground/*.svg` are **no longer map data**: a map's own bottom layer is
+its ground now. They are still staged because the title screen paints its
+backdrop with them, by bare name.
 
 ## Layer data format
 
-Save with **CSV or uncompressed** layer data (Tiled: *Map → Map Properties →
-Tile Layer Format*). The C++ reader takes a plain array or uncompressed base64;
-it deliberately does not decompress, because adding zlib to the shared library
-for a map file would put a decompressor in the wasm build too.
+Save with **CSV or uncompressed** layer data (*Map → Map Properties → Tile Layer
+Format*). The reader takes a plain array or uncompressed base64; it deliberately
+does not decompress, because adding zlib to the shared library for a map file
+would put a decompressor in the wasm build too. A compressed or chunked
+(infinite-map) layer is refused by name, with the fix in the message.
 
-## Converting an older map
+## What is not here any more
 
-`scripts/mapToTiled.js` turns the retired `MapData` literal — what
-`MapEditor.html` still exports, and what `src/map_source.ts` used to hold —
-into the files here, and verifies the round trip before it exits:
+The **generated-map machinery is gone**. There used to be a tile-art generator
+(`scripts/lib/tileArt.js`, `scripts/tileArt/*`), an edge-mask solver that chose
+a `wall_edge_<sides>` variant for every cell (`scripts/edgeTiles.js`), a biome
+map generator (`scripts/generateBiomeMaps.js`), a converter from the retired
+`MapData` literal (`scripts/mapToTiled.js`) and the two palettes those wrote
+(`terrain.tsj`, `ground.tsj`). Tiled's Wang brushes do the edge work now, and
+the author draws the art, so all of it has been deleted along with the engine's
+tile-skin and edge-mask system.
 
-```
-node scripts/mapToTiled.js path/to/map.json
-```
+`src/map_bundle.ts` is **frozen where it stands**. It was the TypeScript
+server's copy of the map, compiled by `scripts/encodeMap.js` from the one map
+that then existed; the new format cannot produce one and there is no
+`npm run build:map` any more. The file stays on disk untouched because
+`src/map_data.ts` imports it and the frozen TypeScript tree has to keep
+typechecking — it is simply never regenerated again. Nothing in the C++ engine
+reads it.
+
+`maps_old/` is the author's backup of the 47 generated maps this replaced. It is
+untracked, it is not staged, and nothing reads it. Leave it alone.
+
+## What guards this
+
+> **Provisional.** The reader, the renderer and their tests are being rewritten
+> in the same change as this document, and the layer collision rule landed after
+> the first pass at them. Treat the list below as what *should* guard the format
+> rather than as a roll call of tests that exist today; check it against
+> `cpp/tests/` before trusting a name in it.
+
+What should guard it, and where:
+
+- **`cpp/tests/tiled_map_tests.cpp`** — the reader: the per-cell collision rule
+  in each of its interesting cases (a colliding layer's tile over a
+  non-colliding one, art on a non-colliding layer blocking nothing, a `water`
+  tile on a colliding layer reading as water and the same tile on a
+  non-colliding layer reading as ground, a wall drawn over water staying wall,
+  an empty cell), a layer with `has_collision` absent defaulting to false, the
+  three flip bits composed in Tiled's order, overlapping-tileset and
+  wrong-tile-size refusals, a compressed layer refused by name, and the art
+  list and per-layer cells of the real `garden.tmj`.
+- **`cpp/tests/spawn_tests.cpp`** — the object layers on the shipped map: the
+  bands, the regions, the doors and their id fallbacks (name → label slug → map
+  id), and `biome`/`defaultMobGroup` defaulting with nothing authored.
+- **`cpp/tests/realm_tests.cpp`** — the manifest order fixing realms, and a
+  teleporter's cross-realm arrival.
+- **`cpp/tests/art_cache_tests.cpp`** — the tile art cache: a missing file
+  warns once and draws nothing.
+- The **content hash** over `maps.json` and every map's bytes, which is what
+  refuses a client holding a different map than the server.
+
+And the real thing, which is the check that matters: `flowrix_server` boots on
+the staged map with no `[map]`, `[spawn]` or `[tiled]` line on stderr, and the
+native client draws it.

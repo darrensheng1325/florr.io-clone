@@ -271,10 +271,10 @@ public:
     /// Ready and the login form can be used again without a reconnect.
     void logout();
     /// `spawnChoice` is one of the server's spawn-picker ids -- a door on some
-    /// map (`garden`, `sewers_entrance`, a qualified `<map>:<door>`), or
-    /// "pvp" / "maze" for the two realms that have no map -- and empty (or
-    /// "default") for the beginner ground. It is NOT a biome name: the server
-    /// resolves it through WorldMaps::choice(), and a sublevel's door is only
+    /// map (`garden`, or a qualified `<map>:<door>`), or "pvp" / "maze" for
+    /// the two realms that have no map -- and empty (or "default") for the
+    /// beginner ground. It is NOT a biome name: the server resolves it through
+    /// WorldMaps::choice(), and a door a map marks not pickable is only
     /// honoured for an admin session.
     /// `playerName` is the flower's nameplate; empty spawns as "Unnamed".
     void joinGame(int viewportWidth, int viewportHeight,

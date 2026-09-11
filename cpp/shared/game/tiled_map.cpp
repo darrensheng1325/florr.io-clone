@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <unordered_map>
 
 #include "shared/game/constants.h"
 
@@ -13,9 +14,9 @@ namespace {
 
 /// The object layers, in the order their objects are concatenated.
 ///
-/// Grouping the annotations by kind is what gives the editor three layers it
-/// can show and hide separately, and it is invisible to the game: every reader
-/// of elements() filters by kind before it looks at order, so only the order
+/// Grouping the annotations by kind is what gives the editor layers it can
+/// show and hide separately, and it is invisible to the game: every reader of
+/// elements() filters by kind before it looks at order, so only the order
 /// WITHIN a kind is observable, and that is the order they appear in here.
 constexpr struct { const char* layer; const char* kind; } kObjectLayers[] = {
     {"spawns", "spawn"},
@@ -33,6 +34,17 @@ constexpr struct { const char* kind; const char* properties[9]; } kObjectPropert
     {"player_spawn", {"spawnId", "label", "color", "order", "backdrop", "biome", "pickable", nullptr}},
     {"teleporter",   {"targetMap", "targetSpawn", nullptr}},
 };
+
+/// Tiled's flip flags, in the top three bits of a gid.
+constexpr std::uint32_t kGidFlipHorizontal = 0x80000000u;
+constexpr std::uint32_t kGidFlipVertical = 0x40000000u;
+constexpr std::uint32_t kGidFlipDiagonal = 0x20000000u;
+constexpr std::uint32_t kGidMask = 0x1FFFFFFFu;
+
+/// A cell's `art` is a signed 16-bit index, so a map may name this many
+/// distinct artworks. Two orders of magnitude past any real tileset; the check
+/// exists so the cast cannot silently wrap.
+constexpr std::size_t kMaxArtFiles = 32767;
 
 /// The file name half of a path, for a tileset tile's `image`.
 std::string fileNameOf(const std::string& path) {
@@ -129,7 +141,10 @@ bool decodeLayer(const Json& layer, const std::string& path, std::vector<std::ui
         return true;
     }
     if (!data.isString()) {
-        errorOut = path + ": layer \"" + name + "\" has no data";
+        // A chunked (infinite-map) layer lands here too: its `data` is an array
+        // of chunk objects, not of numbers, and the map-level check above has
+        // already refused it.
+        errorOut = path + ": layer \"" + name + "\" has no plain cell data";
         return false;
     }
     if (layer["encoding"].asString() != "base64") {
@@ -157,32 +172,6 @@ bool decodeLayer(const Json& layer, const std::string& path, std::vector<std::ui
     return true;
 }
 
-/// What one gid resolves to: a tile id (or ground id) and, for a terrain
-/// tile, the style byte it paints (constants.h: skin and edge mask or floor
-/// variant).
-struct GidEntry {
-    int gid = 0;
-    int value = 0;
-    std::uint8_t style = 0;
-};
-
-/// Resolves one gid through a tileset's gid map. Tiled packs its flip flags
-/// into the top three bits; nothing here flips a tile, but a stray flag from a
-/// drag in the editor would otherwise read as a wildly out-of-range id.
-bool resolveGid(const std::vector<GidEntry>& map, std::uint32_t raw, int& out,
-                std::uint8_t* styleOut = nullptr) {
-    const int gid = static_cast<int>(raw & 0x1FFFFFFFu);
-    for (const GidEntry& entry : map) {
-        if (entry.gid == gid) {
-            out = entry.value;
-            if (styleOut != nullptr) *styleOut = entry.style;
-            return true;
-        }
-    }
-    out = gid;   // for the caller's error message
-    return false;
-}
-
 /// The gid range one tileset owns, for the overlap check.
 struct TilesetRange {
     std::string name;
@@ -191,15 +180,15 @@ struct TilesetRange {
 };
 
 /// How many gids a tileset spans: its declared `tilecount`, or, for a tileset
-/// that does not say, one past the highest tile id it defines.
+/// that does not say, one past the highest tile id it defines. Never less than
+/// one past the highest id either way, so a stale `tilecount` cannot leave a
+/// painted tile unresolvable.
 int tileCountOf(const Json& tileset) {
-    const int declared = tileset["tilecount"].asInt();
-    if (declared > 0) return declared;
     int highest = -1;
     for (const Json& tile : tileset["tiles"].items()) {
         if (tile.isObject()) highest = std::max(highest, tile["id"].asInt());
     }
-    return highest + 1;
+    return std::max(tileset["tilecount"].asInt(), highest + 1);
 }
 
 /// Tiled 1.9 renamed an object's `type` to `class` and still reads both.
@@ -208,41 +197,36 @@ std::string classOf(const Json& node) {
     return name.empty() ? node["type"].asString() : name;
 }
 
+/// Flattens Tiled's layer tree into one list in draw order.
+///
+/// A `group` layer is a folder in the editor and nothing at all in the file
+/// format: its children draw in its place, bottom to top, exactly as if they
+/// had been written where it stands. Recursing here is what lets an author
+/// tidy the layer panel without changing what the game reads.
+void collectLayers(const Json& list, std::vector<const Json*>& out) {
+    for (const Json& layer : list.items()) {
+        if (!layer.isObject()) continue;
+        if (layer["type"].asString() == "group") {
+            collectLayers(layer["layers"], out);
+            continue;
+        }
+        out.push_back(&layer);
+    }
+}
+
 } // namespace
 
-std::uint8_t parseEdgeMask(const std::string& text) {
-    std::uint8_t mask = 0;
-    for (const char c : text) {
-        switch (c) {
-            case 'n': case 'N': mask |= kEdgeNorth; break;
-            case 'e': case 'E': mask |= kEdgeEast; break;
-            case 's': case 'S': mask |= kEdgeSouth; break;
-            case 'w': case 'W': mask |= kEdgeWest; break;
-            default: break;   // separators, and anything that is not a side
-        }
-    }
-    return mask;
-}
-
-std::string edgeMaskSuffix(std::uint8_t mask) {
-    std::string out;
-    if (mask & kEdgeNorth) out += 'n';
-    if (mask & kEdgeEast) out += 'e';
-    if (mask & kEdgeSouth) out += 's';
-    if (mask & kEdgeWest) out += 'w';
-    return out;
-}
-
 bool TiledMap::load(const std::string& path, std::string& errorOut) {
+    artFiles_.clear();
+    layers_.clear();
     tiles_.clear();
-    styles_.clear();
-    background_.clear();
     palette_.clear();
-    groundPalette_.clear();
-    warnings_.clear();
     elements_ = Json::array();
     properties_ = Json::object();
+    paintedOnBlocker_.clear();
+    paintedOnScenery_.clear();
     width_ = height_ = 0;
+    wallCells_ = waterCells_ = groundCells_ = 0;
 
     Json map;
     if (!parseJsonFile(path, map, errorOut)) return false;
@@ -268,22 +252,33 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
                    std::to_string(static_cast<int>(kTileSize)) + " square";
         return false;
     }
+    width_ = map["width"].asInt();
+    height_ = map["height"].asInt();
+    if (width_ <= 0 || height_ <= 0) {
+        errorOut = path + " is " + std::to_string(width_) + "x" + std::to_string(height_) +
+                   " cells, which is not a size a map can be";
+        return false;
+    }
+    const std::size_t cellCount =
+        static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_);
 
     // The map's OWN custom properties, as Tiled's Map Properties dialog
     // writes them. A map says things about itself that no object on it can --
-    // what to call it in the spawn picker, and which mob group its untagged
-    // spawn bands fall back to.
+    // what to call it in the spawn picker, which biome it is, and which mob
+    // group its untagged spawn bands fall back to.
     properties_ = propertiesOf(map);
 
     // -- palette ------------------------------------------------------------
     // Tiled's global tile ids (gids) are per-map and depend on tileset order,
-    // so the game's tile id is read off each tile as a property rather than
-    // inferred. gid 0 is Tiled's empty cell, which is walkable ground here.
-    std::vector<GidEntry> tileIdOfGid;
-    tileIdOfGid.push_back({0, 0, 0});
-    std::vector<GidEntry> groundIdOfGid;
-    groundIdOfGid.push_back({0, -1, 0});   // an empty background cell is bare void
+    // so a cell is resolved through the tilesets the map names rather than
+    // assumed to index anything directly. gid 0 is Tiled's empty cell.
     std::vector<TilesetRange> ranges;
+    struct Tileset {
+        Json json;
+        int firstGid = 0;
+        int tileCount = 0;
+    };
+    std::vector<Tileset> tilesets;
     for (const Json& reference : map["tilesets"].items()) {
         if (!reference.isObject()) continue;
         const int firstGid = reference["firstgid"].asInt();
@@ -294,73 +289,23 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
         } else if (!parseJsonFile(resolveRelative(path, source), tileset, errorOut)) {
             return false;
         }
+        const std::string name = source.empty() ? tileset["name"].asString() : fileNameOf(source);
         if (firstGid < 1) {
-            errorOut = path + ": tileset \"" + (source.empty() ? tileset["name"].asString() : source) +
-                       "\" starts at gid " + std::to_string(firstGid) + "; gids start at 1";
+            errorOut = path + ": tileset \"" + name + "\" starts at gid " +
+                       std::to_string(firstGid) + "; gids start at 1";
             return false;
         }
-        ranges.push_back({source.empty() ? tileset["name"].asString() : fileNameOf(source),
-                          firstGid, tileCountOf(tileset)});
-        for (const Json& tile : tileset["tiles"].items()) {
-            if (!tile.isObject()) continue;
-            const int localId = tile["id"].asInt();
-            const Json properties = propertiesOf(tile);
-            if (properties.contains("groundId")) {
-                const int groundId = properties["groundId"].asInt();
-                if (groundId < 0 || groundId > 127) {
-                    errorOut = path + ": ground tile \"" + classOf(tile) + "\" declares ground id " +
-                               std::to_string(groundId) + ", which is out of range";
-                    return false;
-                }
-                groundIdOfGid.push_back({firstGid + localId, groundId, 0});
-                TiledGroundType ground;
-                ground.id = groundId;
-                ground.name = classOf(tile);
-                ground.art = fileNameOf(tile["image"].asString());
-                groundPalette_.push_back(std::move(ground));
-                continue;
-            }
-            const int tileId = properties.contains("tileId") ? properties["tileId"].asInt() : localId;
-            if (tileId < 0 || tileId > 255) {
-                errorOut = path + ": tile \"" + classOf(tile) + "\" declares tile id " +
-                           std::to_string(tileId) + ", which is out of range";
-                return false;
-            }
-            TiledTileType entry;
-            entry.id = tileId;
-            entry.name = classOf(tile);
-            entry.solid = properties["solid"].asBool();
-            entry.water = properties["water"].asBool();
-            // A variant is its base tile with a style: the same tileId, the
-            // same flags, a `skin` naming the biome family, and either an
-            // `edges` property naming the sides (wall, water) or a `variant`
-            // picking the floor decoration (air).
-            if (properties.contains("skin")) {
-                const std::string skinName = properties["skin"].asString();
-                const int skin = tileSkinIndex(skinName);
-                if (skin < 0) {
-                    warnings_.push_back(path + ": tile \"" + entry.name + "\" names skin \"" +
-                                        skinName + "\", which the engine does not know; "
-                                        "drawing it as the default family");
-                    std::fprintf(stderr, "[map] %s\n", warnings_.back().c_str());
-                } else {
-                    entry.skin = static_cast<std::uint8_t>(skin);
-                }
-            }
-            if (tileId == 0) {
-                const int variant = properties.contains("variant") ? properties["variant"].asInt() : 0;
-                if (variant < 0 || variant > kStyleNibbleMax) {
-                    errorOut = path + ": tile \"" + entry.name + "\" declares floor variant " +
-                               std::to_string(variant) + ", which is out of range (0..15)";
-                    return false;
-                }
-                entry.variant = static_cast<std::uint8_t>(variant);
-            } else if (properties.contains("edges")) {
-                entry.edgeMask = parseEdgeMask(properties["edges"].asString());
-            }
-            tileIdOfGid.push_back({firstGid + localId, tileId, entry.style()});
-            palette_.push_back(std::move(entry));
+        const int count = tileCountOf(tileset);
+        if (count <= 0) {
+            errorOut = path + ": tileset \"" + name + "\" defines no tiles";
+            return false;
         }
+        ranges.push_back({name, firstGid, count});
+        tilesets.push_back({std::move(tileset), firstGid, count});
+    }
+    if (tilesets.empty()) {
+        errorOut = path + " names no tilesets";
+        return false;
     }
 
     // No two tilesets may own the same gid. Tiled itself does not check this
@@ -384,84 +329,133 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
         }
     }
 
-    // -- tile grid ----------------------------------------------------------
-    // Named, not positional: the map has two tile layers now, and taking the
-    // first one would make the ground the collision grid the day someone
-    // reorders them in Tiled. The unnamed fallback is for a map written before
-    // the background layer existed.
-    const Json* terrain = nullptr;
-    const Json* backgroundLayer = nullptr;
-    const Json* firstTileLayer = nullptr;
-    for (const Json& layer : map["layers"].items()) {
-        if (!layer.isObject() || layer["type"].asString() != "tilelayer") continue;
-        if (firstTileLayer == nullptr) firstTileLayer = &layer;
-        const std::string name = layer["name"].asString();
-        if (name == "terrain") terrain = &layer;
-        else if (name == "background") backgroundLayer = &layer;
+    // One palette entry per gid every tileset spans, in tileset order, and a
+    // gid -> entry table beside it. A tileset that names no properties for a
+    // tile -- a plain spritesheet cell -- still gets an entry: it is walkable,
+    // draws nothing of its own, and, crucially, RESOLVES, so a map painted
+    // with it is a map with no art rather than a map that will not load.
+    std::unordered_map<std::string, int> artIndexByName;
+    int highestGid = 0;
+    for (const Tileset& tileset : tilesets) {
+        highestGid = std::max(highestGid, tileset.firstGid + tileset.tileCount - 1);
     }
-    if (terrain == nullptr) terrain = firstTileLayer;
-    if (terrain == nullptr) {
-        errorOut = path + " has no tile layer";
-        return false;
-    }
-    width_ = (*terrain)["width"].asInt();
-    height_ = (*terrain)["height"].asInt();
-    if (width_ <= 0 || height_ <= 0) {
-        errorOut = path + " has an empty tile layer";
-        return false;
-    }
-    const std::size_t cellCount =
-        static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_);
-
-    std::vector<std::uint32_t> gids;
-    if (!decodeLayer(*terrain, path, gids, errorOut)) return false;
-    if (gids.size() != cellCount) {
-        errorOut = path + ": the tile layer holds " + std::to_string(gids.size()) +
-                   " cells, expected " + std::to_string(cellCount);
-        return false;
-    }
-    tiles_.reserve(gids.size());
-    styles_.reserve(gids.size());
-    for (const std::uint32_t raw : gids) {
-        int tileId = 0;
-        std::uint8_t style = 0;
-        if (!resolveGid(tileIdOfGid, raw, tileId, &style)) {
-            errorOut = path + ": tile " + std::to_string(tiles_.size()) + " uses gid " +
-                       std::to_string(tileId) + ", which no tileset defines";
-            return false;
+    std::vector<int> paletteOfGid(static_cast<std::size_t>(highestGid) + 1, -1);
+    for (const Tileset& tileset : tilesets) {
+        std::unordered_map<int, const Json*> byLocalId;
+        for (const Json& tile : tileset.json["tiles"].items()) {
+            if (tile.isObject()) byLocalId[tile["id"].asInt()] = &tile;
         }
-        tiles_.push_back(static_cast<std::uint8_t>(tileId));
-        styles_.push_back(style);
+        for (int localId = 0; localId < tileset.tileCount; ++localId) {
+            TiledTileType entry;
+            entry.gid = tileset.firstGid + localId;
+            const auto found = byLocalId.find(localId);
+            if (found != byLocalId.end()) {
+                const Json& tile = *found->second;
+                const Json properties = propertiesOf(tile);
+                entry.water = properties["water"].asBool();
+                entry.coversEverything = properties["covers_everything"].asBool();
+                entry.art = fileNameOf(tile["image"].asString());
+                entry.name = classOf(tile);
+                if (!entry.art.empty()) {
+                    const auto at = artIndexByName.find(entry.art);
+                    if (at != artIndexByName.end()) {
+                        entry.artIndex = at->second;
+                    } else {
+                        if (artFiles_.size() >= kMaxArtFiles) {
+                            errorOut = path + " names more than " +
+                                       std::to_string(kMaxArtFiles) + " distinct artworks";
+                            return false;
+                        }
+                        entry.artIndex = static_cast<int>(artFiles_.size());
+                        artIndexByName.emplace(entry.art, entry.artIndex);
+                        artFiles_.push_back(entry.art);
+                    }
+                }
+            }
+            // Something to print in a message about this tile, whatever the
+            // tileset chose to say about it.
+            if (!entry.art.empty()) entry.name = entry.art;
+            else if (entry.name.empty()) entry.name = "gid " + std::to_string(entry.gid);
+            paletteOfGid[static_cast<std::size_t>(entry.gid)] = static_cast<int>(palette_.size());
+            palette_.push_back(std::move(entry));
+        }
     }
 
-    // -- background -----------------------------------------------------------
-    // Optional. A map without the layer leaves background() empty, and the
-    // renderer falls back to the 3x3 section grid the layer replaced.
-    if (backgroundLayer != nullptr) {
-        std::vector<std::uint32_t> groundGids;
-        if (!decodeLayer(*backgroundLayer, path, groundGids, errorOut)) return false;
-        if (groundGids.size() != cellCount) {
-            errorOut = path + ": the background layer holds " + std::to_string(groundGids.size()) +
+    // -- layers and the collision grid ---------------------------------------
+    std::vector<const Json*> allLayers;
+    collectLayers(map["layers"], allLayers);
+
+    // COLLISION IS THE LAYER'S, not the tile's. `blockedCell` accumulates over
+    // the layers that carry `has_collision`; `waterCell` is overwritten by
+    // each blocking cell, so the last such layer to paint one -- the topmost
+    // blocker -- decides what KIND of blocker the cell is. Layers without the
+    // property are art and touch neither array. See the header.
+    std::vector<std::uint8_t> blockedCell(cellCount, 0);
+    std::vector<std::uint8_t> waterCell(cellCount, 0);
+    paintedOnBlocker_.assign(palette_.size(), 0);
+    paintedOnScenery_.assign(palette_.size(), 0);
+    for (const Json* layer : allLayers) {
+        if ((*layer)["type"].asString() != "tilelayer") continue;
+        const std::string name = (*layer)["name"].asString();
+        std::vector<std::uint32_t> gids;
+        if (!decodeLayer(*layer, path, gids, errorOut)) return false;
+        if (gids.size() != cellCount) {
+            errorOut = path + ": layer \"" + name + "\" holds " + std::to_string(gids.size()) +
                        " cells, expected " + std::to_string(cellCount);
             return false;
         }
-        background_.reserve(groundGids.size());
-        for (const std::uint32_t raw : groundGids) {
-            int groundId = 0;
-            if (!resolveGid(groundIdOfGid, raw, groundId)) {
-                errorOut = path + ": background cell " + std::to_string(background_.size()) +
-                           " uses gid " + std::to_string(groundId) +
-                           ", which no ground tileset defines";
+        TiledLayer out;
+        out.name = name;
+        // The whole of the collision rule, read once per layer. Tiled writes
+        // the property only when the author has touched it, and an absent
+        // property is a layer that does not block.
+        out.collides = propertiesOf(*layer)[kLayerCollisionProperty].asBool();
+        out.cells.resize(cellCount);
+        for (std::size_t i = 0; i < cellCount; ++i) {
+            const std::uint32_t raw = gids[i];
+            const std::uint32_t gid = raw & kGidMask;
+            if (gid == 0) continue;   // an empty cell: nothing drawn, nothing collided with
+            if (gid >= paletteOfGid.size() || paletteOfGid[gid] < 0) {
+                errorOut = path + ": cell " + std::to_string(i) + " of layer \"" + name +
+                           "\" uses gid " + std::to_string(gid) + ", which no tileset defines";
                 return false;
             }
-            background_.push_back(static_cast<std::int8_t>(groundId));
+            const std::size_t typeIndex = static_cast<std::size_t>(paletteOfGid[gid]);
+            const TiledTileType& type = palette_[typeIndex];
+            TiledCell& cell = out.cells[i];
+            cell.art = static_cast<std::int16_t>(type.artIndex);
+            // The flips are ART only; collision masks them off, because a
+            // rotated tile still fills the same cell.
+            if (raw & kGidFlipHorizontal) cell.flags |= kTileFlipHorizontal;
+            if (raw & kGidFlipVertical) cell.flags |= kTileFlipVertical;
+            if (raw & kGidFlipDiagonal) cell.flags |= kTileFlipDiagonal;
+            if (type.coversEverything) cell.flags |= kTileCoversEverything;
+            (out.collides ? paintedOnBlocker_ : paintedOnScenery_)[typeIndex] = 1;
+            if (!out.collides) continue;
+            blockedCell[i] = 1;
+            waterCell[i] = type.water ? 1 : 0;
         }
+        layers_.push_back(std::move(out));
+    }
+    if (layers_.empty()) {
+        errorOut = path + " has no tile layer";
+        return false;
+    }
+    tiles_.resize(cellCount);
+    for (std::size_t i = 0; i < cellCount; ++i) {
+        const Tile tile = blockedCell[i] == 0 ? Tile::Ground
+                        : waterCell[i] != 0   ? Tile::Water
+                                              : Tile::Wall;
+        tiles_[i] = static_cast<std::uint8_t>(tile);
+        if (tile == Tile::Wall) ++wallCells_;
+        else if (tile == Tile::Water) ++waterCells_;
+        else ++groundCells_;
     }
 
     // -- annotations --------------------------------------------------------
     for (const auto& spec : kObjectLayers) {
-        for (const Json& layer : map["layers"].items()) {
-            if (!layer.isObject()) continue;
+        for (const Json* layerPtr : allLayers) {
+            const Json& layer = *layerPtr;
             if (layer["type"].asString() != "objectgroup") continue;
             if (layer["name"].asString() != spec.layer) continue;
             for (const Json& object : layer["objects"].items()) {
@@ -494,7 +488,8 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
                 // Tiled writes an object's name outside its property bag, and
                 // it is the obvious place to type a spawn point's id. The
                 // explicit `spawnId` property still wins, so a map that wants
-                // a human name and a stable id can have both.
+                // a human name and a stable id can have both. An object with
+                // neither is named by MapData, off its label.
                 if (!object["name"].asString().empty() && !properties.contains("spawnId")) {
                     properties.set("spawnId", object["name"].asString());
                 }
@@ -539,27 +534,20 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
     return true;
 }
 
-std::vector<std::string> TiledMap::mismatchedFlags() const {
+std::vector<std::string> TiledMap::strandedWaterTiles() const {
     std::vector<std::string> out;
-    for (const TiledTileType& entry : palette_) {
-        if (entry.id > static_cast<int>(Tile::Block)) continue;
-        const Tile tile = static_cast<Tile>(entry.id);
-        const bool water = tileIsWater(tile);
-        const bool solid = tileBlocks(tile) && !water;
-        if (entry.solid != solid || entry.water != water) out.push_back(entry.name);
+    for (std::size_t i = 0; i < palette_.size(); ++i) {
+        // Painted, but never anywhere it can block: every cell holding it will
+        // be Ground, whatever the tag says and whatever the editor draws.
+        if (!palette_[i].water) continue;
+        if (i >= paintedOnScenery_.size() || paintedOnScenery_[i] == 0) continue;
+        if (i < paintedOnBlocker_.size() && paintedOnBlocker_[i] != 0) continue;
+        static_assert(tileIsWater(Tile::Water), "a blocking water tile becomes Tile::Water");
+        static_assert(!tileIsWater(Tile::Ground) && !tileBlocks(Tile::Ground),
+                      "a tile on a layer that does not collide leaves the cell walkable");
+        out.push_back(palette_[i].name);
     }
     return out;
-}
-
-std::string worldMapPath(const std::string& dataDir) {
-    const std::string tiled = dataDir + "/world.tmj";
-    std::ifstream probe(tiled, std::ios::binary);
-    if (probe) return tiled;
-    return dataDir + "/map_bundle.ts";
-}
-
-bool isTiledMapPath(const std::string& path) {
-    return path.size() > 4 && path.compare(path.size() - 4, 4, ".tmj") == 0;
 }
 
 } // namespace flix

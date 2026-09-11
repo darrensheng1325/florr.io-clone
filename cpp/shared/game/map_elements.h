@@ -1,12 +1,19 @@
 #pragma once
-// The map's annotations: spawn bands, player spawn points and teleporters.
+// The map's annotations: spawn bands, player spawn points and teleporters --
+// and the ART the client draws the map with.
 //
-// A map file carries two things. The tile grid, which Terrain already reads,
-// says what is solid. The object layers say what the map MEANS -- which
+// A map file carries three things. The tile layers the author painted, whose
+// COLLISION Terrain derives and whose PICTURES this file carries through for
+// the renderer. And the object layers, which say what the map MEANS -- which
 // stretch of ground grows which mobs, where a joining player is put down, and
-// which pad leads to which other map. Terrain deliberately knows none of that:
-// geometry and meaning are separate questions, and only one of them is needed
-// per tick.
+// which pad leads to which other map. Terrain deliberately knows none of the
+// last two: geometry and meaning are separate questions, and only one of them
+// is needed per tick.
+//
+// The art rides here rather than over the wire on purpose. Every client
+// already loads every staged map for its annotations, and the pictures are the
+// one part of a map that is not authoritative -- what is solid comes from the
+// server, what it looks like comes from the file both ends ship.
 //
 // There is one MapData per world map, and WorldMaps at the bottom of this file
 // owns them all. Every realm that is not the arena or the maze has exactly one
@@ -209,25 +216,18 @@ struct MobDisc {
 /// The annotation layer of ONE world map, loaded once beside its tile grid.
 class MapData {
 public:
-    /// Reads the annotation layer from whichever map format `path` names: the
-    /// Tiled map the game is authored in, or the TypeScript bundle it used to
-    /// ship as.
+    /// Reads the object layers and the art of a Tiled `.tmj`. The one map
+    /// loader there is; see shared/game/tiled_map.h.
     ///
     /// `realm` is the realm this map IS. Everything here that touches terrain
     /// asks about that realm, so a MapData can never accidentally test a point
     /// against another map's walls.
-    bool loadWorldMap(const std::string& path, std::string& errorOut,
-                      Realm realm = Realm::Overworld);
-
-    /// Reads the object layers of a Tiled `.tmj`. See shared/game/tiled_map.h.
+    ///
+    /// The map's id is its file stem unless setId() already named it, so a map
+    /// loaded straight off a path -- a test, a tool -- still resolves the
+    /// defaults below rather than falling back to an empty string.
     bool loadTiled(const std::string& path, std::string& errorOut,
                    Realm realm = Realm::Overworld);
-
-    /// Reads MAP_ELEMENTS out of `map_bundle.ts`. The array is plain JSON
-    /// inside a TypeScript literal, so it is sliced out and handed to the JSON
-    /// parser rather than being re-lexed here.
-    bool load(const std::string& bundlePath, std::string& errorOut,
-              Realm realm = Realm::Overworld);
 
     bool loaded() const { return !elements_.empty(); }
     const std::vector<MapElement>& elements() const { return elements_; }
@@ -244,29 +244,44 @@ public:
     /// Empty falls back to the id.
     const std::string& displayName() const { return displayName_; }
 
-    /// The biome this map belongs to, from its `biome` property: what the
-    /// picker files its doors under when a door does not say for itself.
-    /// Empty falls back to the id.
+    /// The biome this map belongs to: what the picker files its doors under
+    /// when a door does not say for itself.
+    ///
+    /// From the map's `biome` property, DEFAULTING TO THE MAP ID. A one-biome
+    /// map should not have to say its own name twice, and every map that never
+    /// declares one still lands in a tab of its own rather than in a nameless
+    /// bucket shared with every other silent map.
     const std::string& biome() const { return biome_; }
 
     /// The mob group a spawn band with no `mobs` distribution of its own
-    /// spawns from, out of the map's `defaultMobGroup` property. Empty means
-    /// the map declared none, and such a band spawns nothing -- reported once
-    /// by the spawner rather than silently.
+    /// spawns from.
+    ///
+    /// From the map's `defaultMobGroup` property, DEFAULTING TO biome() -- so
+    /// `garden.tmj` grows garden mobs with nothing authored at all. A group
+    /// mobs.json does not define is reported once by the spawner, which is
+    /// where the content registry is; it cannot be checked here.
     const std::string& defaultMobGroup() const { return defaultMobGroup_; }
 
-    /// Which ground artwork the map paints `at` with, as an index into the
-    /// ground palette; -1 for bare void, and -1 outside the map.
-    int groundAt(Vec2 at) const;
+    /// The map's size in TILES. The map decides: a corridor level is a hundred
+    /// tiles across and the overworld is sixty-four, and nothing here assumes
+    /// either.
+    int width() const { return width_; }
+    int height() const { return height_; }
 
-    /// True when the map carries a background layer at all. False means the
-    /// caller should fall back to the section grid: a map WITHOUT the layer and
-    /// a map whose every cell is void are different things.
-    bool hasBackground() const { return !background_.empty(); }
+    /// Every distinct artwork this map's tiles name, by bare file name. A
+    /// cell's `art` indexes into this; the renderer resolves a name to a
+    /// sprite once and keeps it.
+    const std::vector<std::string>& artFiles() const { return artFiles_; }
 
-    /// The ground palette, in ground-id order: what each id is called and which
-    /// artwork file it names.
-    const std::vector<TiledGroundType>& groundPalette() const { return groundPalette_; }
+    /// The map's tile layers, BOTTOM TO TOP: the order to draw them in. Each
+    /// holds width()*height() cells, row-major. Layer names are carried for
+    /// tooling and mean nothing to the game.
+    const std::vector<TiledLayer>& layers() const { return layers_; }
+
+    /// The cell at a tile coordinate on one layer, or an empty cell when the
+    /// coordinate is off the map. Bounds-checked because the renderer walks a
+    /// viewport, not a grid, and a camera past the edge is normal.
+    TiledCell cellAt(std::size_t layer, int tx, int ty) const;
 
     /// The map's player spawn points, in button order (`order`, then map
     /// order). This is the picker's list AND the teleporter's: a pad arrives
@@ -359,12 +374,13 @@ private:
     std::string displayName_;
     std::string biome_;
     std::string defaultMobGroup_;
-    /// Row-major ground ids over the tile grid, or empty when the map has no
-    /// background layer. Signed: -1 is void.
-    std::vector<std::int8_t> background_;
-    int backgroundWidth_ = 0;
-    int backgroundHeight_ = 0;
-    std::vector<TiledGroundType> groundPalette_;
+    /// The map's art, straight out of the file. Copied rather than referenced
+    /// because the TiledMap that parsed it is a load-time scratch object and
+    /// the renderer reads these every frame.
+    std::vector<std::string> artFiles_;
+    std::vector<TiledLayer> layers_;
+    int width_ = 0;
+    int height_ = 0;
 };
 
 /// One entry of the spawn picker: a player spawn rectangle, wherever it is.

@@ -59,113 +59,191 @@ const MapData& overworld(const Harness& h) {
 
 } // namespace
 
-TEST(the_maps_annotation_layers_load) {
+TEST(the_shipped_map_loads_and_resolves_its_defaults) {
+    // The new truth: maps/maps.json names ONE map, garden.tmj, and that map is
+    // the overworld. It declares no map properties at all, so this is also the
+    // test of the defaults that make an unedited Tiled file work -- `biome`
+    // falls back to the map id and `defaultMobGroup` falls back to `biome`.
     WorldMaps maps;
     std::string error;
     CHECK(maps.load(dataDir(), nullptr, error));
     CHECK(error.empty());
+    // Nothing about the shipped data may be broken: a pad that leads nowhere,
+    // a door a teleporter cannot reach. Empty is the only passing answer.
     for (const std::string& warning : maps.warnings()) {
         ::testing::reportFailure(__FILE__, __LINE__, "map warning: " + warning);
     }
-    // The shipped manifest names the overworld and the sewers, in that order,
-    // then the 45 biome maps (nine biomes x five): the order IS the realm
-    // numbering. Regenerating the biome maps or adding one to maps.json must
-    // update this number.
-    CHECK_EQ(maps.count(), 47);
+    CHECK(maps.warnings().empty());
+
+    CHECK_EQ(maps.count(), 1);
     CHECK(maps.forRealm(Realm::Overworld) != nullptr);
-    CHECK(maps.forRealm(worldRealm(1)) != nullptr);
+    CHECK(maps.forRealm(worldRealm(1)) == nullptr);
     CHECK(maps.forRealm(Realm::Arena) == nullptr);
     CHECK(maps.forRealm(Realm::Maze) == nullptr);
     bool found = false;
-    CHECK(maps.realmOfId("sewers", found) == worldRealm(1));
+    CHECK(maps.realmOfId("garden", found) == Realm::Overworld);
     CHECK(found);
 
     const MapData& world = *maps.forRealm(Realm::Overworld);
-    CHECK_EQ(world.id(), std::string("world"));
+    CHECK_EQ(world.id(), std::string("garden"));
+    // Neither of these is written anywhere in garden.tmj.
+    CHECK_EQ(world.biome(), std::string("garden"));
     CHECK_EQ(world.defaultMobGroup(), std::string("garden"));
-    CHECK(world.elements().size() > 100);
 
-    int bands = 0;
-    int regions = 0;
-    int doors = 0;
-    int teleporters = 0;
+    // 64 x 64 cells at kTileSize, which is what the file says and what the art
+    // has to be indexed against.
+    CHECK_EQ(world.width(), 64);
+    CHECK_EQ(world.height(), 64);
+    CHECK(!world.artFiles().empty());
+
+    // The layer count is NOT pinned: the author adds and removes layers as the
+    // map is drawn, and a test that counted them would fail every time they
+    // did. What is pinned is the shape the engine needs -- every layer is a
+    // full grid, and the map has both kinds of layer, because a map with no
+    // colliding layer is one a player walks straight off and a map with no
+    // scenery layer means the collision rule has collapsed into "everything
+    // painted is a wall".
+    CHECK(world.layers().size() >= 2);
+    int collidingLayers = 0, sceneryLayers = 0;
+    for (const TiledLayer& layer : world.layers()) {
+        CHECK_EQ(layer.cells.size(), std::size_t{64} * 64);
+        (layer.collides ? collidingLayers : sceneryLayers) += 1;
+    }
+    CHECK(collidingLayers > 0);
+    CHECK(sceneryLayers > 0);
+    // Every non-empty cell names an artwork the map actually carries.
+    for (const TiledLayer& layer : world.layers()) {
+        for (const TiledCell& cell : layer.cells) {
+            CHECK(cell.art < static_cast<int>(world.artFiles().size()));
+        }
+    }
+    // Off the map is an empty cell rather than a read past the end.
+    CHECK_EQ(world.cellAt(0, -1, 0).art, -1);
+    CHECK_EQ(world.cellAt(0, 64, 0).art, -1);
+    CHECK_EQ(world.cellAt(world.layers().size(), 0, 0).art, -1);
+
+    // One door, no pads, and no bands or regions: the map is hand-authored art
+    // with a single spawn rectangle on it. The spawner answers a band-less map
+    // with the map's own default group, which is what the defaults above are
+    // for.
+    int bands = 0, regions = 0, doors = 0, teleporters = 0;
     for (const MapElement& element : world.elements()) {
         if (element.isSpawnBand()) ++bands;
         if (element.isMobRegion()) ++regions;
         if (element.kind == MapElementKind::PlayerSpawn) ++doors;
         if (element.kind == MapElementKind::Teleporter) ++teleporters;
     }
-    CHECK(bands > 150);
-    // One per section: the seven sectionAt() used to decide, plus the jungle
-    // and the unknown corner, which had no mobs of their own before.
-    CHECK_EQ(regions, 9);
-    // The nine biome doors plus the sewers gate.
-    CHECK_EQ(doors, 10);
-    // Every teleporter is a POINT: width and height are both 0. A size test
-    // that rejects them takes the dots off the minimap and the glow out of the
-    // world, and does it without a word of complaint. The eight authored pads
-    // plus one entrance per biome into its first sublevel.
-    CHECK_EQ(teleporters, 17);
-    // And every one of them says where it leads.
+    CHECK_EQ(doors, 1);
+    CHECK_EQ(bands, 0);
+    CHECK_EQ(regions, 0);
+    CHECK_EQ(teleporters, 0);
+    // A pad, if the map ever grows one, still has to say where it leads.
     for (const MapElement& element : world.elements()) {
         if (element.kind != MapElementKind::Teleporter) continue;
         CHECK(!element.targetMap.empty());
     }
 }
 
-TEST(the_picker_offers_every_player_spawn_rectangle) {
+TEST(the_shipped_door_is_named_by_its_label_and_is_pickable) {
+    // garden.tmj's one door has an EMPTY Tiled name and no `spawnId` property.
+    // All it says is `label: "Garden"`, and that is enough: the id falls back
+    // to a slug of the label, so the door is `garden` and the picker offers
+    // it. Before that fallback this object was dropped at load and the map had
+    // no doors at all.
     WorldMaps maps;
     std::string error;
     CHECK(maps.load(dataDir(), nullptr, error));
+    const MapData* world = maps.forRealm(Realm::Overworld);
+    CHECK(world != nullptr);
+    if (world == nullptr) return;
 
-    // Every door on every map is known, each with a label; the PICKABLE ones
-    // are offered, and each of those is reachable by the id the picker sends
-    // back. A biome's sublevel doors are not pickable: they are reached
-    // through pads from the biome's main area, and only door() knows them.
-    std::size_t doors = 0;
-    std::size_t pickable = 0;
-    for (const MapData& map : maps.maps()) {
-        for (const MapElement* point : map.playerSpawns()) {
-            ++doors;
-            if (point->pickable) ++pickable;
+    CHECK_EQ(world->playerSpawns().size(), std::size_t{1});
+    if (world->playerSpawns().empty()) return;
+    const MapElement& door = *world->playerSpawns().front();
+    CHECK_EQ(door.spawnId, std::string("garden"));
+    CHECK_EQ(door.label, std::string("Garden"));
+    CHECK(door.pickable);
+
+    // And it is offered, under its map's biome tab, with its label on it.
+    CHECK_EQ(maps.spawnChoices().size(), std::size_t{1});
+    CHECK_EQ(maps.doors().size(), std::size_t{1});
+    const SpawnChoice* choice = maps.choice("garden");
+    CHECK(choice != nullptr);
+    if (choice == nullptr) return;
+    CHECK_EQ(choice->label, std::string("Garden"));
+    CHECK_EQ(choice->biome, std::string("garden"));
+    CHECK(choice->pickable);
+    CHECK(choice->realm == Realm::Overworld);
+    CHECK(maps.door("garden") != nullptr);
+}
+
+TEST(the_shipped_door_stands_on_open_ground) {
+    // THE test of the shipped data under the layer collision rule. Collision
+    // is now a property of the LAYER -- water, dirt and castle all have
+    // `has_collision` ticked, so around three fifths of garden.tmj is solid
+    // (the background and sand layers are painted over all of it and block
+    // nothing, which is the rule working) -- and the
+    // one thing that has to survive that is the door: a player must be able to
+    // be put down inside it.
+    //
+    // The door is NOT wall-free to its last millimetre, and that is fine. Its
+    // rectangle is 1900 x 1833 at (1166.67, 16800), which is not tile-aligned:
+    // it overhangs the wall in column 3 by 33 units on the left and the wall in
+    // row 62 by 33 units at the bottom. What matters is that the room inside it
+    // is open -- 42 of the 56 cells it touches are ground -- and that every
+    // real placement lands clear, which is what findOpenPoint's body test
+    // guarantees. So this pins the two facts a player depends on: the great
+    // majority of the rectangle is standable, and a placement never is not.
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    const MapData* world = maps.forRealm(Realm::Overworld);
+    CHECK(world != nullptr);
+    if (world == nullptr || world->playerSpawns().empty()) { CHECK(false); return; }
+    const MapElement& door = *world->playerSpawns().front();
+
+    CHECK(!terrain.blocked(door.centre(), Realm::Overworld));
+
+    // The door's own cells, counted exactly rather than sampled: a wall
+    // growing across the room shows up here as a number, not as a flaky
+    // sample.
+    int openCells = 0, walledCells = 0;
+    const int minTx = Terrain::toTileCoord(door.bounds.x);
+    const int maxTx = Terrain::toTileCoord(door.bounds.right() - 1e-6);
+    const int minTy = Terrain::toTileCoord(door.bounds.y);
+    const int maxTy = Terrain::toTileCoord(door.bounds.bottom() - 1e-6);
+    for (int ty = minTy; ty <= maxTy; ++ty) {
+        for (int tx = minTx; tx <= maxTx; ++tx) {
+            if (tileBlocks(terrain.atTile(tx, ty, Realm::Overworld))) ++walledCells;
+            else ++openCells;
         }
     }
-    CHECK_EQ(maps.doors().size(), doors);
-    CHECK_EQ(maps.spawnChoices().size(), pickable);
-    // Nine biome doors and a gate on the world, two in the sewers, and one on
-    // each of the 45 generated biome maps.
-    CHECK_EQ(doors, std::size_t{57});
-    // A biome is spawnable only from its MAIN area, the overworld door that
-    // carries its name: the 45 sublevel doors, the two doors of the
-    // hand-authored sewers map and the world's sewer gate (the return point
-    // from that map, next to the pad that leads in) are all reached through
-    // pads, and only the nine biome doors are offered.
-    CHECK_EQ(pickable, std::size_t{9});
-    for (const SpawnChoice& choice : maps.spawnChoices()) {
-        CHECK(!choice.label.empty());
-        CHECK(choice.pickable);
-        CHECK(maps.choice(choice.id) == &choice);
-        CHECK(isWorldRealm(choice.realm));
+    // Loudly: a door with no room in it is a map bug, and this is the number
+    // that says so.
+    if (openCells * 2 < openCells + walledCells) {
+        ::testing::reportFailure(__FILE__, __LINE__,
+                                 "the shipped door is mostly wall: " +
+                                     std::to_string(openCells) + " open cells, " +
+                                     std::to_string(walledCells) + " walled");
     }
-    for (const SpawnChoice& door : maps.doors()) {
-        CHECK(!door.label.empty());
-        CHECK(maps.door(door.id) == &door);
-        if (!door.pickable) CHECK(maps.choice(door.id) == nullptr);
+    CHECK(openCells >= 24);
+
+    // And two hundred real placements, every one of them clear -- not the
+    // centre, not a nudge, the actual answer the join path takes.
+    Rng rng(0xD00D);
+    for (int i = 0; i < 200; ++i) {
+        Vec2 placed{};
+        CHECK(world->spawnAt("garden", rng, terrain, placed));
+        CHECK(door.contains(placed));
+        if (terrain.blocked(placed, Realm::Overworld)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "spawnAt landed in a wall at " +
+                                         std::to_string(placed.x) + "," +
+                                         std::to_string(placed.y));
+            break;
+        }
     }
-    // The garden door is first: it is what a player who chose nothing gets.
-    // (Guarded: a world map that failed to load has no doors, and that should
-    // read as a failed test, not a crashed binary.)
-    const MapData* overworld = maps.forRealm(Realm::Overworld);
-    CHECK(overworld != nullptr && !overworld->playerSpawns().empty());
-    if (overworld != nullptr && !overworld->playerSpawns().empty()) {
-        CHECK_EQ(overworld->playerSpawns().front()->spawnId, std::string("garden"));
-    }
-    // A door on the second map carries that map's realm, and is known to
-    // door() but not offered by choice().
-    const SpawnChoice* entrance = maps.door("sewers_entrance");
-    CHECK(entrance != nullptr);
-    if (entrance != nullptr) CHECK(entrance->realm == worldRealm(1));
-    CHECK(maps.choice("sewers_entrance") == nullptr);
 }
 
 TEST(a_player_joins_on_the_beginner_ground) {
@@ -182,10 +260,10 @@ TEST(a_player_joins_on_the_beginner_ground) {
     if (body == NULL_ENTITY) return;
     const Vec2 at = h.server.world().get<Transform>(body).position;
 
+    // Joining with NO choice at all lands in the map's first door in button
+    // order, which on the shipped data is its only one.
     CHECK(inSpawnPoint(overworld(h), "garden", at));
     CHECK(!inTierAbove(overworld(h), at, Rarity::Rare));
-    // Section 0 is the map's top-left, which is where the beginner ground is.
-    CHECK_EQ(sectionAt(at), 0);
     CHECK(!h.server.terrain().blocked(at, Realm::Overworld));
     CHECK(h.server.world().get<Transform>(body).realm == Realm::Overworld);
 }
@@ -225,27 +303,77 @@ TEST(respawning_returns_to_the_beginner_ground) {
     // band picked from the player's level and not to the middle of the map.
     CHECK(inSpawnPoint(overworld(h), "garden", at));
     CHECK(!inTierAbove(overworld(h), at, Rarity::Rare));
-    CHECK(distance(at, {kWorldHalf, kWorldHalf}) > 5000.0);
+    // Not the middle of the map, which is what the bug this test was written
+    // for did. Measured against the map's OWN extent -- every map says its own
+    // size now, and a fixed world constant would stop meaning anything the
+    // moment an author resized the garden.
+    const Vec2 extent = h.server.terrain().realmExtent(Realm::Overworld);
+    CHECK(distance(at, extent * 0.5) > 0.2 * extent.length());
 }
 
+namespace {
+
+// ---------------------------------------------------------------------------
+// A two-map world, built here rather than taken from the shipped data
+// ---------------------------------------------------------------------------
+//
+// The game ships ONE map with ONE door on it. Everything about several realms
+// -- choosing between doors, a pad that lands somewhere, a door an admin may
+// name and nobody else may -- therefore needs a world of its own. Bending the
+// shipped map into that shape would make the game's art a test fixture and
+// stop an author from ever changing it.
+//
+// `meadow` is the overworld: two pickable doors and a pad into `warren`.
+// `warren` is a second, differently-sized realm whose only door is NOT
+// pickable, which is exactly the sublevel arrangement the picker's rules are
+// written for.
+
+using flix::testsupport::twoMapDataDir;
+
+/// An admin account, seeded before the server opens the database.
+void seedAdminAccount(const std::string& path) {
+    Database db;
+    std::string error;
+    db.load(path, error);
+    db.setPasswordCost(4);
+    CreateResult created = db.createUser("boss", "password7");
+    if (created.ok()) created.account->admin = true;
+    db.markDirty();
+    db.save();
+}
+
+Entity bodyNamed(World& world, const std::string& name) {
+    Entity found = NULL_ENTITY;
+    Query<PlayerTag, PlayerAccount> players{world};
+    players.each([&](Entity e, PlayerTag&, PlayerAccount& account) {
+        if (account.username == name) found = e;
+    });
+    return found;
+}
+
+} // namespace
+
 TEST(a_chosen_spawn_point_is_honoured_and_survives_a_respawn) {
-    Harness h("spawn-choice");
-    if (!h.ready) { CHECK(false); return; }
-    CHECK(h.server.worldMaps().choice("desert") != nullptr);
+    const std::string dir = twoMapDataDir("choice");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-choice", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+    CHECK(h.server.worldMaps().choice("dunes") != nullptr);
 
     NetClient client;
     CHECK(loginNew(h, client, "wanderer", "password7"));
-    client.joinGame(1280, 720, "desert");
+    client.joinGame(1280, 720, "dunes");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
 
     World& world = h.server.world();
     Entity body = onlyPlayer(world);
     CHECK(body != NULL_ENTITY);
-    if (body == NULL_ENTITY) return;
-    CHECK(inSpawnPoint(overworld(h), "desert", world.get<Transform>(body).position));
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(inSpawnPoint(overworld(h), "dunes", world.get<Transform>(body).position));
 
     // The choice lives on the session, so dying does not quietly move the
-    // player back to the garden.
+    // player back to the map's first door.
     world.get<Health>(body).current = 0.0;
     world.add<Dead>(body, Dead{NULL_ENTITY});
     CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
@@ -258,31 +386,36 @@ TEST(a_chosen_spawn_point_is_honoured_and_survives_a_respawn) {
     body = onlyPlayer(world);
     CHECK(body != NULL_ENTITY);
     if (body != NULL_ENTITY) {
-        CHECK(inSpawnPoint(overworld(h), "desert", world.get<Transform>(body).position));
+        CHECK(inSpawnPoint(overworld(h), "dunes", world.get<Transform>(body).position));
     }
+    flix::testsupport::removeDataDir(dir);
 }
 
 TEST(a_teleporter_carries_a_player_to_another_map) {
-    Harness h("spawn-teleporter");
-    if (!h.ready) { CHECK(false); return; }
+    const std::string dir = twoMapDataDir("pad");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-teleporter", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
 
-    // The pad in the sewer corner is the door to the sewers map.
     const MapElement* pad = nullptr;
     for (const MapElement& element : overworld(h).elements()) {
-        if (element.kind == MapElementKind::Teleporter && element.targetMap == "sewers") pad = &element;
+        if (element.kind == MapElementKind::Teleporter && element.targetMap == "warren") {
+            pad = &element;
+        }
     }
     CHECK(pad != nullptr);
-    if (pad == nullptr) return;
+    if (pad == nullptr) { flix::testsupport::removeDataDir(dir); return; }
 
     NetClient client;
     CHECK(loginNew(h, client, "spelunker", "password7"));
-    client.joinGame(1280, 720);
+    client.joinGame(1280, 720, {}, "spelunker");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
 
     World& world = h.server.world();
     const Entity body = onlyPlayer(world);
     CHECK(body != NULL_ENTITY);
-    if (body == NULL_ENTITY) return;
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
 
     // Stand on the pad and wait out the dwell. The pad is HELD, not touched:
     // stepping onto it and straight off again must not fire it.
@@ -293,21 +426,23 @@ TEST(a_teleporter_carries_a_player_to_another_map) {
 
     const Transform& at = world.get<Transform>(body);
     bool found = false;
-    const Realm sewers = h.server.worldMaps().realmOfId("sewers", found);
+    const Realm warren = h.server.worldMaps().realmOfId("warren", found);
     CHECK(found);
-    CHECK(at.realm == sewers);
-    const MapData* map = h.server.worldMaps().forRealm(sewers);
+    CHECK(at.realm == warren);
+    const MapData* map = h.server.worldMaps().forRealm(warren);
     CHECK(map != nullptr);
     if (map != nullptr) CHECK(inSpawnPoint(*map, pad->targetSpawn, at.position));
     // The kit came too: nothing of this flower's is left in the overworld.
     Query<Transform, PetalInstance> petals{world};
     petals.each([&](Entity, Transform& petal, PetalInstance& owner) {
-        if (owner.owner == body) CHECK(petal.realm == sewers);
+        if (owner.owner == body) CHECK(petal.realm == warren);
     });
-    // And the client followed: it was sent the sewers' grid and drew the
-    // arrival there.
-    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == sewers; }));
-    CHECK_EQ(client.terrain().tileCols(sewers), h.server.terrain().tileCols(sewers));
+    // And the client followed: it was sent the second map's grid, which is a
+    // DIFFERENT shape from the first's, and drew the arrival there.
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == warren; }));
+    CHECK_EQ(client.terrain().tileCols(warren), h.server.terrain().tileCols(warren));
+    CHECK(h.server.terrain().tileCols(warren) != h.server.terrain().tileCols(Realm::Overworld));
+    flix::testsupport::removeDataDir(dir);
 }
 
 TEST(a_spawn_choice_the_maps_do_not_define_falls_back) {
@@ -483,35 +618,73 @@ TEST(a_broken_distribution_is_reported_not_guessed_at) {
     CHECK_EQ(rows[0].name, std::string("bee"));
 }
 
-TEST(the_shipped_bands_lean_on_the_regions_under_them) {
-    // The tier bands say how dangerous their ground is and nothing else: what
-    // grows there is the mob REGION under them, one per section, which is
-    // exactly what sectionAt() decided before it was written into the map.
-    // Six bands straddle a section boundary, and a band that named a group
-    // would have to average the two.
+TEST(a_map_with_no_bands_falls_back_to_its_own_mob_group) {
+    // The shipped map authors NO spawn bands and NO mob regions. That used to
+    // be impossible to state -- world.tmj carried two hundred bands and nine
+    // regions, and the spawner was only ever exercised through them -- and it
+    // is the normal case now: an author paints a map and the mobs follow from
+    // its `defaultMobGroup`, which itself defaults to the map's biome, which
+    // defaults to its id.
+    //
+    // So the chain that has to hold is: no bands, no regions, and a non-empty
+    // default group that the content actually defines. A map that resolved to
+    // an empty group would spawn nothing at all, silently.
     MapData map;
     std::string error;
-    CHECK(map.loadWorldMap(dataDir() + "/world.tmj", error));
-    int silentBands = 0;
-    int namedBands = 0;
+    CHECK(map.loadTiled(dataDir() + "/garden.tmj", error));
+    CHECK(error.empty());
+    int bands = 0;
     int regions = 0;
     for (const MapElement& element : map.elements()) {
+        if (element.isSpawnBand()) ++bands;
+        if (element.isMobRegion()) ++regions;
+    }
+    CHECK_EQ(bands, 0);
+    CHECK_EQ(regions, 0);
+    CHECK(!map.defaultMobGroup().empty());
+    CHECK_EQ(map.defaultMobGroup(), map.biome());
+    CHECK(content().mobGroupIndex(map.defaultMobGroup()) != kInvalidIndex);
+}
+
+TEST(an_authored_band_and_region_still_parse) {
+    // Bands and regions are not gone, only unused by the shipped art. This is
+    // the coverage the old world.tmj gave for free, kept alive against a map
+    // written here: a `spawn` object WITH a tier is a band that owns a
+    // population, one WITHOUT is a region that only says what grows there.
+    const std::string objects =
+        R"({ "id": 1, "type": "spawn", "visible": true, "rotation": 0,
+             "x": 600, "y": 600, "width": 3000, "height": 3000, "properties": [
+               { "name": "spawnType", "type": "string", "value": "rare" },
+               { "name": "mobs", "type": "string", "value": "hornet 100%" } ] },
+           { "id": 2, "type": "spawn", "visible": true, "rotation": 0,
+             "x": 600, "y": 4200, "width": 3000, "height": 3000, "properties": [
+               { "name": "mobs", "type": "string", "value": "ocean 100%" } ] })";
+    const std::string banded =
+        flix::testsupport::fixtureMap(24, 24, std::string(), std::string(), objects);
+    const std::string dir = flix::testsupport::stageDataDir("bands", {{"banded", banded}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+
+    MapData map;
+    std::string error;
+    CHECK(map.loadTiled(dir + "/banded.tmj", error));
+    int bands = 0;
+    int regions = 0;
+    for (const MapElement& element : map.elements()) {
+        if (element.isSpawnBand()) {
+            ++bands;
+            CHECK(element.spawnTier == Rarity::Rare);
+            CHECK_EQ(element.mobDistribution.size(), std::size_t{1});
+            CHECK_EQ(element.mobDistribution[0].name, std::string("hornet"));
+        }
         if (element.isMobRegion()) {
             ++regions;
-            // One group, or a weighted mix -- the unknown corner is half
-            // computer and half hel.
-            CHECK(!element.mobDistribution.empty());
-            continue;
+            CHECK_EQ(element.mobDistribution[0].name, std::string("ocean"));
         }
-        if (!element.isSpawnBand()) continue;
-        if (element.mobDistribution.empty()) ++silentBands;
-        else ++namedBands;
     }
-    CHECK(silentBands > 100);
-    // The old biome rooms -- bee fields, ant nests, the DPS row -- became
-    // bands that name their mobs outright.
-    CHECK(namedBands > 50);
-    CHECK_EQ(regions, 9);
+    CHECK_EQ(bands, 1);
+    CHECK_EQ(regions, 1);
+    flix::testsupport::removeDataDir(dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -564,190 +737,76 @@ TEST(every_pickable_door_stands_on_safe_open_ground) {
     }
 }
 
-namespace {
-
-bool copyFile(const std::string& from, const std::string& to) {
-    std::ifstream in(from, std::ios::binary);
-    if (!in) return false;
-    std::ofstream out(to, std::ios::binary | std::ios::trunc);
-    out << in.rdbuf();
-    return out.good();
-}
-
-/// A data directory that is the staged one with the sewers' door marked
-/// `pickable = false`: a sublevel door, as the biome maps' are. Built rather
-/// than taken from the staged maps so the test does not depend on which maps
-/// the generator has marked yet.
-std::string stageSublevelDataDir() {
-    const std::string src = flix::testsupport::dataDir();
-    const std::string dir = "/tmp/florr-itest-sublevel-" + std::to_string(::getpid());
-    mkdir(dir.c_str(), 0755);
-    for (const char* name : {"mobs.json", "petals.json", "mob_xp.json", "mob_drops.json",
-                             "terrain.tsj", "ground.tsj", "world.tmj"}) {
-        if (!copyFile(src + "/" + name, dir + "/" + name)) return {};
-    }
-    std::ifstream in(src + "/sewers.tmj", std::ios::binary);
-    if (!in) return {};
-    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    Json map;
-    std::string error;
-    if (!Json::parse(text, map, error)) return {};
-    for (Json& layer : map["layers"].items()) {
-        if (layer["name"].asString() != "player_spawns") continue;
-        for (Json& object : layer["objects"].items()) {
-            bool flagged = false;
-            if (object.contains("properties")) {
-                for (Json& property : object["properties"].items()) {
-                    if (property["name"].asString() == "pickable") { property["value"] = false; flagged = true; }
-                }
-            }
-            if (flagged) continue;
-            Json flag = Json::object();
-            flag["name"] = "pickable";
-            flag["type"] = "bool";
-            flag["value"] = false;
-            if (!object.contains("properties")) object["properties"] = Json::array();
-            object["properties"].push(flag);
-        }
-    }
-    std::ofstream out(dir + "/sewers.tmj", std::ios::binary | std::ios::trunc);
-    out << map.dump();
-    std::ofstream manifest(dir + "/maps.json", std::ios::binary | std::ios::trunc);
-    manifest << R"({"maps": [{"file": "world.tmj"}, {"file": "sewers.tmj"}]})";
-    return dir;
-}
-
-/// An admin account, seeded before the server opens the database.
-void seedAdminAccount(const std::string& path) {
-    Database db;
-    std::string error;
-    db.load(path, error);
-    db.setPasswordCost(4);
-    CreateResult created = db.createUser("boss", "password7");
-    if (created.ok()) created.account->admin = true;
-    db.markDirty();
-    db.save();
-}
-
-/// The loopback harness over a data directory of the test's choosing.
-struct DataDirHarness {
-    GameServer server;
-    std::string dbPath;
-    std::uint16_t port = 0;
-    bool ready = false;
-    double clock = 0;
-
-    DataDirHarness(const std::string& dataDir, const char* dbName) {
-        dbPath = flix::testsupport::tempPath(dbName);
-        std::remove(dbPath.c_str());
-        seedAdminAccount(dbPath);
-        ServerConfig config;
-        config.dataDir = dataDir;
-        config.databasePath = dbPath;
-        config.worldSeed = 12345;
-        std::string error;
-        for (std::uint16_t candidate = 47100; candidate < 47160; ++candidate) {
-            config.port = candidate;
-            if (server.start(config, error)) { port = candidate; ready = true; break; }
-        }
-        if (!ready) std::printf("  harness could not start a server: %s\n", error.c_str());
-    }
-    ~DataDirHarness() { std::remove(dbPath.c_str()); }
-
-    void step(int ticks, std::vector<NetClient*> clients) {
-        for (int i = 0; i < ticks; ++i) {
-            for (NetClient* c : clients) c->poll(1);
-            server.serviceNetwork(1);
-            clock += net::kTickMillis;
-            server.tick(clock);
-            server.serviceNetwork(0);
-            for (NetClient* c : clients) c->poll(1);
-        }
-    }
-    template <class F>
-    bool stepUntil(std::vector<NetClient*> clients, F done, int maxTicks = 400) {
-        for (int i = 0; i < maxTicks; ++i) {
-            step(1, clients);
-            if (done()) return true;
-        }
-        return false;
-    }
-    bool connect(NetClient& client) {
-        client.contentHash = content().contentHash();
-        if (!client.connect("127.0.0.1", port)) return false;
-        return stepUntil({&client}, [&] { return client.status() == NetClient::Status::Ready; });
-    }
-};
-
-Entity bodyNamed(World& world, const std::string& name) {
-    Entity found = NULL_ENTITY;
-    Query<PlayerTag, PlayerAccount> players{world};
-    players.each([&](Entity e, PlayerTag&, PlayerAccount& account) {
-        if (account.username == name) found = e;
-    });
-    return found;
-}
-
-} // namespace
-
-TEST(a_spawn_point_on_another_map_joins_into_that_map) {
-    // The sewers' door is not offered, so it takes an admin to name it; what
-    // is checked here is what naming a door on ANOTHER MAP does once the
-    // server accepts it.
-    Harness h("spawn-other-map", seedAdminAccount);
-    if (!h.ready) { CHECK(false); return; }
-    const SpawnChoice* entrance = h.server.worldMaps().door("sewers_entrance");
-    CHECK(entrance != nullptr);
-    if (entrance == nullptr) return;
+TEST(a_door_on_another_map_joins_into_that_map) {
+    // Naming a door that lives on a SECOND map puts the body in that map's own
+    // coordinate space, and the client is told the shape of the grid it is
+    // about to draw. The door is not pickable, so this also needs an admin --
+    // see the next test for the rule itself.
+    const std::string dir = twoMapDataDir("othermap");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-other-map", seedAdminAccount, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+    const SpawnChoice* gate = h.server.worldMaps().door("warren_gate");
+    CHECK(gate != nullptr);
+    if (gate == nullptr) { flix::testsupport::removeDataDir(dir); return; }
 
     NetClient client;
     CHECK(flix::testsupport::connectClient(h, client));
     client.requestLogin("boss", "password7");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
-    client.joinGame(1280, 720, "sewers_entrance", "boss");
+    client.joinGame(1280, 720, "warren_gate", "boss");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
 
     World& world = h.server.world();
     const Entity body = onlyPlayer(world);
     CHECK(body != NULL_ENTITY);
-    if (body == NULL_ENTITY) return;
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
     const Transform& at = world.get<Transform>(body);
-    // In the sewers' own coordinate space, inside its door, and the client was
-    // told so: the grid it drew is the sewers' shape, not the world's.
-    CHECK(at.realm == entrance->realm);
-    const MapData* sewers = h.server.worldMaps().forRealm(entrance->realm);
-    CHECK(sewers != nullptr);
-    if (sewers != nullptr) CHECK(inSpawnPoint(*sewers, "sewers_entrance", at.position));
-    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == entrance->realm; }));
-    CHECK_EQ(client.terrain().tileCols(entrance->realm), h.server.terrain().tileCols(entrance->realm));
-    CHECK_EQ(client.terrain().tileRows(entrance->realm), h.server.terrain().tileRows(entrance->realm));
-    CHECK(client.terrain().tileCols(entrance->realm) != kTilesPerAxis);
+    CHECK(at.realm == gate->realm);
+    const MapData* warren = h.server.worldMaps().forRealm(gate->realm);
+    CHECK(warren != nullptr);
+    if (warren != nullptr) CHECK(inSpawnPoint(*warren, "warren_gate", at.position));
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == gate->realm; }));
+    CHECK_EQ(client.terrain().tileCols(gate->realm), h.server.terrain().tileCols(gate->realm));
+    CHECK_EQ(client.terrain().tileRows(gate->realm), h.server.terrain().tileRows(gate->realm));
+    // Its own size, not the overworld's and not any historical default.
+    CHECK_EQ(client.terrain().tileCols(gate->realm), 16);
     CHECK(!h.server.terrain().blocked(at.position, at.realm));
+    flix::testsupport::removeDataDir(dir);
 }
 
-TEST(a_sublevel_door_is_joined_only_by_an_admin) {
-    const std::string dataDir = stageSublevelDataDir();
-    CHECK(!dataDir.empty());
-    if (dataDir.empty()) return;
-    DataDirHarness h(dataDir, "spawn-sublevel");
+TEST(a_door_that_is_not_pickable_is_joined_only_by_an_admin) {
+    // The rule the picker's two lists exist for. `warren_gate` is marked
+    // `pickable: false`, so it is a door and not a choice: door() finds it, the
+    // title screen never offers it, a player naming it anyway starts at the
+    // default, and an admin naming it arrives there.
+    //
+    // The shipped data has no such door any more -- one map, one door, and it
+    // is pickable -- so the arrangement is staged here rather than deleted.
+    const std::string dir = twoMapDataDir("sublevel");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-sublevel", seedAdminAccount, dir, 0);
     CHECK(h.ready);
-    if (!h.ready) return;
+    if (!h.ready) { flix::testsupport::removeDataDir(dir); return; }
 
-    // The door exists and is not offered.
     const WorldMaps& maps = h.server.worldMaps();
-    const SpawnChoice* door = maps.door("sewers_entrance");
+    const SpawnChoice* door = maps.door("warren_gate");
     CHECK(door != nullptr);
-    if (door == nullptr) return;
+    if (door == nullptr) { flix::testsupport::removeDataDir(dir); return; }
     CHECK(!door->pickable);
-    CHECK(maps.choice("sewers_entrance") == nullptr);
+    CHECK(maps.choice("warren_gate") == nullptr);
     for (const SpawnChoice& choice : maps.spawnChoices()) CHECK(choice.pickable);
+    CHECK_EQ(maps.spawnChoices().size(), std::size_t{2});
+    CHECK_EQ(maps.doors().size(), std::size_t{3});
 
     // A player naming it starts at the default, on the overworld.
     NetClient player;
-    CHECK(h.connect(player));
+    CHECK(flix::testsupport::connectClient(h, player));
     player.requestRegister("ratcatcher", "password7");
     CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::LoggedIn; }));
-    player.joinGame(1280, 720, "sewers_entrance", "ratcatcher");
+    player.joinGame(1280, 720, "warren_gate", "ratcatcher");
     CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::Playing; }));
     World& world = h.server.world();
     const Entity body = bodyNamed(world, "ratcatcher");
@@ -756,24 +815,217 @@ TEST(a_sublevel_door_is_joined_only_by_an_admin) {
         const Transform& at = world.get<Transform>(body);
         CHECK(at.realm == Realm::Overworld);
         const MapData* overworldMap = maps.forRealm(Realm::Overworld);
-        CHECK(overworldMap != nullptr && inSpawnPoint(*overworldMap, "garden", at.position));
+        CHECK(overworldMap != nullptr && inSpawnPoint(*overworldMap, "meadow", at.position));
     }
     CHECK(player.view().realm() == Realm::Overworld);
 
-    // An admin naming it arrives in the sewers, at that door.
+    // An admin naming it arrives on the second map, at that door.
     NetClient admin;
-    CHECK(h.connect(admin));
+    CHECK(flix::testsupport::connectClient(h, admin));
     admin.requestLogin("boss", "password7");
     CHECK(h.stepUntil({&admin}, [&] { return admin.status() == NetClient::Status::LoggedIn; }));
-    admin.joinGame(1280, 720, "sewers_entrance", "boss");
+    admin.joinGame(1280, 720, "warren_gate", "boss");
     CHECK(h.stepUntil({&player, &admin}, [&] { return admin.status() == NetClient::Status::Playing; }));
     const Entity bossBody = bodyNamed(world, "boss");
     CHECK(bossBody != NULL_ENTITY);
     if (bossBody != NULL_ENTITY) {
         const Transform& at = world.get<Transform>(bossBody);
         CHECK(at.realm == door->realm);
-        const MapData* sewers = maps.forRealm(door->realm);
-        CHECK(sewers != nullptr && inSpawnPoint(*sewers, "sewers_entrance", at.position));
+        const MapData* warren = maps.forRealm(door->realm);
+        CHECK(warren != nullptr && inSpawnPoint(*warren, "warren_gate", at.position));
     }
     CHECK(h.stepUntil({&player, &admin}, [&] { return admin.view().realm() == door->realm; }));
+    flix::testsupport::removeDataDir(dir);
+}
+
+
+// ---------------------------------------------------------------------------
+// A map that is mostly wall
+// ---------------------------------------------------------------------------
+//
+// Collision is a property of the LAYER now, and the shipped map ticks it on
+// three of its five: about three fifths of garden.tmj is solid. That is the
+// author's design, and it moved every placement path from "the map is mostly
+// open, a rejected sample is bad luck" to "a rejected sample is the common
+// case". These run the whole set on a fixture built to the same density, with
+// a deliberately badly-placed door on it, because a path that quietly gives up
+// on a dense map does not look like a bug -- it looks like a player standing
+// in a wall.
+
+TEST(a_door_drawn_over_solid_ground_still_lands_a_body_on_open_ground) {
+    // `cellar` is one 300-unit cell and every point in it is wall. Fifty
+    // rejection samples find nothing, which is the case the fallback exists
+    // for -- and the fallback used to be the rectangle's own CENTRE, i.e. the
+    // middle of that wall. The centre is now where the search STARTS: the
+    // nearest ground a body can actually stand on.
+    const std::string dir = flix::testsupport::denseMapDataDir("solid-door");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dir, &terrain, error));
+    const MapData* world = maps.forRealm(Realm::Overworld);
+    CHECK(world != nullptr);
+    if (world == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+
+    // The fixture really is as solid as the shipped map, or this proves
+    // nothing.
+    int blocked = 0;
+    const int cols = terrain.tileCols(Realm::Overworld);
+    const int rows = terrain.tileRows(Realm::Overworld);
+    for (int ty = 0; ty < rows; ++ty) {
+        for (int tx = 0; tx < cols; ++tx) {
+            if (tileBlocks(terrain.atTile(tx, ty, Realm::Overworld))) ++blocked;
+        }
+    }
+    CHECK(blocked * 2 > cols * rows);
+
+    const MapElement* cellar = world->playerSpawn("cellar");
+    CHECK(cellar != nullptr);
+    if (cellar == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(!cellar->pickable);
+    // Every corner and the centre: the whole rectangle is wall.
+    CHECK(terrain.blocked(cellar->centre(), Realm::Overworld));
+
+    Rng rng(0x5011D);
+    for (int i = 0; i < 50; ++i) {
+        Vec2 at{};
+        CHECK(world->spawnAt("cellar", rng, terrain, at));
+        if (terrain.blocked(at, Realm::Overworld)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "a door over solid ground put a body in a wall at " +
+                                         std::to_string(at.x) + "," + std::to_string(at.y));
+            break;
+        }
+    }
+    // And so does the whole-map default, when the first door in button order
+    // is the walled one. `hollow` is first here, so this is the ordinary path;
+    // the point is that it still answers with open ground on a dense map.
+    for (int i = 0; i < 50; ++i) {
+        const Vec2 at = world->defaultSpawn(rng, terrain);
+        if (terrain.blocked(at, Realm::Overworld)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "defaultSpawn put a body in a wall at " +
+                                         std::to_string(at.x) + "," + std::to_string(at.y));
+            break;
+        }
+    }
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(every_body_a_dense_map_places_stands_on_open_ground) {
+    // The live server on the same fixture, with its usual bot population: a
+    // joining player, a respawning player, every bot, every mob the density
+    // fill and the bands stood, and every drop. None of them may be inside a
+    // wall, and the population may not have collapsed because the placement
+    // gave up.
+    const std::string dir = flix::testsupport::denseMapDataDir("dense-world");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-dense", {}, dir);   // the server's usual bots, deliberately
+    CHECK(h.ready);
+    if (!h.ready) { flix::testsupport::removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "spelunker", "password7"));
+    client.joinGame(1280, 720, {}, "spelunker");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    h.step(200, {&client});
+
+    World& world = h.server.world();
+    const Terrain& terrain = h.server.terrain();
+    const MapData* map = h.server.worldMaps().forRealm(Realm::Overworld);
+    CHECK(map != nullptr);
+
+    // The join landed in the pickable door, on ground.
+    Entity body = NULL_ENTITY;
+    Query<PlayerTag, Transform, PlayerAccount> flowers{world};
+    flowers.each([&](Entity e, PlayerTag&, Transform&, PlayerAccount& account) {
+        if (account.username == "spelunker") body = e;
+    });
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(map != nullptr && inSpawnPoint(*map, "hollow", world.get<Transform>(body).position));
+    CHECK(!terrain.blocked(world.get<Transform>(body).position, Realm::Overworld));
+
+    // Every flower in the world, bots included -- and there ARE bots, because
+    // a population that could not be placed would be an empty world that
+    // looked like a passing test.
+    int flowerCount = 0;
+    int inWall = 0;
+    flowers.each([&](Entity, PlayerTag&, Transform& transform, PlayerAccount&) {
+        ++flowerCount;
+        if (terrain.blocked(transform.position, Realm::Overworld)) ++inWall;
+    });
+    CHECK(flowerCount > 4);
+    CHECK_EQ(inWall, 0);
+
+    // Every mob the spawner stood. Water counts as a wall here: tileBlocks()
+    // is true of it, and a mob standing in the pond is as stuck as one inside
+    // a castle.
+    int mobCount = 0;
+    int mobsInWall = 0;
+    Query<MobTag, Transform> mobs{world};
+    mobs.each([&](Entity, MobTag&, Transform& transform) {
+        if (transform.realm != Realm::Overworld) return;
+        ++mobCount;
+        if (terrain.blocked(transform.position, Realm::Overworld)) ++mobsInWall;
+    });
+    CHECK(mobCount > 0);
+    CHECK_EQ(mobsInWall, 0);
+
+    // And a respawn, which takes the same path a second time with a world full
+    // of bodies to avoid.
+    world.get<Health>(body).current = 0;
+    world.add<Dead>(body, Dead{NULL_ENTITY});
+    // Out of the bots' reach first. A bot carrying yggdrasil revives a corpse
+    // it can get to, and on a map this solid the bots are packed close enough
+    // to the only door that the corpse is back on its feet before the client
+    // is ever told it died. That is the world working; it is not what is being
+    // measured here.
+    {
+        int farTx = 0;
+        int farTy = 0;
+        const Vec2 mapExtent = terrain.realmExtent(Realm::Overworld);
+        CHECK(terrain.nearestOpenTile({mapExtent.x - kTileSize, mapExtent.y - kTileSize}, farTx,
+                                      farTy, Realm::Overworld));
+        world.get<Transform>(body).position = Terrain::tileCenter(farTx, farTy);
+    }
+    CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
+    client.requestRespawn();
+    CHECK(h.stepUntil({&client}, [&] {
+        Entity reborn = NULL_ENTITY;
+        Query<PlayerTag, Transform, PlayerAccount> again{world};
+        again.each([&](Entity e, PlayerTag&, Transform&, PlayerAccount& account) {
+            if (account.username == "spelunker" && e != body) reborn = e;
+        });
+        return reborn != NULL_ENTITY;
+    }));
+    Entity reborn = NULL_ENTITY;
+    flowers.each([&](Entity e, PlayerTag&, Transform&, PlayerAccount& account) {
+        if (account.username == "spelunker" && e != body) reborn = e;
+    });
+    CHECK(reborn != NULL_ENTITY);
+    if (reborn != NULL_ENTITY) {
+        CHECK(!terrain.blocked(world.get<Transform>(reborn).position, Realm::Overworld));
+        CHECK(map != nullptr && inSpawnPoint(*map, "hollow", world.get<Transform>(reborn).position));
+    }
+
+    // Drops last: they are scattered off a corpse and pushed back out of
+    // whatever they landed in, and on a dense map that push is the only thing
+    // between a drop and a wall nobody can reach into.
+    int drops = 0;
+    int dropsInWall = 0;
+    Query<DropTag, Transform> loot{world};
+    loot.each([&](Entity, DropTag&, Transform& transform) {
+        if (transform.realm != Realm::Overworld) return;
+        ++drops;
+        if (terrain.blocked(transform.position, Realm::Overworld)) ++dropsInWall;
+    });
+    CHECK_EQ(dropsInWall, 0);
+    (void)drops;   // a pass with no kills in it is legitimate
+
+    flix::testsupport::removeDataDir(dir);
 }

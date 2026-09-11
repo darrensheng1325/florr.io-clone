@@ -4,6 +4,7 @@
 #include "server/systems/spawning.h"
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -97,6 +98,12 @@ const ContentRegistry& synthetic() {
 /// The staged maps, as the server would load them. Defined with the band
 /// tests further down; declared here because the fill test wants them too.
 const WorldMaps& shippedMaps();
+
+/// The AUTHORED fixture map -- bands, regions and boss plots, written by this
+/// file. Defined with the band tests for the same reason. See its definition
+/// for why the shipped map cannot stand in for it any more.
+const MapData& authoredMap();
+const WorldMaps& authoredMaps();
 
 /// A world plus everything the spawner needs to be driven one tick at a time.
 struct Sim {
@@ -407,25 +414,76 @@ TEST(mobs_nobody_has_been_near_are_recycled) {
     CHECK(sim.spawner.census().despawnedTotal >= despawnedBefore + populated);
 }
 
-TEST(the_region_under_a_spawn_decides_its_group) {
+TEST(the_shipped_map_stocks_its_default_group_with_no_bands_at_all) {
+    // The new shape of the game's own data: garden.tmj draws art and a door
+    // and says nothing else. No tier bands, no mob regions, and no properties
+    // -- so the map's biome falls back to its id, its default mob group falls
+    // back to its biome, and the ambient fill has nothing but that group to go
+    // on. A map that resolved to an empty group would stand a player in an
+    // empty world, silently, which is what this pins.
     if (!shippedMaps().forRealm(Realm::Overworld)) {
-        // A failure, not a pass with nothing checked: a broken data dir must
-        // not make this test vacuous while its siblings report the same
-        // missing maps.
         ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
         return;
     }
+    const MapData& world = *shippedMaps().forRealm(Realm::Overworld);
+    CHECK_EQ(world.defaultMobGroup(), std::string("garden"));
+    const std::uint16_t garden = shipped().mobGroupIndex(world.defaultMobGroup());
+    CHECK(garden != kInvalidIndex);
+    for (const MapElement& element : world.elements()) {
+        CHECK(!element.isSpawnBand());
+        CHECK(!element.isMobRegion());
+    }
+
     Sim sim;
     sim.spawner.worldMaps = &shippedMaps();
+    // Inside the shipped map's extent. The Sim's terrain is its own flat grid,
+    // so this is about which GROUP the fill asks for, not about walls.
+    const Vec2 at{9000.0, 9000.0};
+    const std::vector<Vec2> players{at};
+    for (int i = 0; i < 300; ++i) sim.tick(players);
+
+    int checked = 0;
+    Query<MobTag, MobType, Transform> mobs{sim.world};
+    mobs.each([&](Entity e, MobTag&, MobType& type, Transform& transform) {
+        const double ring = kSpawnRingMax + kSpawnScatterRadius;
+        if (distanceSq(transform.position, at) > ring * ring) return;
+        // An escort is not an ambient spawn. `ant_hole` IS a garden mob, and
+        // what it puts in the world is a hell of ants that are in no garden
+        // group at all -- the fill chose the hole, the hole chose them. Same
+        // exemption the boss pass's test makes, and for the same reason.
+        if (sim.world.has<HoleTether>(e)) return;
+        ++checked;
+        const MobConfig& config = shipped().mob(type.configIndex);
+        bool member = false;
+        for (const MobGroupMember& entry : config.groups) member |= entry.group == garden;
+        // Body segments follow their head into the world and belong to no
+        // group of their own; everything else answers for itself.
+        if (config.id.find("_body") == std::string::npos && !member) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "not a garden mob: " + config.id);
+        }
+    });
+    CHECK(checked > 0);
+}
+
+TEST(the_region_under_a_spawn_decides_its_group) {
+    // Authored here rather than read out of the shipped map: the shipped map
+    // has no regions at all now, and this is a test of the SPAWNER, not of the
+    // game's art. See authoredMap().
+    if (!authoredMap().loaded()) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the authored fixture map did not load");
+        return;
+    }
+    Sim sim;
+    sim.spawner.worldMaps = &authoredMaps();
     const std::vector<Vec2> players{kCentre};
     for (int i = 0; i < 300; ++i) sim.tick(players);
 
-    // The centre of the map is the ant hell region: the spawn ring is 2400
-    // units and the region is 20000 across, so everything the fill placed
-    // around the viewer has to be a member of that group. Only the
-    // neighbourhood is judged: with the shipped maps installed the band fill
-    // stocks every band on the map and the boss pass stands a super in every
-    // section, none of which asked this region for anything.
+    // The region covers the whole map and names the ant hell's roster, so
+    // everything the fill placed around the viewer has to be a member of that
+    // group. Only the neighbourhood is judged: the band fill also stocks the
+    // dummy row and the hornet band in the far corner, neither of which asked
+    // this region for anything.
     const std::uint16_t antHell = shipped().mobGroupIndex("ant_hell");
     CHECK(antHell != kInvalidIndex);
     const double ring = kSpawnRingMax + kSpawnScatterRadius;
@@ -1127,9 +1185,13 @@ const WorldMaps& shippedMaps() {
         WorldMaps m;
         std::string error;
         // The manifest is what marks a staged data directory; its directory is
-        // the one WorldMaps wants.
-        const std::string manifest = firstExisting({testsDir() + "/../data/maps.json",
-                                                    "data/maps.json", "../data/maps.json"});
+        // the one WorldMaps wants. FLIX_TEST_DATA_DIR first: that is the
+        // directory the build stages, and the only one that has the maps in it.
+        const std::string manifest = firstExisting({
+#ifdef FLIX_TEST_DATA_DIR
+            std::string(FLIX_TEST_DATA_DIR) + "/maps.json",
+#endif
+            testsDir() + "/../build/data/maps.json", "data/maps.json", "../data/maps.json"});
         const std::string dir = manifest.substr(0, manifest.find_last_of('/'));
         if (!m.load(dir, nullptr, error)) {
             std::fprintf(stderr, "[test] the shipped maps did not load: %s\n", error.c_str());
@@ -1139,10 +1201,120 @@ const WorldMaps& shippedMaps() {
     return maps;
 }
 
-const MapData& shippedMap() {
-    static const MapData kEmpty;
-    const MapData* world = shippedMaps().forRealm(Realm::Overworld);
-    return world != nullptr ? *world : kEmpty;
+// ---------------------------------------------------------------------------
+// An AUTHORED map, written here
+// ---------------------------------------------------------------------------
+//
+// The shipped map is hand-drawn art with one door on it and no annotations at
+// all: no tier bands, no mob regions. That is the new normal -- an author
+// paints a map and the mobs follow from its `defaultMobGroup` -- and it means
+// the shipped data can no longer stand in for "a map with bands on it".
+//
+// It used to: world.tmj carried two hundred bands, nine regions and nine
+// target-dummy rows, and every test below read its coverage out of the game's
+// own content. Everything those tests pinned is still true of the SPAWNER, so
+// the bands they need are authored here instead, in the same Tiled shape a map
+// file has. The map is a few cells wide and its objects are laid out over
+// sixty thousand units, because MapData reads the annotations and the Sim
+// brings its own flat terrain -- the tile layer is a formality.
+
+/// Writes `body` to /tmp/<name>, with the minimal tileset every map must name
+/// beside it. Returns the path.
+std::string writeTiledFixture(const std::string& name, const std::string& body) {
+    const std::string dir = std::string("/tmp/flix-spawn-fixture-") + std::to_string(::getpid());
+    ::mkdir(dir.c_str(), 0755);
+    {
+        std::ofstream tileset(dir + "/fixture.tsj", std::ios::binary | std::ios::trunc);
+        tileset << R"({"name": "fixture", "type": "tileset", "version": "1.10",
+ "tilewidth": 300, "tileheight": 300, "tilecount": 1, "columns": 0,
+ "grid": {"orientation": "orthogonal", "width": 300, "height": 300},
+ "tiles": [{"id": 0, "image": "tiles/grass_c_0.svg", "imagewidth": 256, "imageheight": 256}]})";
+    }
+    const std::string path = dir + "/" + name;
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << body;
+    return path;
+}
+
+/// The 1x1 map body every fixture here shares: one empty cell, one tileset,
+/// and whatever `spawns` objects the caller wrote.
+std::string fixtureMapBody(const std::string& spawns) {
+    return R"({
+      "type": "map", "orientation": "orthogonal", "infinite": false,
+      "width": 1, "height": 1, "tilewidth": 300, "tileheight": 300,
+      "tilesets": [{"firstgid": 1, "source": "fixture.tsj"}], "layers": [
+        {"type": "tilelayer", "name": "ground", "width": 1, "height": 1, "data": [0]},
+        {"type": "objectgroup", "name": "spawns", "objects": [)" + spawns + R"(]}
+      ]})";
+}
+
+/// One `spawn` object: a rectangle, an optional tier, and a distribution.
+/// No tier makes it a mob REGION rather than a band.
+std::string spawnObject(int id, double x, double y, double w, double h, const std::string& tier,
+                        const std::string& mobs) {
+    std::string out = "{\"id\": " + std::to_string(id) + ", \"class\": \"spawn\", \"x\": " +
+                      std::to_string(x) + ", \"y\": " + std::to_string(y) + ", \"width\": " +
+                      std::to_string(w) + ", \"height\": " + std::to_string(h) +
+                      ", \"properties\": [";
+    if (!tier.empty()) {
+        out += "{\"name\": \"spawnType\", \"type\": \"string\", \"value\": \"" + tier + "\"},";
+    }
+    out += "{\"name\": \"mobs\", \"type\": \"string\", \"value\": \"" + mobs + "\"}]}";
+    return out;
+}
+
+/// The authored overworld the band tests run against.
+///
+///   * a mob REGION over the whole world, naming the ant hell's roster;
+///   * a big common band in the top-left, with one target-dummy band per tier
+///     nested inside it -- the DPS row, which is the one thing on the map that
+///     is spawned because a band NAMES it rather than because a group rolled
+///     it;
+///   * a legendary hornet band, so a named row exists at a tier nothing
+///     ambient would produce there;
+///   * a mythic and an ultra plot, which is where the boss pass may stand a
+///     boss and nowhere else. Both sit well away from the region test's viewer
+///     so one test's bosses are not another's neighbourhood.
+const MapData& authoredMap() {
+    static const MapData map = [] {
+        std::string objects = spawnObject(1, 0, 0, 60000, 60000, "", "ant_hell 100%");
+        objects += "," + spawnObject(2, 1000, 1000, 16000, 16000, "common", "");
+        // One dummy band per tier, in a row inside the common band above.
+        const char* tiers[] = {"common",  "uncommon", "rare",  "epic",   "legendary",
+                               "mythic",  "ultra",    "super", "unique"};
+        int id = 10;
+        for (int i = 0; i < 9; ++i) {
+            objects += "," + spawnObject(id++, 1500.0 + i * 1600.0, 1500.0, 1200.0, 1200.0,
+                                         tiers[i], "target_dummy 100%");
+        }
+        objects += "," + spawnObject(30, 2000, 8000, 6000, 6000, "legendary", "hornet 100%");
+        // The boss plots. kCentre (30000, 30000) is inside the mythic one, so
+        // the neighbourhood tests have a band over them; the ultra plot is in
+        // the far corner, out of every viewer's reach.
+        objects += "," + spawnObject(40, 24000, 24000, 12000, 12000, "mythic", "");
+        objects += "," + spawnObject(41, 46000, 2000, 10000, 10000, "ultra", "");
+
+        const std::string path = writeTiledFixture("authored.tmj", fixtureMapBody(objects));
+        MapData out;
+        out.setId("authored");
+        std::string error;
+        if (!out.loadTiled(path, error)) {
+            std::fprintf(stderr, "[test] the authored fixture map did not load: %s\n",
+                         error.c_str());
+        }
+        std::remove(path.c_str());
+        return out;
+    }();
+    return map;
+}
+
+const WorldMaps& authoredMaps() {
+    static const WorldMaps maps = [] {
+        WorldMaps m;
+        m.adoptSingle(authoredMap());
+        return m;
+    }();
+    return maps;
 }
 
 /// Every band row that names a mob, so the test asserts against the map
@@ -1155,7 +1327,7 @@ struct NamedRow {
 
 std::vector<NamedRow> namedBandRows() {
     std::vector<NamedRow> rows;
-    for (const MapElement& element : shippedMap().elements()) {
+    for (const MapElement& element : authoredMap().elements()) {
         if (!element.isSpawnBand()) continue;
         for (const ZoneMobEntry& entry : element.mobDistribution) {
             // A row is a group or a mob; only the mobs are of interest here.
@@ -1169,8 +1341,8 @@ std::vector<NamedRow> namedBandRows() {
 } // namespace
 
 TEST(a_band_keeps_the_mob_it_names) {
-    if (!shippedMap().loaded()) {
-        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+    if (!authoredMap().loaded()) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the authored fixture map did not load");
         return;
     }
     const std::vector<NamedRow> rows = namedBandRows();
@@ -1186,7 +1358,10 @@ TEST(a_band_keeps_the_mob_it_names) {
 }
 
 TEST(the_dummy_bands_actually_build_the_dps_row) {
-    if (!shippedMap().loaded()) return;
+    if (!authoredMap().loaded()) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the authored fixture map did not load");
+        return;
+    }
     const std::uint16_t dummy = shipped().mobIndex("target_dummy");
     CHECK(dummy != kInvalidIndex);
     // The premise of the whole mechanism: the group roll will never produce
@@ -1195,7 +1370,7 @@ TEST(the_dummy_bands_actually_build_the_dps_row) {
     CHECK(shipped().mob(dummy).groups.empty());
 
     Sim sim;
-    sim.spawner.worldMaps = &shippedMaps();
+    sim.spawner.worldMaps = &authoredMaps();
 
     // Standing in the common dummy band, which sits inside the big common
     // spawn band -- so it is the ZONE fill that has to honour it, not the
@@ -1288,30 +1463,19 @@ TEST(a_target_dummy_is_smaller_than_the_wild_mob_of_its_tier) {
 
 namespace {
 
-/// Writes a one-zone Tiled map whose spawn polygon covers most of section 0,
-/// carrying `distribution` verbatim as its `mobs` property.
+/// Writes a one-zone Tiled map whose spawn polygon covers a 14000-unit square,
+/// carrying `distribution` verbatim as its `mobs` property. Same one-cell
+/// shape as fixtureMapBody() above -- a map must name a tileset and carry a
+/// tile layer to be a map, and the Sim brings its own flat terrain.
 std::string writeZoneMap(const std::string& name, const std::string& distribution) {
-    const std::string path = std::string("/tmp/") + name;
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    // One tile cell, because MapData only wants the annotations and a map has
-    // to have a tile layer to be a map. Terrain is the thing that insists on a
-    // full 200x200 grid, and these tests give the Sim its own flat one.
-    out << R"({
-      "type": "map", "orientation": "orthogonal", "infinite": false,
-      "width": 1, "height": 1, "tilewidth": 300, "tileheight": 300,
-      "tilesets": [], "layers": [
-        {"type": "tilelayer", "name": "terrain", "width": 1, "height": 1, "data": [0]},
-        {"type": "objectgroup", "name": "spawns", "objects": [
-          {"id": 1, "class": "spawn", "x": 2000, "y": 2000,
-           "polygon": [{"x":0,"y":0},{"x":14000,"y":0},{"x":14000,"y":14000},{"x":0,"y":14000}],
-           "properties": [
-             {"name": "spawnType", "type": "string", "value": "common"},
-             {"name": "mobs", "type": "string", "value": ")"
-        << distribution << R"("}
-           ]}
-        ]}
-      ]})";
-    return path;
+    const std::string polygon =
+        R"({"id": 1, "class": "spawn", "x": 2000, "y": 2000,
+            "polygon": [{"x":0,"y":0},{"x":14000,"y":0},{"x":14000,"y":14000},{"x":0,"y":14000}],
+            "properties": [
+              {"name": "spawnType", "type": "string", "value": "common"},
+              {"name": "mobs", "type": "string", "value": ")" + distribution + R"("}
+            ]})";
+    return writeTiledFixture(name, fixtureMapBody(polygon));
 }
 
 /// Every ambient mob in the world, by config id.
@@ -1330,7 +1494,7 @@ TEST(a_zone_that_names_a_mob_spawns_only_that_mob) {
     const std::string path = writeZoneMap("flix_zone_named.tmj", "hornet 100%");
     MapData map;
     std::string error;
-    if (!map.loadWorldMap(path, error) || map.elements().size() != 1) {
+    if (!map.loadTiled(path, error) || map.elements().size() != 1) {
         std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
         CHECK(false);
         return;
@@ -1357,7 +1521,7 @@ TEST(a_zone_group_borrows_another_biomes_roster) {
     const std::string path = writeZoneMap("flix_zone_group.tmj", "ocean 100%");
     MapData map;
     std::string error;
-    if (!map.loadWorldMap(path, error) || map.elements().empty()) {
+    if (!map.loadTiled(path, error) || map.elements().empty()) {
         std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
         CHECK(false);
         return;
@@ -1394,7 +1558,7 @@ TEST(a_distribution_splits_in_roughly_the_authored_proportion) {
     const std::string path = writeZoneMap("flix_zone_split.tmj", "hornet 80% bee 20%");
     MapData map;
     std::string error;
-    if (!map.loadWorldMap(path, error) || map.elements().empty()) {
+    if (!map.loadTiled(path, error) || map.elements().empty()) {
         std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
         CHECK(false);
         return;
@@ -1436,7 +1600,7 @@ namespace {
 bool loadHornetBandAs(const std::string& name, Realm realm, MapData& out) {
     const std::string path = writeZoneMap(name, "hornet 100%");
     std::string error;
-    const bool ok = out.loadWorldMap(path, error, realm) && out.elements().size() == 1;
+    const bool ok = out.loadTiled(path, error, realm) && out.elements().size() == 1;
     if (!ok) std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
     std::remove(path.c_str());
     return ok;
@@ -1470,6 +1634,66 @@ int overworldUltras(World& world) {
 }
 
 } // namespace
+
+TEST(the_border_band_is_measured_against_the_maps_own_extent) {
+    // The band of ground along the map edge is off limits to spawning: a mob
+    // standing in it is half inside the boundary wall. It is a fraction of the
+    // MAP's size, and the map says what that is.
+    //
+    // This used to be measured against a compile-time 60000-unit square, which
+    // was the overworld's size when there was only ever one shape of overworld.
+    // The shipped map is 19200 units across, so the right and bottom bands sat
+    // forty thousand units outside the world and never rejected anything --
+    // mobs spawned flush against those two walls while the left and top were
+    // correctly refused. A small map makes it obvious: here the whole map is
+    // 24 tiles, so the far band is most of the way across an old constant's
+    // idea of the world.
+    Sim sim;
+    const int side = 24;   // 7200 units
+    installOpenGrid(sim.terrain, Realm::Overworld, side);
+    const Vec2 extent = sim.terrain.realmExtent(Realm::Overworld);
+    CHECK_NEAR(extent.x, side * kTileSize, 1e-6);
+
+    // Flowers hugging the FAR two walls, which is the half of the band an
+    // oversized constant stops guarding -- the near walls are refused either
+    // way and are the control. No map is loaded, so the fill spawns from every
+    // group: the question here is WHERE, not what.
+    std::vector<Vec2> players;
+    for (int i = 1; i <= 3; ++i) {
+        players.push_back({extent.x - 150.0, extent.y * i / 4.0});
+        players.push_back({extent.x * i / 4.0, extent.y - 150.0});
+    }
+    for (int i = 0; i < 600; ++i) sim.tick(players);
+
+    int placed = 0;
+    int inNearBand = 0;
+    int inFarBand = 0;
+    Query<MobTag, Transform> mobs{sim.world};
+    mobs.each([&](Entity e, MobTag&, Transform& transform) {
+        if (transform.realm != Realm::Overworld) return;
+        // What the FILL placed. A nest's escorts ring the nest and a long
+        // mob's segments trail its head, so neither is a point this pass ever
+        // sampled -- and a centipede reversing into the edge wall is movement,
+        // not placement.
+        if (sim.world.has<HoleTether>(e)) return;
+        if (const BodySegment* link = sim.world.tryGet<BodySegment>(e)) {
+            if (link->head) return;
+        }
+        ++placed;
+        const Vec2 at = transform.position;
+        if (at.x < kWorldBoundaryThreshold || at.y < kWorldBoundaryThreshold) ++inNearBand;
+        if (at.x > extent.x - kWorldBoundaryThreshold ||
+            at.y > extent.y - kWorldBoundaryThreshold) {
+            ++inFarBand;
+        }
+    });
+    // Enough mobs that an empty far band means the rule held rather than that
+    // nothing was placed at all.
+    CHECK(placed >= 40);
+    CHECK_EQ(inNearBand, 0);
+    CHECK_EQ(inFarBand, 0);
+
+}
 
 TEST(a_band_on_another_map_is_stocked_through_that_maps_own_terrain) {
     // Two maps with the SAME band at the SAME numbers: the overworld's and a
@@ -1567,11 +1791,11 @@ TEST(a_flower_on_another_map_does_not_stock_the_overworld_at_its_numbers) {
 }
 
 TEST(the_boss_pass_only_ever_stands_a_boss_in_an_overworld_plot) {
-    if (!shippedMaps().forRealm(Realm::Overworld)) {
-        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+    if (!authoredMap().loaded()) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the authored fixture map did not load");
         return;
     }
-    const MapData& world = *shippedMaps().forRealm(Realm::Overworld);
+    const MapData& world = authoredMap();
     const auto inOverworldBossPlot = [&](Vec2 at) {
         for (const MapElement& element : world.elements()) {
             if (!element.isSpawnBand()) continue;
@@ -1581,14 +1805,14 @@ TEST(the_boss_pass_only_ever_stands_a_boss_in_an_overworld_plot) {
         return false;
     };
 
-    // The biome maps' mythic blocks sit at small numbers that are the
-    // beginner garden on world.tmj. Many seeds, because the leak was a
-    // proportional share of the mythic branch rather than every pass.
+    // Many seeds, because the leak this guards was a proportional share of the
+    // mythic branch rather than every pass: a second map's mythic block at
+    // small numbers used to be sampled as if it were the overworld's.
     int bosses = 0;
     for (std::uint64_t seed = 1; seed <= 40; ++seed) {
         Sim sim;
         sim.rng.reseed(seed);
-        sim.spawner.worldMaps = &shippedMaps();
+        sim.spawner.worldMaps = &authoredMaps();
         sim.tick({});   // the startup boss pass, nobody online
         Query<MobTag, MobType, Transform> mobs{sim.world};
         mobs.each([&](Entity e, MobTag&, MobType& type, Transform& t) {
@@ -1617,16 +1841,39 @@ TEST(the_boss_pass_only_ever_stands_a_boss_in_an_overworld_plot) {
 }
 
 TEST(a_boss_in_another_realm_does_not_count_as_the_overworlds) {
-    if (!shippedMaps().forRealm(Realm::Overworld)) {
-        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+    // The census the boss pass keeps is ONE MAP's. An ultra standing on a
+    // second world map, or in the maze, is not the overworld's ultra, and the
+    // overworld must be restocked whether or not those exist.
+    //
+    // Nobody stands on the overworld anywhere in this test, and that is
+    // deliberate: the band fill runs around a VIEWER, and the authored map's
+    // mythic plot sits where the old version of this test parked one. A
+    // mythic band drifts one tier up about twice in a hundred spawns, so a
+    // viewer standing on it mints ultras of its own and "exactly one" becomes
+    // a coin toss. The boss pass does not need a viewer on the map it stocks
+    // -- only a viewer SOMEWHERE, so the server is not idle -- and this test
+    // is about the pass, so its flower stands on the other map.
+    if (!authoredMap().loaded()) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the authored fixture map did not load");
         return;
     }
     Sim sim;
-    sim.spawner.worldMaps = &shippedMaps();
+    // Two realms: the authored overworld, and an empty second map whose
+    // ultras must never be counted as the overworld's.
+    static const WorldMaps twoRealms = [] {
+        WorldMaps m;
+        std::vector<MapData> maps;
+        maps.push_back(authoredMap());
+        maps.push_back(MapData{});
+        m.adoptMaps(std::move(maps));
+        return m;
+    }();
+    sim.spawner.worldMaps = &twoRealms;
     const Realm other = worldRealm(1);
     installOpenGrid(sim.terrain, other, 60);
-    const std::vector<Vec2> players{kCentre};
-    sim.tick(players);   // startup: exactly one overworld ultra is stood
+    // The startup pass stands exactly one overworld ultra, with nobody online:
+    // the world is stocked as the server boots whatever it looks like.
+    sim.tick({});
     CHECK_EQ(overworldUltras(sim.world), 1);
 
     // It dies.
@@ -1649,9 +1896,26 @@ TEST(a_boss_in_another_realm_does_not_count_as_the_overworlds) {
                                {3000, 3000}, Realm::Maze, sim.now, sim.rng) != NULL_ENTITY);
     CHECK_EQ(overworldUltras(sim.world), 0);
 
-    // The next pass restocks the overworld's: the census that decides it is
-    // that map's alone.
-    sim.jump(kBossIntervalMillis + 1.0, players);
-    CHECK_EQ(overworldUltras(sim.world), 1);
+    // The overworld's ultra comes back, and the census that decides it is
+    // that map's alone. The flower whose presence lets the pass run at all is
+    // on the OTHER map, so nothing it can see stocks the overworld.
+    //
+    // Several intervals, not one: a boss pass samples the map's ultra plots
+    // uniformly, and one of the authored map's ultra plots is a target-dummy
+    // row. Landing in one is a deliberate no-op -- spawnSpecialMob refuses to
+    // stand a permanent fixture as a boss -- so the pass spends that interval
+    // and tries again at the next. Four is comfortably past a coin flip and
+    // still fails loudly if the restock never happens.
+    const std::vector<RealmPoint> elsewhere{{{9000, 9000}, other}};
+    bool restocked = false;
+    for (int pass = 0; pass < 4 && !restocked; ++pass) {
+        sim.now += kBossIntervalMillis + 1.0;
+        sim.spawner.run(sim.world, sim.terrain, shipped(), elsewhere, sim.rng, sim.now, 0.0,
+                        sim.commands);
+        sim.commands.flush();
+        restocked = overworldUltras(sim.world) == 1;
+    }
+    CHECK(restocked);
     CHECK_EQ(mobsInRealm(sim.world, other), 1);   // and the biome map's is left be
 }
+

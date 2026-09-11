@@ -38,8 +38,20 @@ const cppOutput = run(path.join(build, 'behavior_oracle'), [
     path.join(root, 'src', 'mobs.json'),
     path.join(root, 'src', 'petals.json'),
     path.join(root, 'cpp', 'data', 'mob_xp.json'),
-    path.join(root, 'src', 'map_bundle.ts'),
 ]);
+
+// The movement scenario is TypeScript-only now.
+//
+// Both oracles used to step the same walls, because both read the tile grid
+// out of src/map_bundle.ts. The C++ game's maps are authored in Tiled and the
+// frozen TypeScript build cannot read a .tmj, so there is no longer a map the
+// two sides can agree on -- and stepping two DIFFERENT maps would report a
+// parity failure that says nothing about the movement code. The C++ movement
+// step is covered against real terrain by cpp/tests/movement_tests.cpp.
+//
+// Everything else -- rarity maths, mob and petal stats, modifiers, combat --
+// is still compared observation for observation.
+const kTypeScriptOnly = /^scenario\/movement\//;
 
 function parse(label, output) {
     const metrics = new Map();
@@ -69,6 +81,7 @@ function equal(left, right) {
 }
 
 for (const key of [...keys].sort()) {
+    if (kTypeScriptOnly.test(key) && !cpp.has(key)) continue;
     if (!ts.has(key)) differences.push(`${key}: missing in TypeScript, C++=${JSON.stringify(cpp.get(key))}`);
     else if (!cpp.has(key)) differences.push(`${key}: TypeScript=${JSON.stringify(ts.get(key))}, missing in C++`);
     else if (!equal(ts.get(key), cpp.get(key))) {

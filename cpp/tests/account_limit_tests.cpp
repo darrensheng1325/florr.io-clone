@@ -40,8 +40,36 @@ TEST(address_keys_agree_across_every_spelling_of_an_address) {
     CHECK(!addressKey("garbage").empty());
 }
 
+TEST(a_release_build_enforces_the_limits_and_a_dev_build_does_not) {
+    // The switch is a compile definition precisely so it cannot be flipped at
+    // runtime on a shipping server; this is what says the wiring is intact,
+    // in whichever flavour the suite was built.
+#ifdef FLIX_DEV_BUILD
+    CHECK(!kAccountLimitsEnforcedByDefault);
+#else
+    CHECK(kAccountLimitsEnforcedByDefault);
+#endif
+    AccountLimiter fresh;
+    CHECK_EQ(fresh.enforced(), kAccountLimitsEnforcedByDefault);
+
+    // And an unenforcing limiter spends nothing: the buckets are untouched, so
+    // turning enforcement back on starts from a full allowance rather than
+    // from whatever a day of testing had drained.
+    AccountLimiter off;
+    off.setEnforced(false);
+    for (int i = 0; i < kRegisterBurst * 10; ++i) {
+        CHECK(off.spendRegistration("1.2.3.4", nullptr, 0).allowed);
+        CHECK(off.spendLoginAttempt("1.2.3.4", 0).allowed);
+    }
+    off.setEnforced(true);
+    CHECK(off.spendRegistration("1.2.3.4", nullptr, 0).allowed);
+}
+
 TEST(registration_allows_a_burst_then_drips) {
     AccountLimiter limiter;
+    // A dev build does not enforce these by default, and this file is
+    // precisely the place that is about enforcement.
+    limiter.setEnforced(true);
     double now = 1000000;
     limiter.reset(now);
 
@@ -65,6 +93,9 @@ TEST(registration_allows_a_burst_then_drips) {
 
 TEST(one_ipv6_allocation_cannot_be_walked_for_more_accounts) {
     AccountLimiter limiter;
+    // A dev build does not enforce these by default, and this file is
+    // precisely the place that is about enforcement.
+    limiter.setEnforced(true);
     const double now = 1000000;
     limiter.reset(now);
 
@@ -78,6 +109,9 @@ TEST(one_ipv6_allocation_cannot_be_walked_for_more_accounts) {
 
 TEST(the_persisted_daily_count_refuses_before_the_bucket_is_consulted) {
     AccountLimiter limiter;
+    // A dev build does not enforce these by default, and this file is
+    // precisely the place that is about enforcement.
+    limiter.setEnforced(true);
     const double now = 1000000;
     limiter.reset(now);
 
@@ -96,6 +130,9 @@ TEST(the_persisted_daily_count_refuses_before_the_bucket_is_consulted) {
 TEST(the_global_ceiling_holds_when_every_request_claims_a_new_address) {
     // The attack this whole file exists for: 9000 accounts, one per source.
     AccountLimiter limiter;
+    // A dev build does not enforce these by default, and this file is
+    // precisely the place that is about enforcement.
+    limiter.setEnforced(true);
     const double now = 1000000;
     limiter.reset(now);
 
@@ -110,6 +147,9 @@ TEST(the_global_ceiling_holds_when_every_request_claims_a_new_address) {
 
 TEST(login_attempts_are_budgeted_and_a_success_hands_its_token_back) {
     AccountLimiter limiter;
+    // A dev build does not enforce these by default, and this file is
+    // precisely the place that is about enforcement.
+    limiter.setEnforced(true);
     const double now = 1000000;
     limiter.reset(now);
 
@@ -130,6 +170,9 @@ TEST(the_database_scan_runs_only_for_requests_the_cheap_limits_allow) {
     // packet -- a worse denial of service than the account spam it exists to
     // stop.
     AccountLimiter limiter;
+    // A dev build does not enforce these by default, and this file is
+    // precisely the place that is about enforcement.
+    limiter.setEnforced(true);
     const double now = 1000000;
     limiter.reset(now);
 
@@ -142,6 +185,9 @@ TEST(the_database_scan_runs_only_for_requests_the_cheap_limits_allow) {
 
 TEST(refusal_logging_is_throttled_so_a_flood_is_not_also_a_log_flood) {
     AccountLimiter limiter;
+    // A dev build does not enforce these by default, and this file is
+    // precisely the place that is about enforcement.
+    limiter.setEnforced(true);
     double now = 1000000;
     limiter.reset(now);
 

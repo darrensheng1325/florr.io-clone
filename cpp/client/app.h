@@ -219,8 +219,9 @@ private:
     /// case and is why the block starts where the main HUD ends rather than
     /// reserving room for itself.
     void drawSquadHud(Canvas&);
-    /// The 200x200 section map in the top-right corner, its gold border and
-    /// its biome caption.
+    /// The minimap in the top-right corner -- 200 design units square, one
+    /// section of the map the flower is standing on -- with its gold border
+    /// and its biome caption.
     void drawMinimap(Canvas&);
     /// The maze realm's map: the whole layout rasterised, corridors light and
     /// tinted by depth band, walls dark, with the same player dots the
@@ -507,8 +508,7 @@ private:
     std::unique_ptr<Canvas> minimapStatic_;
     int minimapSection_ = -1;
     /// The realm that section index counts in: every world map has its own
-    /// section grid, and section 0 of the sewers is not section 0 of the
-    /// overworld.
+    /// section grid, and section 0 of one map is not section 0 of another.
     Realm minimapRealm_ = Realm::Overworld;
     /// Whether the cached bake has the ALT spawn bands in it.
     bool minimapGlow_ = false;

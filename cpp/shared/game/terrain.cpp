@@ -7,8 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
-#include <fstream>
-#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
@@ -90,9 +88,9 @@ inline int wrapMod(int v, int m) { return ((v % m) + m) % m; }
 // Tile collision geometry
 // ---------------------------------------------------------------------------
 //
-// A blocking tile is its plain 300-unit rectangle. The outline a wall or water
-// tile is drawn with is tileset artwork now (see edgeMaskAt) and lies INSIDE
-// the tile, so the rectangle is both the hitbox and the silhouette.
+// A blocking tile is its plain 300-unit rectangle. What the cell is drawn with
+// is the map file's artwork, fitted inside that square, so the rectangle is
+// both the hitbox and the silhouette.
 
 constexpr double kWallResolveEpsilon = 0.01;
 
@@ -204,34 +202,6 @@ bool segmentTouchesRect(Vec2 a, Vec2 b, double left, double top, double right, d
            clip(dy, bottom - a.y) && t0 <= t1;
 }
 
-int base64Value(unsigned char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;
-}
-
-bool decodeBase64(const std::string& encoded, std::vector<std::uint8_t>& out) {
-    out.clear();
-    out.reserve(encoded.size() * 3 / 4);
-    std::uint32_t bits = 0;
-    int bitCount = 0;
-    for (const unsigned char c : encoded) {
-        if (c == '=') break;
-        const int value = base64Value(c);
-        if (value < 0) return false;
-        bits = (bits << 6) | static_cast<std::uint32_t>(value);
-        bitCount += 6;
-        if (bitCount >= 8) {
-            bitCount -= 8;
-            out.push_back(static_cast<std::uint8_t>((bits >> bitCount) & 0xFFu));
-        }
-    }
-    return true;
-}
-
 Tile classifyGarden(int tx, int ty, const NoiseSet& n) {
     if (n.altMedium.at(tx, ty) > 0.84) return Tile::Wall;      // boulders
     if (n.medium.at(tx, ty) > 0.80) return Tile::Water;        // ponds
@@ -335,28 +305,19 @@ void Terrain::clearRealm(Realm realm) {
     g.cols = 0;
     g.rows = 0;
     g.tiles.clear();
-    g.styles.clear();
     g.spawnTile = 0;
 }
 
-bool Terrain::install(Realm realm, std::vector<std::uint8_t> tiles, int cols, int rows,
-                      std::vector<std::uint8_t> styles) {
+bool Terrain::install(Realm realm, std::vector<std::uint8_t> tiles, int cols, int rows) {
     if (cols <= 0 || rows <= 0 || cols > kMaxTilesPerAxis || rows > kMaxTilesPerAxis) return false;
     if (tiles.size() != static_cast<std::size_t>(cols) * static_cast<std::size_t>(rows)) return false;
     for (const std::uint8_t tile : tiles) {
         if (tile > static_cast<std::uint8_t>(Tile::Block)) return false;
     }
-    // The style grid is optional but, when present, exactly parallel: a style
-    // grid of another size would be read against the wrong cells. Every byte
-    // value is a legal style (constants.h: a nibble of skin, a nibble of mask
-    // or variant), so there is no per-value check to make; a skin the client
-    // has no art for draws as the flat colour, never refuses the map.
-    if (!styles.empty() && styles.size() != tiles.size()) return false;
     Grid& g = grid(realm);
     g.cols = cols;
     g.rows = rows;
     g.tiles = std::move(tiles);
-    g.styles = std::move(styles);
     g.spawnTile = clamp(g.spawnTile, 0, static_cast<int>(g.tiles.size()) - 1);
     return true;
 }
@@ -370,19 +331,12 @@ Vec2 Terrain::spawnPoint(Realm realm) const {
 void Terrain::setTile(int tx, int ty, Tile t, Realm realm) {
     Grid& g = grid(realm);
     if (tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) return;
-    const std::size_t i = static_cast<std::size_t>(index(g, tx, ty));
-    g.tiles[i] = static_cast<std::uint8_t>(t);
-    // The authored style described the tile that was here. It is not
-    // recomputed -- that is the authoring script's job, not the engine's --
-    // so the cell simply loses its edges and skin rather than wearing the old
-    // ones.
-    if (!g.styles.empty()) g.styles[i] = 0;
+    g.tiles[static_cast<std::size_t>(index(g, tx, ty))] = static_cast<std::uint8_t>(t);
 }
 
 void Terrain::fill(Tile t, Realm realm) {
     Grid& g = grid(realm);
     std::fill(g.tiles.begin(), g.tiles.end(), static_cast<std::uint8_t>(t));
-    g.styles.clear();
 }
 
 void Terrain::generate(std::uint64_t seed) {
@@ -435,8 +389,8 @@ std::vector<std::uint8_t> encodeTileRle(const std::vector<std::uint8_t>& tiles) 
 }
 
 bool decodeTileRle(const std::uint8_t* data, std::size_t size, std::size_t expected,
-                   std::vector<std::uint8_t>& out, std::string& errorOut,
-                   std::uint8_t maxValue) {
+                   std::vector<std::uint8_t>& out, std::string& errorOut) {
+    constexpr std::uint8_t maxValue = static_cast<std::uint8_t>(Tile::Block);
     out.clear();
     out.reserve(expected);
     std::size_t at = 0;
@@ -481,16 +435,6 @@ void writeMapGrid(ByteWriter& out, const Terrain& terrain, Realm realm) {
     out.u16(static_cast<std::uint16_t>(terrain.tileRows(realm)));
     out.u32(static_cast<std::uint32_t>(packed.size()));
     out.raw(packed.data(), packed.size());
-
-    // The style bytes, in a second stream of the same encoding. A map with no
-    // styles sends a grid of zeros -- a few bytes once encoded -- rather than
-    // an empty stream, so the reader has one shape to check.
-    const std::vector<std::uint8_t>& authored = terrain.styles(realm);
-    const std::vector<std::uint8_t> styles =
-        authored.empty() ? std::vector<std::uint8_t>(tiles.size(), 0) : authored;
-    const std::vector<std::uint8_t> packedStyles = encodeTileRle(styles);
-    out.u32(static_cast<std::uint32_t>(packedStyles.size()));
-    out.raw(packedStyles.data(), packedStyles.size());
 }
 
 bool readMapGrid(ByteReader& in, Terrain& terrain, Realm& realmOut, std::string& errorOut) {
@@ -506,8 +450,7 @@ bool readMapGrid(ByteReader& in, Terrain& terrain, Realm& realmOut, std::string&
     // builds them from the same constants and day number the server did. The
     // payload for one is an empty grid, and there is nothing to install.
     if (!isWorldRealm(realm)) {
-        const std::uint32_t styleByteCount = byteCount == 0 ? in.u32() : 0;
-        if (cols != 0 || rows != 0 || byteCount != 0 || styleByteCount != 0 || !in.ok()) {
+        if (cols != 0 || rows != 0 || byteCount != 0) {
             errorOut = "a generated realm arrived with a tile grid";
             return false;
         }
@@ -523,42 +466,23 @@ bool readMapGrid(ByteReader& in, Terrain& terrain, Realm& realmOut, std::string&
     }
     const std::size_t expected = static_cast<std::size_t>(cols) * static_cast<std::size_t>(rows);
 
-    // Both streams have the same shape, so one reader serves both.
-    const auto readStream = [&](std::uint32_t count, const char* what,
-                                std::vector<std::uint8_t>& packed) {
-        if (count > expected * 4 + 16) {
-            errorOut = std::string("the map grid claims more encoded ") + what +
-                       " bytes than a grid that size can hold";
-            return false;
-        }
-        packed.clear();
-        packed.reserve(count);
-        for (std::uint32_t i = 0; i < count; ++i) packed.push_back(in.u8());
-        if (!in.ok()) {
-            errorOut = std::string("the map grid's ") + what + " stream is truncated";
-            return false;
-        }
-        return true;
-    };
-
+    // Bounded before the read, for the same reason the dimensions are: the
+    // byte count came off the same socket.
+    if (byteCount > expected * 4 + 16) {
+        errorOut = "the map grid claims more encoded bytes than a grid that size can hold";
+        return false;
+    }
     std::vector<std::uint8_t> packed;
-    if (!readStream(byteCount, "tile", packed)) return false;
+    packed.reserve(byteCount);
+    for (std::uint32_t i = 0; i < byteCount; ++i) packed.push_back(in.u8());
+    if (!in.ok()) {
+        errorOut = "the map grid's tile stream is truncated";
+        return false;
+    }
     std::vector<std::uint8_t> tiles;
     if (!decodeTileRle(packed.data(), packed.size(), expected, tiles, errorOut)) return false;
 
-    const std::uint32_t styleByteCount = in.u32();
-    if (!in.ok()) {
-        errorOut = "the map grid's style header is truncated";
-        return false;
-    }
-    if (!readStream(styleByteCount, "style", packed)) return false;
-    std::vector<std::uint8_t> styles;
-    // Every byte is a legal style, so the only thing the decoder can refuse
-    // here is a stream of the wrong length.
-    if (!decodeTileRle(packed.data(), packed.size(), expected, styles, errorOut, 255)) {
-        return false;
-    }
-    if (!terrain.setTiles(tiles, cols, rows, realm, styles)) {
+    if (!terrain.setTiles(tiles, cols, rows, realm)) {
         errorOut = "the map grid could not be installed";
         return false;
     }
@@ -567,8 +491,7 @@ bool readMapGrid(ByteReader& in, Terrain& terrain, Realm& realmOut, std::string&
 }
 
 bool Terrain::loadWorldMap(const std::string& path, std::string& errorOut, Realm realm) {
-    return isTiledMapPath(path) ? loadTiledMap(path, errorOut, realm)
-                                : loadMapBundle(path, errorOut, realm);
+    return loadTiledMap(path, errorOut, realm);
 }
 
 bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm realm) {
@@ -585,24 +508,45 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm
                    " tiles on each axis";
         return false;
     }
-    for (const std::uint8_t tile : map.tiles()) {
-        if (tile > static_cast<std::uint8_t>(Tile::Block)) {
-            errorOut = path + " uses tile id " + std::to_string(tile) +
-                       ", which the engine has no Tile for";
-            return false;
-        }
+    // WHAT THE COLLISION RULE RESOLVED TO, once per map, at load.
+    //
+    // Collision is a property of the LAYER (shared/game/tiled_map.h): a layer
+    // whose `has_collision` is ticked is a wall everywhere it has a tile, and
+    // one without the property never blocks. That is one tick box per layer in
+    // an editor that does not draw it, so an author who ticks the wrong box --
+    // or forgets one -- should read it here rather than discover it by walking
+    // through a castle.
+    std::string collides;
+    std::string scenery;
+    for (const TiledLayer& layer : map.layers()) {
+        std::string& list = layer.collides ? collides : scenery;
+        if (!list.empty()) list += ", ";
+        list += layer.name;
     }
-    // A tileset whose flags disagree with constants.h means the editor is
-    // showing an author one thing and the server is colliding with another.
-    // Reported, not corrected: constants.h wins, and the map needs fixing.
-    for (const std::string& name : map.mismatchedFlags()) {
-        std::fprintf(stderr, "[map] tile \"%s\" in %s declares solid/water flags the engine "
-                             "disagrees with; the engine's win\n", name.c_str(), path.c_str());
+    std::fprintf(stderr,
+                 "[map] %s: collision from %s; scenery %s; %d wall, %d water, %d ground cells\n",
+                 path.c_str(), collides.empty() ? "no layer" : collides.c_str(),
+                 scenery.empty() ? "(none)" : scenery.c_str(), map.wallCells(), map.waterCells(),
+                 map.groundCells());
+    // A map nobody ticked a box on is walkable everywhere, boundary wall
+    // included. Legal, and almost certainly not meant.
+    if (collides.empty()) {
+        std::fprintf(stderr, "[map] %s: no layer has \"%s\" set, so nothing on it blocks\n",
+                     path.c_str(), kLayerCollisionProperty);
     }
-    // The styles come with the tiles: a variant gid resolved to its base tile
-    // id AND the skin and sides (or floor variant) it shows, and the renderer
-    // wants the second half.
-    if (!setTiles(map.tiles(), map.width(), map.height(), realm, map.styles())) {
+    // Water art painted only where it cannot block: the editor shows a river
+    // and the game gives you grass. Reported, not corrected -- the layer rule
+    // wins, and the map needs the tiles moved onto a colliding layer.
+    for (const std::string& name : map.strandedWaterTiles()) {
+        std::fprintf(stderr, "[map] %s: tile \"%s\" is tagged water but is painted only on "
+                             "layers that do not collide; those cells are plain ground\n",
+                     path.c_str(), name.c_str());
+    }
+    // The grid is DERIVED, not painted: tiled_map.h folds every layer of the
+    // map down to one Tile per cell, and that is the only thing about a map
+    // this class -- or the wire -- ever carries. The artwork stays in the map
+    // file, where the client reads it.
+    if (!setTiles(map.tiles(), map.width(), map.height(), realm)) {
         errorOut = "could not install the tile grid from " + path;
         return false;
     }
@@ -610,55 +554,8 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm
     return true;
 }
 
-bool Terrain::loadMapBundle(const std::string& path, std::string& errorOut, Realm realm) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        errorOut = "could not open TypeScript map bundle: " + path;
-        return false;
-    }
-    const std::string source((std::istreambuf_iterator<char>(input)),
-                             std::istreambuf_iterator<char>());
-    constexpr const char* kMarker = "export const MAP_TILE_RLE = \"";
-    const std::size_t beginMarker = source.find(kMarker);
-    if (beginMarker == std::string::npos) {
-        errorOut = "MAP_TILE_RLE is missing from " + path;
-        return false;
-    }
-    const std::size_t begin = beginMarker + std::char_traits<char>::length(kMarker);
-    const std::size_t end = source.find('"', begin);
-    if (end == std::string::npos) {
-        errorOut = "MAP_TILE_RLE is unterminated in " + path;
-        return false;
-    }
-
-    std::vector<std::uint8_t> compressed;
-    if (!decodeBase64(source.substr(begin, end - begin), compressed)) {
-        errorOut = "MAP_TILE_RLE is not valid base64 in " + path;
-        return false;
-    }
-
-    std::vector<std::uint8_t> decoded;
-    std::string rleError;
-    if (!decodeTileRle(compressed.data(), compressed.size(),
-                       static_cast<std::size_t>(kTotalTiles), decoded, rleError)) {
-        errorOut = "MAP_TILE_RLE in " + path + ": " + rleError;
-        return false;
-    }
-    // The bundle format carries no dimensions at all, so it is only ever the
-    // historical square; that is why the decode above checks against it. It
-    // carries no styles either -- encodeMap.js folds every variant back to
-    // its base tile -- so a bundle-loaded map draws plain walls.
-    if (!setTiles(decoded, kAxis, kAxis, realm)) {
-        errorOut = "could not install decoded TypeScript wall grid";
-        return false;
-    }
-    seed_ = 0;
-    return true;
-}
-
-bool Terrain::setTiles(const std::vector<std::uint8_t>& tiles, int cols, int rows, Realm realm,
-                       const std::vector<std::uint8_t>& styles) {
-    if (!install(realm, tiles, cols, rows, styles)) return false;
+bool Terrain::setTiles(const std::vector<std::uint8_t>& tiles, int cols, int rows, Realm realm) {
+    if (!install(realm, tiles, cols, rows)) return false;
     Grid& g = grid(realm);
     // The connectivity root is only meaningful for the overworld, which is the
     // one grid generate() and chooseGardenSpawn() know how to reason about. On

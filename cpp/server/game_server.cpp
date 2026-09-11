@@ -192,6 +192,9 @@ GameServer::~GameServer() = default;
 
 bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     config_ = config;
+    // The configured bot population, if the caller named one. Same field
+    // `/admin set_bot_count` writes, so the two cannot disagree.
+    botCountOverride_ = config.botCount;
 
     if (!loadContent(config.dataDir, errorOut)) return false;
     for (const std::string& warning : content().warnings()) {
@@ -976,6 +979,7 @@ void GameServer::handleRegister(Session& session, net::Connection& connection, B
 
     const CreateResult result = database_.createUser(username, password, addressHash);
     if (!result.ok() || !result.account) {
+        std::printf("[dbgreg] status=%d reason=%s\n", (int)result.status, result.reason.c_str());
         sendAuthResult(connection, net::AuthStatus::UsernameTaken, "", "", result.reason);
         return;
     }
@@ -1225,11 +1229,11 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
         if (worldMaps_.choice(where) != nullptr) {
             session.spawnChoice = where;
         } else if (worldMaps_.door(where) != nullptr) {
-            // A door that exists but is not offered: a biome sublevel's,
-            // reached through a pad from the biome's main area. An admin may
-            // still name it -- that is how a screenshot rig reaches
-            // garden_3 -- but anyone else starts where the picker would have
-            // let them.
+            // A door that exists but is not offered: a map marks it
+            // `pickable: false`, and it is reached through a pad rather than
+            // from the picker. An admin may still name it -- that is how a
+            // screenshot rig reaches one -- but anyone else starts where the
+            // picker would have let them.
             if (session.admin) {
                 session.spawnChoice = where;
             } else {
@@ -3446,7 +3450,7 @@ const SpawnChoice* GameServer::chosenDoor(const Session& session) const {
     const SpawnChoice* door = worldMaps_.door(session.spawnChoice);
     if (door == nullptr) return nullptr;
     // Checked on every body, not only at the join: a lent console is lent
-    // for one life, and a sublevel door named on it is not kept past it.
+    // for one life, and a non-pickable door named on it is not kept past it.
     if (!door->pickable && !session.admin) return nullptr;
     return door;
 }

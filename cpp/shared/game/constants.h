@@ -5,8 +5,6 @@
 // the client predicts movement with the same function the server authorises it
 // with, so straight-line movement reconciles to nothing at all.
 
-#include <string_view>
-
 #include "shared/core/types.h"
 #include "shared/net/protocol.h"
 
@@ -16,11 +14,10 @@ namespace flix {
 // World
 // ---------------------------------------------------------------------------
 
-/// The DEFAULT world: how big a Terrain is before any map is loaded, and the
-/// size maps/world.tmj happens to be. Not a law any more -- every world realm
-/// carries its own dimensions (terrain.h) and a second map is whatever shape
-/// its file says. What this still pins down is the section grid below, which
-/// is a palette rather than a geography.
+/// The DEFAULT world: how big a Terrain is before any map is loaded. Not a law
+/// -- every world realm carries its own dimensions (terrain.h) and a map is
+/// whatever shape its file says. What this still pins down is the section grid
+/// below, which is a palette rather than a geography.
 inline constexpr double kWorldSize = 60000.0;
 inline constexpr double kWorldHalf = kWorldSize * 0.5;
 
@@ -49,101 +46,10 @@ inline constexpr int kTilesPerAxis = static_cast<int>(kWorldSize / kTileSize);  
 /// A cap, not a size: maps are authored at whatever dimensions suit them, and
 /// this only bounds what the engine will hold. It is what the DDA's step limit
 /// is sized from and what stops a corrupt header asking for a terabyte of
-/// grid. 512 tiles is 153600 world units on a side, three times the shipped
-/// world; the grid behind it is a quarter of a megabyte, and it is
-/// run-length encoded before it ever goes on the wire.
+/// grid. 512 tiles is 153600 world units on a side, eight times the shipped
+/// map; the grid behind it is a quarter of a megabyte, and it is run-length
+/// encoded before it ever goes on the wire.
 inline constexpr int kMaxTilesPerAxis = 512;
-
-/// The sides of a wall or water tile that show an edge, as a bit mask.
-///
-/// A tile's edges are AUTHORED, not computed: scripts/edgeTiles.js decides
-/// which sides of every wall and water cell face air (or, for a wall, water)
-/// and writes the matching tileset variant into the map, and the engine only
-/// ever reads that choice back out. The mask is the low nibble of the cell's
-/// STYLE byte (below), which travels beside the tile id -- through TiledMap,
-/// Terrain and the MapGrid on the wire -- and the renderer picks the artwork
-/// by it. Collision never looks at it: a tile collides as its plain 300-unit
-/// rectangle whatever its edges are drawn as.
-///
-/// The bits are listed in the order a variant's name suffix lists its sides
-/// (`wall_edge_nsw`), so the suffix is the mask spelled out.
-inline constexpr std::uint8_t kEdgeNorth = 1;
-inline constexpr std::uint8_t kEdgeEast = 2;
-inline constexpr std::uint8_t kEdgeSouth = 4;
-inline constexpr std::uint8_t kEdgeWest = 8;
-/// The largest edge mask: every side. Masks are 0..15 and fill a nibble; the
-/// style byte around them is 0..255.
-inline constexpr std::uint8_t kEdgeMaskMax = kEdgeNorth | kEdgeEast | kEdgeSouth | kEdgeWest;
-
-/// The per-cell STYLE byte: which tile FAMILY's artwork a cell wears (its
-/// tile id says that) is not the whole story -- which BIOME's version of it,
-/// and which variant, are the map's choice too, and this byte carries both:
-///
-///   high nibble  the SKIN, 0..15 (kTileSkinNames below; 0 is the default)
-///   low nibble   for a wall or water tile, its edge mask (kEdge* bits);
-///                for an air tile, a floor-decoration VARIANT (0..15)
-///
-/// Skin 0 is the plain family (`wall.svg`, `water.svg` and their fifteen
-/// edge variants each). Skins 1..3 are the three biomes that have their own
-/// tile art -- sewers, computer, unknown -- in that order. An air cell with a
-/// non-zero skin draws that skin's floor decoration
-/// `floor_<skin>_<variant>.svg` over the ground and is ordinary walkable
-/// ground for everything else: nothing but the renderer reads the style
-/// byte, and nothing collides with it.
-///
-/// Adding a family means one more name here, one more scripts/tileArt/<skin>.js
-/// module (the tileset block and the SVGs come out of that), and a row in
-/// skinForGround() below if the overworld's plain walls should wear it.
-inline constexpr int kTileSkinCount = 4;
-inline constexpr const char* const kTileSkinNames[kTileSkinCount] = {
-    "", "sewers", "computer", "unknown",
-};
-/// Both nibbles are 0..15; a skin index has to fit the high one.
-inline constexpr std::uint8_t kStyleNibbleMax = 15;
-static_assert(kTileSkinCount - 1 <= kStyleNibbleMax,
-              "a skin index has to fit the style byte's high nibble");
-
-/// The skin a plain (skin 0) wall or water cell wears when it stands on
-/// ground `groundId` (the map's background layer; ids in kSectionCount order:
-/// land, desert, hel, ocean, ant_hell, jungle, sewers, computer, unknown).
-/// The renderer's fallback for cells the map never painted a skinned variant
-/// into: the overworld's walls in its sewers, computer and unknown thirds
-/// come out in those biomes' art without a cell being repainted, and every
-/// other ground keeps the default brown wall and the flat water. A TABLE,
-/// not `groundId + 1`: only three of the nine grounds have a family of their
-/// own, and the rest are deliberately not skinned.
-inline constexpr std::uint8_t kSkinForGround[kSectionCount] = {
-    0, 0, 0, 0, 0, 0,   // land, desert, hel, ocean, ant_hell, jungle: default
-    1,                  // sewers
-    2,                  // computer
-    3,                  // unknown
-};
-inline constexpr std::uint8_t skinForGround(int groundId) {
-    return groundId >= 0 && groundId < kSectionCount ? kSkinForGround[groundId] : 0;
-}
-static_assert(sizeof(kSkinForGround) / sizeof(kSkinForGround[0]) == kSectionCount,
-              "one row per ground id; the two tables must agree");
-static_assert(kSkinForGround[6] == 1 && kSkinForGround[7] == 2 && kSkinForGround[8] == 3,
-              "sewers, computer and unknown are skins 1, 2 and 3");
-/// Floor decorations per skin: `floor_<skin>_0..2`.
-inline constexpr int kFloorVariantsPerSkin = 3;
-
-inline constexpr std::uint8_t styleEdgeMask(std::uint8_t style) { return style & 15; }
-inline constexpr std::uint8_t styleSkin(std::uint8_t style) { return style >> 4; }
-/// The variant an AIR cell's low nibble names. Same bits as the edge mask; a
-/// different reading of them, which is why it has its own name.
-inline constexpr std::uint8_t styleFloorVariant(std::uint8_t style) { return style & 15; }
-inline constexpr std::uint8_t makeStyle(std::uint8_t skin, std::uint8_t low) {
-    return static_cast<std::uint8_t>(((skin & 15) << 4) | (low & 15));
-}
-/// The skin index a tileset's `skin` property names, or -1 for a name that is
-/// not in kTileSkinNames. An empty name is skin 0.
-inline int tileSkinIndex(std::string_view name) {
-    for (int i = 0; i < kTileSkinCount; ++i) {
-        if (name == kTileSkinNames[i]) return i;
-    }
-    return -1;
-}
 
 /// Slack folded into the tile-scan reach so a body already resting at the
 /// push-out distance still registers as in contact. TypeScript's
@@ -155,7 +61,8 @@ inline constexpr double kCollisionScanBuffer = 5.0;
 enum class Tile : std::uint8_t {
     Ground = 0,
     Wall = 1,     ///< blocks movement
-    Water = 2,    ///< passable, slows movement
+    Water = 2,    ///< blocks movement too; a blocker of a different KIND, drawn
+                  ///< as water and slowing anything that ends up inside one
     Sand = 3,     ///< TypeScript custom tile 3: bridge (passable)
     Stone = 4,    ///< TypeScript custom tile 4: sewage (solid)
     Block = 5,    ///< TypeScript custom tile 5: block (solid)

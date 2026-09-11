@@ -103,13 +103,16 @@ TEST(bots_spread_out_and_stay_in_the_world) {
     CHECK(bots.size() > 4);
     if (bots.size() < 2) return;
 
+    const Vec2 extent = h.server.terrain().realmExtent(Realm::Overworld);
     Vec2 centre{0, 0};
     for (const Entity bot : bots) {
         const Vec2 at = world.get<Transform>(bot).position;
         // Inside the map, with room for the boundary margin the wander picker
         // clamps to. A bot outside this is one whose steering escaped.
-        CHECK(at.x > 0.0 && at.x < kWorldSize);
-        CHECK(at.y > 0.0 && at.y < kWorldSize);
+        // Measured against the OVERWORLD'S OWN extent: every map states its
+        // size now, and the shipped one is nothing like the historical square.
+        CHECK(at.x > 0.0 && at.x < extent.x);
+        CHECK(at.y > 0.0 && at.y < extent.y);
         centre += at;
     }
     centre = centre / static_cast<double>(bots.size());
@@ -154,8 +157,27 @@ TEST(bot_corpses_are_replaced) {
     CHECK(world.isAlive(corpse));
     CHECK(world.has<Dead>(corpse));
 
-    // Then the population pass takes it away and builds a replacement.
-    h.step(300, {&client});
+    // Then put it out of everyone's reach, in the far corner of the map.
+    //
+    // Not tidying: a bot carrying yggdrasil REVIVES a corpse it can reach, and
+    // bots actively path to each other's corpses to do it. The shipped map is
+    // about three fifths solid now, so the walkable ground -- and the bots
+    // standing on it -- is packed close enough that a corpse left where it
+    // fell is revived long before the three-second replacement deadline. That
+    // is correct behaviour and it is covered by
+    // bot_traversal_petals_are_handed_back; what it is not is a test of the
+    // REPLACEMENT path, which only runs on a corpse nobody saved. Nineteen
+    // thousand units away, with three seconds on the clock, is out of reach.
+    const Terrain& terrain = h.server.terrain();
+    const Vec2 extent = terrain.realmExtent(Realm::Overworld);
+    int farTx = 0;
+    int farTy = 0;
+    CHECK(terrain.nearestOpenTile({extent.x - kTileSize, extent.y - kTileSize}, farTx, farTy,
+                                  Realm::Overworld));
+    world.get<Transform>(corpse).position = Terrain::tileCenter(farTx, farTy);
+
+    // The population pass takes it away and builds a replacement.
+    CHECK(h.stepUntil({&client}, [&] { return !world.isAlive(corpse); }, 400));
     CHECK(!world.isAlive(corpse));
     // The population is back where it was: a bot that died and was never
     // replaced is a slot the world quietly loses for the rest of the session.
@@ -271,9 +293,16 @@ TEST(a_bot_never_takes_a_pad) {
     // that map's grid. A bot carried through a pad would steer around walls
     // it is not standing among, so a pad simply does not take one -- however
     // long it stands there -- while the same pad takes a player.
-    Harness h("bots-pads");
+    //
+    // A fixture world, because the shipped map has no pads on it: `meadow`
+    // with a pad into `warren`. What is under test is the BOT, and the bots
+    // populate whatever overworld they are given.
+    const std::string dir = twoMapDataDir("botpad");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("bots-pads", {}, dir);
     CHECK(h.ready);
-    if (!h.ready) return;
+    if (!h.ready) { removeDataDir(dir); return; }
 
     NetClient client;
     CHECK(loginNew(h, client, "padwatcher", "hunter22"));
@@ -284,16 +313,22 @@ TEST(a_bot_never_takes_a_pad) {
     World& world = h.server.world();
     const MapData* overworld = h.server.worldMaps().forRealm(Realm::Overworld);
     const MapElement* pad = nullptr;
-    for (const MapElement& element : overworld != nullptr ? overworld->elements()
-                                                          : std::vector<MapElement>{}) {
-        if (element.kind == MapElementKind::Teleporter && element.targetMap == "sewers") {
+    // NOT a ternary over `overworld->elements()` and an empty vector: the two
+    // branches have no common reference type, so the conditional yields a
+    // COPY, the range-for binds to that temporary, and every pointer taken
+    // into it dangles the moment the loop ends. It read as a pad at (0, 0)
+    // that no flower could ever stand on.
+    static const std::vector<MapElement> kNoElements;
+    for (const MapElement& element :
+         overworld != nullptr ? overworld->elements() : kNoElements) {
+        if (element.kind == MapElementKind::Teleporter && element.targetMap == "warren") {
             pad = &element;
         }
     }
     CHECK(pad != nullptr);
     const std::vector<Entity> bots = botBodies(world);
     CHECK(!bots.empty());
-    if (pad == nullptr || bots.empty()) return;
+    if (pad == nullptr || bots.empty()) { removeDataDir(dir); return; }
 
     // Held on the pad's centre every tick for three dwell periods: a player
     // would have been sent to the sewers three times over.
@@ -312,16 +347,17 @@ TEST(a_bot_never_takes_a_pad) {
         }
     }
 
-    // The same pad, the same hold, a player: gone to the sewers.
+    // The same pad, the same hold, a player: gone to the other map.
     Entity player = NULL_ENTITY;
     Query<PlayerTag, PlayerAccount> players{world};
     players.each([&](Entity e, PlayerTag&, PlayerAccount& account) {
         if (account.username == "padwatcher") player = e;
     });
     CHECK(player != NULL_ENTITY);
-    if (player == NULL_ENTITY) return;
+    if (player == NULL_ENTITY) { removeDataDir(dir); return; }
     world.get<Transform>(player).position = pad->centre();
     CHECK(h.stepUntil({&client}, [&] {
         return world.get<Transform>(player).realm != Realm::Overworld;
     }, ticks));
+    removeDataDir(dir);
 }
