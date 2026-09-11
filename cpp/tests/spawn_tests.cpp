@@ -33,15 +33,37 @@ bool inSpawnPoint(const MapData& map, const std::string& spawnId, Vec2 at) {
     return point != nullptr && point->contains(at);
 }
 
-/// The tier bands the map declares over a point, worst first. A spawn that
-/// lands in one of these is a spawn into mobs the player cannot fight.
-bool inTierAbove(const MapData& map, Vec2 at, Rarity floor) {
+/// True when a band over `at` is DANGEROUS ground -- difficulty
+/// kDangerousGroundDifficulty or above, which is where the curve's blend first
+/// CAN produce a rare (difficulty 16.61, the top of pure uncommon). A spawn
+/// that lands in one of these is a spawn into mobs a fresh flower cannot
+/// fight.
+///
+/// The invariant this expresses is the same one the old `spawnType` version
+/// did -- "no door under rare-or-better ground" -- said on the scale the map
+/// now uses: a band carries a difficulty, and the difficulty curve
+/// (shared/game/difficulty.h) says which tiers that difficulty grows.
+bool onDangerousGround(const MapData& map, Vec2 at) {
     for (const MapElement& element : map.elements()) {
         if (!element.isSpawnBand()) continue;
-        if (rarityIndex(element.spawnTier) < rarityIndex(floor)) continue;
+        if (element.difficulty < kDangerousGroundDifficulty) continue;
         if (element.contains(at)) return true;
     }
     return false;
+}
+
+/// The difficulty of the ground at `at`, read off the MAP -- the first band
+/// covering it, and otherwise the map's own `defaultDifficulty`.
+///
+/// The same rule SpawnSystem::difficultyAt() applies, stated here so a test can
+/// ask it of a map without reaching inside the running server for its spawner.
+/// If the two ever disagree this is the copy that is wrong.
+double difficultyOnMap(const MapData& map, Vec2 at) {
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand()) continue;
+        if (element.contains(at)) return element.difficulty;
+    }
+    return map.defaultDifficulty();
 }
 
 Entity onlyPlayer(World& world) {
@@ -86,9 +108,15 @@ TEST(the_shipped_map_loads_and_resolves_its_defaults) {
 
     const MapData& world = *maps.forRealm(Realm::Overworld);
     CHECK_EQ(world.id(), std::string("garden"));
-    // Neither of these is written anywhere in garden.tmj.
+    // None of these is written anywhere in garden.tmj.
     CHECK_EQ(world.biome(), std::string("garden"));
     CHECK_EQ(world.defaultMobGroup(), std::string("garden"));
+    // The map declares no `defaultDifficulty`, so every square no band covers
+    // is difficulty zero -- fully common, which is what a flower walking out of
+    // the one door has to meet.
+    CHECK_EQ(world.defaultDifficulty(), 0.0);
+    CHECK(tierMixForDifficulty(world.defaultDifficulty()).lower == Rarity::Common);
+    CHECK_EQ(tierMixForDifficulty(world.defaultDifficulty()).upperChance, 0.0);
 
     // 64 x 64 cells at kTileSize, which is what the file says and what the art
     // has to be indexed against.
@@ -122,21 +150,46 @@ TEST(the_shipped_map_loads_and_resolves_its_defaults) {
     CHECK_EQ(world.cellAt(0, 64, 0).art, -1);
     CHECK_EQ(world.cellAt(world.layers().size(), 0, 0).art, -1);
 
-    // One door, no pads, and no bands or regions: the map is hand-authored art
-    // with a single spawn rectangle on it. The spawner answers a band-less map
-    // with the map's own default group, which is what the defaults above are
-    // for.
+    // One door and no pads. The BAND COUNT IS NOT PINNED: the author draws
+    // difficulty onto the map as it is balanced, and a test that counted bands
+    // would fail on every edit. What is pinned is that each band the file
+    // carries is one the engine can act on -- a difficulty at or above zero (a
+    // negative one would clamp and read as a mistake nobody was told about),
+    // an area that can contain a point, and either its own mob group that the
+    // content actually defines or none at all, which falls back to the map's.
     int bands = 0, regions = 0, doors = 0, teleporters = 0;
     for (const MapElement& element : world.elements()) {
-        if (element.isSpawnBand()) ++bands;
-        if (element.isMobRegion()) ++regions;
+        if (element.isSpawnBand()) {
+            ++bands;
+            CHECK(element.difficulty >= 0.0);
+            CHECK(element.bounds.w > 0.0);
+            CHECK(element.bounds.h > 0.0);
+            for (const ZoneMobEntry& row : element.mobDistribution) {
+                CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                      content().mobIndex(row.name) != kInvalidIndex);
+            }
+        }
+        if (element.isMobRegion()) {
+            ++regions;
+            for (const ZoneMobEntry& row : element.mobDistribution) {
+                CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                      content().mobIndex(row.name) != kInvalidIndex);
+            }
+        }
         if (element.kind == MapElementKind::PlayerSpawn) ++doors;
         if (element.kind == MapElementKind::Teleporter) ++teleporters;
     }
     CHECK_EQ(doors, 1);
-    CHECK_EQ(bands, 0);
-    CHECK_EQ(regions, 0);
     CHECK_EQ(teleporters, 0);
+    // Bands and regions are two readings of one `spawn` object, and no object
+    // is ever both: a `spawn` with a difficulty is a band, one without is a
+    // region.
+    int spawnObjects = 0;
+    for (const MapElement& element : world.elements()) {
+        if (element.kind == MapElementKind::Spawn) ++spawnObjects;
+        CHECK(!(element.isSpawnBand() && element.isMobRegion()));
+    }
+    CHECK_EQ(bands + regions, spawnObjects);
     // A pad, if the map ever grows one, still has to say where it leads.
     for (const MapElement& element : world.elements()) {
         if (element.kind != MapElementKind::Teleporter) continue;
@@ -263,9 +316,82 @@ TEST(a_player_joins_on_the_beginner_ground) {
     // Joining with NO choice at all lands in the map's first door in button
     // order, which on the shipped data is its only one.
     CHECK(inSpawnPoint(overworld(h), "garden", at));
-    CHECK(!inTierAbove(overworld(h), at, Rarity::Rare));
+    CHECK(!onDangerousGround(overworld(h), at));
     CHECK(!h.server.terrain().blocked(at, Realm::Overworld));
     CHECK(h.server.world().get<Transform>(body).realm == Realm::Overworld);
+}
+
+TEST(the_live_server_grows_what_the_ground_under_each_mob_declares) {
+    // The real GameServer, the real garden.tmj, a real client joining through
+    // the real door -- and every mob the population controller puts around that
+    // flower is no rarer than the ground it stands on says. The map declares no
+    // `defaultDifficulty`, so all the ground no band covers is the curve's first
+    // anchor, fully common: this is the end-to-end form of the anchor a new
+    // player actually meets, with the author's own bands allowed to be as hard
+    // as they claim and no harder.
+    Harness h("spawn-commons");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "greenhorn", "password7"));
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    // Long enough for several population passes (they run on a 500ms clock).
+    World& world = h.server.world();
+    int mobs = 0;
+    for (int i = 0; i < 400 && mobs < 20; ++i) {
+        h.step(1, {&client});
+        Query<MobTag> live{world};
+        mobs = static_cast<int>(live.count());
+    }
+    CHECK(mobs > 0);
+
+    // The door's own ground has to be beginner ground whatever else the author
+    // paints: that is the rule a joining flower depends on. On the shipped map
+    // the door stands inside a difficulty-0.5 band, so "beginner" is the band's
+    // number rather than the map default -- but its blend still bottoms out at
+    // common, which is the claim that matters to a level-1 flower.
+    const Vec2 spawnedAt = h.server.world().get<Transform>(onlyPlayer(world)).position;
+    const double doorDifficulty = difficultyOnMap(overworld(h), spawnedAt);
+    CHECK(!onDangerousGround(overworld(h), spawnedAt));
+    CHECK(doorDifficulty < kDangerousGroundDifficulty);
+    CHECK(tierMixForDifficulty(doorDifficulty).lower == Rarity::Common);
+
+    int commonGround = 0;
+    int bandedGround = 0;
+    Query<MobTag, MobType, Transform> live{world};
+    live.each([&](Entity, MobTag&, MobType& type, Transform& transform) {
+        // A mob's own min_rarity still floors it, which is the mob's property
+        // rather than the ground's; above both that floor and the hardest tier
+        // its square can roll, the ground rolled something it had no licence to.
+        const double difficulty = difficultyOnMap(overworld(h), transform.position);
+        const MobConfig& config = content().mob(type.configIndex);
+        const int ceiling =
+            std::max(rarityIndex(tierMixForDifficulty(difficulty).upper), rarityIndex(config.minRarity));
+        if (rarityIndex(type.rarity) > ceiling) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     std::string("the live garden grew a ") + rarityName(type.rarity) +
+                                         " " + config.id + " on difficulty-" +
+                                         std::to_string(difficulty) + " ground");
+        }
+        if (difficulty != 0.0) {
+            ++bandedGround;
+            return;
+        }
+        ++commonGround;
+        if (type.rarity != Rarity::Common && rarityIndex(type.rarity) > rarityIndex(config.minRarity)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     std::string("the live garden grew a ") + rarityName(type.rarity) +
+                                         " " + config.id + " on difficulty-zero ground");
+        }
+    });
+    // Which of the two arms the population landed in is the author's business --
+    // on the shipped map the door's whole neighbourhood is inside one of its
+    // bands, so it is all banded ground today. What is pinned is that EVERY live
+    // mob was judged against a difficulty rather than skipped by a lookup that
+    // found nothing.
+    CHECK_EQ(commonGround + bandedGround, mobs);
 }
 
 TEST(respawning_returns_to_the_beginner_ground) {
@@ -302,7 +428,7 @@ TEST(respawning_returns_to_the_beginner_ground) {
     // The whole point: a respawn goes back to the beginner ground, NOT to a
     // band picked from the player's level and not to the middle of the map.
     CHECK(inSpawnPoint(overworld(h), "garden", at));
-    CHECK(!inTierAbove(overworld(h), at, Rarity::Rare));
+    CHECK(!onDangerousGround(overworld(h), at));
     // Not the middle of the map, which is what the bug this test was written
     // for did. Measured against the map's OWN extent -- every map says its own
     // size now, and a fixed world constant would stop meaning anything the
@@ -559,8 +685,8 @@ TEST(a_spawn_in_a_polygon_zone_lands_inside_it) {
 // ---------------------------------------------------------------------------
 //
 // A zone says WHAT it spawns as weighted rows of section presets and named
-// mobs -- "garden 50% hornet 50%". The tier it spawns at is a separate
-// property, and still where the map's difficulty progression lives.
+// mobs -- "garden 50% hornet 50%". How DANGEROUS it is, is a separate property
+// -- its `difficulty` -- and that is where the map's progression lives.
 
 TEST(a_distribution_parses_the_authored_syntax) {
     std::string warning;
@@ -618,43 +744,49 @@ TEST(a_broken_distribution_is_reported_not_guessed_at) {
     CHECK_EQ(rows[0].name, std::string("bee"));
 }
 
-TEST(a_map_with_no_bands_falls_back_to_its_own_mob_group) {
-    // The shipped map authors NO spawn bands and NO mob regions. That used to
-    // be impossible to state -- world.tmj carried two hundred bands and nine
-    // regions, and the spawner was only ever exercised through them -- and it
-    // is the normal case now: an author paints a map and the mobs follow from
-    // its `defaultMobGroup`, which itself defaults to the map's biome, which
-    // defaults to its id.
-    //
-    // So the chain that has to hold is: no bands, no regions, and a non-empty
-    // default group that the content actually defines. A map that resolved to
-    // an empty group would spawn nothing at all, silently.
+TEST(the_shipped_map_falls_back_to_its_own_mob_group_wherever_nothing_says_otherwise) {
+    // world.tmj carried two hundred bands and nine regions and the spawner was
+    // only ever exercised through them; the shipped map is the other extreme --
+    // an author paints art, drops a door, and brushes difficulty onto a few
+    // shapes without ever saying WHAT lives in them. So the chain that has to
+    // hold is the fallback one: a non-empty default group that the content
+    // actually defines, reached by every band that names no roster of its own.
+    // A map that resolved to an empty group would spawn nothing at all,
+    // silently.
     MapData map;
     std::string error;
     CHECK(map.loadTiled(dataDir() + "/garden.tmj", error));
     CHECK(error.empty());
-    int bands = 0;
-    int regions = 0;
-    for (const MapElement& element : map.elements()) {
-        if (element.isSpawnBand()) ++bands;
-        if (element.isMobRegion()) ++regions;
-    }
-    CHECK_EQ(bands, 0);
-    CHECK_EQ(regions, 0);
     CHECK(!map.defaultMobGroup().empty());
     CHECK_EQ(map.defaultMobGroup(), map.biome());
     CHECK(content().mobGroupIndex(map.defaultMobGroup()) != kInvalidIndex);
+
+    // Every band on the map either says nothing about mobs -- and so reaches
+    // the default group above -- or names rows the content defines. Neither the
+    // number of bands nor their difficulties are pinned here: the author is
+    // still balancing them, and this is a test of the FALLBACK, not of the art.
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand() && !element.isMobRegion()) continue;
+        for (const ZoneMobEntry& row : element.mobDistribution) {
+            CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                  content().mobIndex(row.name) != kInvalidIndex);
+        }
+    }
 }
 
 TEST(an_authored_band_and_region_still_parse) {
     // Bands and regions are not gone, only unused by the shipped art. This is
     // the coverage the old world.tmj gave for free, kept alive against a map
-    // written here: a `spawn` object WITH a tier is a band that owns a
+    // written here: a `spawn` object WITH a difficulty is a band that owns a
     // population, one WITHOUT is a region that only says what grows there.
+    //
+    // The difficulty is authored as an `int`, which is what Tiled's own spinner
+    // writes; a `float` lands in the same place. 40 is rare-ish ground on the
+    // curve -- mostly rare with some epic in it.
     const std::string objects =
         R"({ "id": 1, "type": "spawn", "visible": true, "rotation": 0,
              "x": 600, "y": 600, "width": 3000, "height": 3000, "properties": [
-               { "name": "spawnType", "type": "string", "value": "rare" },
+               { "name": "difficulty", "type": "int", "value": 40 },
                { "name": "mobs", "type": "string", "value": "hornet 100%" } ] },
            { "id": 2, "type": "spawn", "visible": true, "rotation": 0,
              "x": 600, "y": 4200, "width": 3000, "height": 3000, "properties": [
@@ -673,7 +805,8 @@ TEST(an_authored_band_and_region_still_parse) {
     for (const MapElement& element : map.elements()) {
         if (element.isSpawnBand()) {
             ++bands;
-            CHECK(element.spawnTier == Rarity::Rare);
+            CHECK_NEAR(element.difficulty, 40.0, 1e-9);
+            CHECK(tierMixForDifficulty(element.difficulty).lower == Rarity::Rare);
             CHECK_EQ(element.mobDistribution.size(), std::size_t{1});
             CHECK_EQ(element.mobDistribution[0].name, std::string("hornet"));
         }
@@ -693,9 +826,10 @@ TEST(an_authored_band_and_region_still_parse) {
 
 TEST(every_pickable_door_stands_on_safe_open_ground) {
     // The rule the picker relies on: a door the title screen offers puts a
-    // fresh flower down on open ground with nothing above uncommon over it.
-    // Checked over every staged map, so a generator regression or a hand edit
-    // that slides a rare band over a door does not ship unnoticed.
+    // fresh flower down on open ground whose difficulty is below the first one
+    // that can roll a rare at all. Checked over every staged map, so a hand
+    // edit that slides a difficulty-40 band over a door does not ship
+    // unnoticed.
     Terrain terrain;
     WorldMaps maps;
     std::string error;
@@ -715,10 +849,11 @@ TEST(every_pickable_door_stands_on_safe_open_ground) {
         const MapElement& door = map->elements()[static_cast<std::size_t>(choice.element)];
         const Vec2 centre = door.centre();
         ++doors;
-        if (inTierAbove(*map, centre, Rarity::Rare)) {
+        if (onDangerousGround(*map, centre)) {
             ::testing::reportFailure(__FILE__, __LINE__,
                                      "door " + choice.id + " on " + map->id() +
-                                         " sits under a rare-or-better band");
+                                         " sits under a band of difficulty " +
+                                         std::to_string(kDangerousGroundDifficulty) + " or more");
         }
         if (terrain.blocked(centre, choice.realm)) {
             ::testing::reportFailure(__FILE__, __LINE__,

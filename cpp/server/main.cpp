@@ -100,6 +100,13 @@ bool mountDatabaseDirectory(std::string& databasePath, std::string& errorOut) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Line-buffer stdout. It is fully buffered by default whenever it is not a
+    // terminal, which is every way the server is actually run -- under pm2, in
+    // a redirect, in a CI log -- so the map summary and "listening on port"
+    // sat in a 4KB buffer until the process exited. A server whose start-up
+    // report only appears once it has stopped is a server nobody can check.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+
     flix::ServerConfig config;
 
     for (int i = 1; i < argc; ++i) {

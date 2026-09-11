@@ -1,6 +1,7 @@
 #include "shared/game/terrain.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 #include "shared/game/tiled_map.h"
 
@@ -85,121 +87,255 @@ inline double ridge(double n) { return std::fabs(n - 0.5); }
 inline int wrapMod(int v, int m) { return ((v % m) + m) % m; }
 
 // ---------------------------------------------------------------------------
-// Tile collision geometry
+// Collision geometry
 // ---------------------------------------------------------------------------
 //
-// A blocking tile is its plain 300-unit rectangle. What the cell is drawn with
-// is the map file's artwork, fitted inside that square, so the rectangle is
-// both the hitbox and the silhouette.
+// A cell blocks where its tile's authored SHAPES are, and a cell with no shapes
+// blocks over its whole 300-unit square if its coarse Tile says so. Both are
+// the same code here: the fallback is a four-point ring, so there is one set of
+// polygon routines and no second path to keep honest.
+//
+// Everything below works in ONE CELL'S LOCAL SPACE -- (0,0) at the cell's
+// top-left corner -- because that is how a shape is stored. A query subtracts
+// the cell origin from its point once and adds it back to the answer, instead of
+// translating fourteen polygon vertices.
 
 constexpr double kWallResolveEpsilon = 0.01;
 
-/// One blocking tile the circle overlaps: its rectangle, and the offset from
-/// the circle's centre to the nearest point of it.
-struct TileCollision {
-    double left = 0.0;
-    double right = 0.0;
-    double top = 0.0;
-    double bottom = 0.0;
-    double nearDx = 0.0;
-    double nearDy = 0.0;
+/// The four corners of a whole cell, wound positive, for the fallback.
+std::array<Vec2, 4> wholeCellRing() {
+    return {Vec2{0.0, 0.0}, Vec2{kTileSize, 0.0}, Vec2{kTileSize, kTileSize},
+            Vec2{0.0, kTileSize}};
+}
+
+/// A ring, as every routine here takes one: a pointer and a count, so a stored
+/// CollisionShape and a stack-built cell square are the same thing to them.
+struct Ring {
+    const Vec2* points = nullptr;
+    std::size_t count = 0;
+    const Vec2& operator[](std::size_t i) const { return points[i]; }
 };
 
-/// The tile a push-out should act on this pass, if any. A flat-face hit (the
-/// centre is level with the tile on one axis) wins over a corner hit, so a
-/// body sliding along a wall is pushed straight off its face and never off
-/// the seam between two tiles of it.
-std::optional<TileCollision> findTileCollision(const Terrain& terrain, Vec2 position,
-                                               double radius, Realm realm) {
-    const double reach = radius + kCollisionScanBuffer;
-    const int minX = std::max(0, Terrain::toTileCoord(position.x - reach));
-    const int maxX = std::min(terrain.tileCols(realm) - 1, Terrain::toTileCoord(position.x + reach));
-    const int minY = std::max(0, Terrain::toTileCoord(position.y - reach));
-    const int maxY = std::min(terrain.tileRows(realm) - 1, Terrain::toTileCoord(position.y + reach));
-    std::optional<TileCollision> corner;
-
-    for (int tileY = minY; tileY <= maxY; ++tileY) {
-        for (int tileX = minX; tileX <= maxX; ++tileX) {
-            if (!tileBlocks(terrain.atTile(tileX, tileY, realm))) continue;
-
-            TileCollision hit;
-            hit.left = tileX * kTileSize;
-            hit.right = hit.left + kTileSize;
-            hit.top = tileY * kTileSize;
-            hit.bottom = hit.top + kTileSize;
-
-            const double nearX = clamp(position.x, hit.left, hit.right);
-            const double nearY = clamp(position.y, hit.top, hit.bottom);
-            hit.nearDx = position.x - nearX;
-            hit.nearDy = position.y - nearY;
-            const bool inside = hit.nearDx == 0.0 && hit.nearDy == 0.0;
-            if (!inside && hit.nearDx * hit.nearDx + hit.nearDy * hit.nearDy >= radius * radius) {
-                continue;
-            }
-            // Prefer a flat-face hit over an adjacent tile's interior seam.
-            if (hit.nearDx == 0.0 || hit.nearDy == 0.0) return hit;
-            if (!corner) corner = hit;
-        }
-    }
-    return corner;
-}
-
-/// Pushes the circle out of one tile: through the nearest face when the centre
-/// is inside the rectangle (least-penetration ejection), straight off the face
-/// when it is level with the tile on one axis, and radially off the corner
-/// otherwise.
-Vec2 resolveTileCollision(Vec2 position, double radius, const TileCollision& hit) {
-    const double r = radius + kWallResolveEpsilon;
-    const bool insideX = position.x > hit.left && position.x < hit.right;
-    const bool insideY = position.y > hit.top && position.y < hit.bottom;
-    if (insideX && insideY) {
-        const double left = position.x - hit.left;
-        const double right = hit.right - position.x;
-        const double top = position.y - hit.top;
-        const double bottom = hit.bottom - position.y;
-        const double least = std::min(std::min(left, right), std::min(top, bottom));
-        if (least == left) return {hit.left - r, position.y};
-        if (least == right) return {hit.right + r, position.y};
-        if (least == top) return {position.x, hit.top - r};
-        return {position.x, hit.bottom + r};
-    }
-    if (insideY) return {position.x < hit.left ? hit.left - r : hit.right + r, position.y};
-    if (insideX) return {position.x, position.y < hit.top ? hit.top - r : hit.bottom + r};
-
-    const double cornerX = position.x < hit.left ? hit.left : hit.right;
-    const double cornerY = position.y < hit.top ? hit.top : hit.bottom;
-    Vec2 away = position - Vec2{cornerX, cornerY};
-    double distance = away.length();
-    if (!(distance > 0.0)) { away = {1.0, 0.0}; distance = 1.0; }
-    return {cornerX + away.x * r / distance, cornerY + away.y * r / distance};
-}
-
-/// Liang-Barsky: does the segment touch the axis-aligned rect at all?
+/// Is the point inside the ring? Crossing (even-odd) test.
 ///
-/// Parametric clipping rather than four edge intersections, because a segment
-/// that lies wholly inside the rect crosses no edge and still touches it.
-bool segmentTouchesRect(Vec2 a, Vec2 b, double left, double top, double right, double bottom) {
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    double t0 = 0.0;
-    double t1 = 1.0;
-    // Narrows [t0, t1] to the part of the segment on the inside of one edge.
-    // A segment parallel to the edge cannot be clipped by it, so it is inside
-    // that edge exactly when it starts inside.
-    const auto clip = [&](double p, double q) -> bool {
-        if (p == 0.0) return q >= 0.0;
-        const double r = q / p;
-        if (p < 0.0) {
-            if (r > t1) return false;
-            if (r > t0) t0 = r;
-        } else {
-            if (r < t0) return false;
-            if (r < t1) t1 = r;
+/// A point exactly on an edge is either answer, and deliberately not special-
+/// cased: every caller that cares is already asking about a circle of some
+/// radius, and the one that is not (a sample of hasLineOfSight) is allowed a
+/// pixel of slop by construction.
+bool pointInRing(const Ring& ring, Vec2 p) {
+    bool inside = false;
+    for (std::size_t i = 0, j = ring.count - 1; i < ring.count; j = i++) {
+        const Vec2& a = ring[i];
+        const Vec2& b = ring[j];
+        if ((a.y > p.y) == (b.y > p.y)) continue;
+        const double t = (p.y - a.y) / (b.y - a.y);
+        if (p.x < a.x + t * (b.x - a.x)) inside = !inside;
+    }
+    return inside;
+}
+
+/// The closest point of a ring's BOUNDARY to `p`.
+struct NearestOnRing {
+    Vec2 at;
+    double distSq = 0.0;
+    std::size_t edge = 0;
+    /// The closest point fell strictly inside the edge, not on a vertex. A
+    /// face hit, in other words, which is what the push-out prefers.
+    bool interior = false;
+};
+
+NearestOnRing nearestOnRing(const Ring& ring, Vec2 p) {
+    NearestOnRing best;
+    best.distSq = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < ring.count; ++i) {
+        const Vec2& a = ring[i];
+        const Vec2& b = ring[(i + 1) % ring.count];
+        const Vec2 d = b - a;
+        const double lengthSq = d.lengthSq();
+        double t = 0.0;
+        if (lengthSq > 0.0) t = clamp(((p - a).x * d.x + (p - a).y * d.y) / lengthSq, 0.0, 1.0);
+        const Vec2 at = a + d * t;
+        const double d2 = distanceSq(at, p);
+        const bool interior = t > 0.0 && t < 1.0;
+        // A tie between a face and a vertex goes to the face, so a circle
+        // resting exactly on a corner of one edge is still pushed off the face.
+        if (d2 < best.distSq || (d2 == best.distSq && interior && !best.interior)) {
+            best.at = at;
+            best.distSq = d2;
+            best.edge = i;
+            best.interior = interior;
         }
-        return true;
+    }
+    return best;
+}
+
+/// The unit outward normal of one edge. Only needed for a centre sitting
+/// exactly ON the boundary, where there is no direction to push along; every
+/// other case has one. Rings are wound so their signed area is positive, which
+/// is what makes (dy, -dx) point out.
+Vec2 outwardNormal(const Ring& ring, std::size_t edge) {
+    const Vec2& a = ring[edge];
+    const Vec2& b = ring[(edge + 1) % ring.count];
+    const Vec2 d = b - a;
+    const double length = d.length();
+    if (!(length > 0.0)) return {1.0, 0.0};
+    return {d.y / length, -d.x / length};
+}
+
+/// Where one ring pushes a circle to, and whether the push came off a face.
+/// Empty when the circle is clear of the ring.
+///
+/// THE CONTRACT, which is the same one the whole-cell rectangle always had:
+/// the result stands exactly radius + kWallResolveEpsilon clear of the closest
+/// point of the ring. A centre inside the ring leaves along the shortest way
+/// out; a centre outside it is pushed back the way it came. Against a rectangle
+/// this is arithmetically identical to the least-penetration ejection this file
+/// used to write out by hand, face by face.
+struct RingPush {
+    Vec2 position;
+    bool flat = false;
+};
+
+std::optional<RingPush> pushOutOfRing(const Ring& ring, Vec2 p, double radius) {
+    if (ring.count < 3) return std::nullopt;
+    const NearestOnRing near = nearestOnRing(ring, p);
+    const bool inside = pointInRing(ring, p);
+    // Touching is not overlapping: the same strict test the rectangle used, so
+    // a body resting against a wall is not pushed again every tick.
+    if (!inside && near.distSq >= radius * radius) return std::nullopt;
+
+    const double reach = radius + kWallResolveEpsilon;
+    const double distance = std::sqrt(near.distSq);
+    Vec2 direction;
+    if (distance > 1e-12) {
+        const Vec2 away = inside ? near.at - p : p - near.at;
+        direction = away / distance;
+    } else {
+        // Dead on the boundary. Nothing in the geometry says which way is out,
+        // so the edge's own normal does.
+        direction = outwardNormal(ring, near.edge);
+    }
+    RingPush push;
+    push.position = near.at + direction * reach;
+    push.flat = inside || near.interior;
+    return push;
+}
+
+/// Do two segments touch at all? Orientation signs, with the collinear and
+/// endpoint-touching cases counted as touching.
+bool segmentsIntersect(Vec2 a, Vec2 b, Vec2 c, Vec2 d) {
+    const auto cross = [](Vec2 o, Vec2 u, Vec2 v) {
+        return (u.x - o.x) * (v.y - o.y) - (u.y - o.y) * (v.x - o.x);
     };
-    return clip(-dx, a.x - left) && clip(dx, right - a.x) && clip(-dy, a.y - top) &&
-           clip(dy, bottom - a.y) && t0 <= t1;
+    const auto onSegment = [](Vec2 u, Vec2 v, Vec2 q) {
+        return std::min(u.x, v.x) <= q.x && q.x <= std::max(u.x, v.x) &&
+               std::min(u.y, v.y) <= q.y && q.y <= std::max(u.y, v.y);
+    };
+    const double d1 = cross(a, b, c);
+    const double d2 = cross(a, b, d);
+    const double d3 = cross(c, d, a);
+    const double d4 = cross(c, d, b);
+    if (((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0)) && d1 != 0.0 && d2 != 0.0 &&
+        d3 != 0.0 && d4 != 0.0) {
+        return true;
+    }
+    if (d1 == 0.0 && onSegment(a, b, c)) return true;
+    if (d2 == 0.0 && onSegment(a, b, d)) return true;
+    if (d3 == 0.0 && onSegment(c, d, a)) return true;
+    if (d4 == 0.0 && onSegment(c, d, b)) return true;
+    return false;
+}
+
+double pointSegmentDistSq(Vec2 p, Vec2 a, Vec2 b) {
+    const Vec2 d = b - a;
+    const double lengthSq = d.lengthSq();
+    double t = 0.0;
+    if (lengthSq > 0.0) t = clamp(((p - a).x * d.x + (p - a).y * d.y) / lengthSq, 0.0, 1.0);
+    return distanceSq(a + d * t, p);
+}
+
+/// The squared distance between two segments that do NOT cross -- which is the
+/// only case it is called in, so the four endpoint-to-segment distances are the
+/// whole answer.
+double segmentDistSq(Vec2 a, Vec2 b, Vec2 c, Vec2 d) {
+    return std::min(std::min(pointSegmentDistSq(a, c, d), pointSegmentDistSq(b, c, d)),
+                    std::min(pointSegmentDistSq(c, a, b), pointSegmentDistSq(d, a, b)));
+}
+
+/// Does the segment come within `eps` of the ring, inside included?
+///
+/// `eps` grows the shape by a DISC of that radius: the region tested is every
+/// point within `eps` of the ring, which is the Minkowski sum with a circle.
+/// The whole-cell version this replaced grew an axis-aligned rectangle by `eps`
+/// on each side, so at a CORNER it reached eps*sqrt(2) where this reaches eps
+/// -- i.e. the new test is very slightly TIGHTER diagonally off a corner, not
+/// looser. Deliberate, and the only honest choice now that a shape may be a
+/// turned polygon, where "grow the rectangle" is not defined: distance to the
+/// shape is the same question whichever way the shape is turned, and a body
+/// that clears a corner by more than the inflation has not touched it. eps is
+/// kCenterPathInflation, a half unit against a 300-unit cell.
+bool ringTouchesSegment(const Ring& ring, Vec2 a, Vec2 b, double eps) {
+    if (ring.count < 3) return false;
+    if (pointInRing(ring, a) || pointInRing(ring, b)) return true;
+    const double epsSq = eps * eps;
+    for (std::size_t i = 0; i < ring.count; ++i) {
+        const Vec2& e0 = ring[i];
+        const Vec2& e1 = ring[(i + 1) % ring.count];
+        if (segmentsIntersect(a, b, e0, e1)) return true;
+        if (eps > 0.0 && segmentDistSq(a, b, e0, e1) <= epsSq) return true;
+    }
+    return false;
+}
+
+/// The box a ring's own points span, for the reject.
+Rect ringBounds(const std::vector<Vec2>& points) {
+    double minX = points.empty() ? 0.0 : points[0].x;
+    double minY = points.empty() ? 0.0 : points[0].y;
+    double maxX = minX;
+    double maxY = minY;
+    for (const Vec2& point : points) {
+        minX = std::min(minX, point.x);
+        maxX = std::max(maxX, point.x);
+        minY = std::min(minY, point.y);
+        maxY = std::max(maxY, point.y);
+    }
+    return {minX, minY, maxX - minX, maxY - minY};
+}
+
+/// Is this ring exactly its own bounding box? Four points, each on a corner of
+/// it, and no two on the same one. See CollisionShape::rectangle.
+bool ringIsItsBox(const std::vector<Vec2>& points, const Rect& bounds) {
+    if (points.size() != 4) return false;
+    if (!(bounds.w > 0.0) || !(bounds.h > 0.0)) return false;
+    int seen = 0;
+    for (const Vec2& p : points) {
+        const bool left = p.x == bounds.left();
+        const bool right = p.x == bounds.right();
+        const bool top = p.y == bounds.top();
+        const bool bottom = p.y == bounds.bottom();
+        if (!(left || right) || !(top || bottom)) return false;
+        seen |= 1 << ((right ? 1 : 0) | (bottom ? 2 : 0));
+    }
+    return seen == 0b1111;
+}
+
+Rect unionRect(const Rect& a, const Rect& b) {
+    const double left = std::min(a.left(), b.left());
+    const double top = std::min(a.top(), b.top());
+    return {left, top, std::max(a.right(), b.right()) - left,
+            std::max(a.bottom(), b.bottom()) - top};
+}
+
+bool rectOverlaps(const Rect& r, double left, double top, double right, double bottom) {
+    return r.left() <= right && r.right() >= left && r.top() <= bottom && r.bottom() >= top;
+}
+
+/// Rect::contains is half-open, which would reject a point sitting exactly on a
+/// shape's right or bottom edge. Every box here is a REJECT, so it has to be
+/// inclusive on all four sides: a point the box drops is a point the ring is
+/// never asked about.
+bool rectHolds(const Rect& r, Vec2 p) {
+    return p.x >= r.left() && p.x <= r.right() && p.y >= r.top() && p.y <= r.bottom();
 }
 
 Tile classifyGarden(int tx, int ty, const NoiseSet& n) {
@@ -306,6 +442,7 @@ void Terrain::clearRealm(Realm realm) {
     g.rows = 0;
     g.tiles.clear();
     g.spawnTile = 0;
+    clearCollisionShapes(realm);
 }
 
 bool Terrain::install(Realm realm, std::vector<std::uint8_t> tiles, int cols, int rows) {
@@ -315,6 +452,11 @@ bool Terrain::install(Realm realm, std::vector<std::uint8_t> tiles, int cols, in
         if (tile > static_cast<std::uint8_t>(Tile::Block)) return false;
     }
     Grid& g = grid(realm);
+    // Shapes are indexed by the grid's width, so a grid of a different shape
+    // describes a different map and the store cannot survive it. The same
+    // dimensions keep it, which is what lets a client install the wire grid and
+    // its own shapes in either order.
+    if (g.cols != cols || g.rows != rows) clearCollisionShapes(realm);
     g.cols = cols;
     g.rows = rows;
     g.tiles = std::move(tiles);
@@ -332,11 +474,19 @@ void Terrain::setTile(int tx, int ty, Tile t, Realm realm) {
     Grid& g = grid(realm);
     if (tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) return;
     g.tiles[static_cast<std::size_t>(index(g, tx, ty))] = static_cast<std::uint8_t>(t);
+    // A direct write says what the CELL is, and there is no shape for it to
+    // say it in: the authored shapes come from a tile in a tileset, and this
+    // caller has none. So a write onto a realm with authored shapes drops them
+    // and the realm falls back to whole-cell collision -- which is exactly what
+    // "this cell is now wall" can be made to mean, and is conservative. Only a
+    // test or a future editor ever writes into a loaded map.
+    clearCollisionShapes(realm);
 }
 
 void Terrain::fill(Tile t, Realm realm) {
     Grid& g = grid(realm);
     std::fill(g.tiles.begin(), g.tiles.end(), static_cast<std::uint8_t>(t));
+    clearCollisionShapes(realm);   // see setTile
 }
 
 void Terrain::generate(std::uint64_t seed) {
@@ -508,14 +658,32 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm
                    " tiles on each axis";
         return false;
     }
+    // The grid is DERIVED, not painted, and the SHAPES beside it are what a
+    // body actually collides with: tiled_map.h folds every colliding layer of
+    // the map down to one Tile per cell for the coarse view, and this class
+    // keeps the authored shapes per realm for the exact one. Only the grid ever
+    // goes on the wire; the artwork and the shapes stay in the map file, which
+    // the client reads for itself.
+    if (!setTiles(map.tiles(), map.width(), map.height(), realm)) {
+        errorOut = "could not install the tile grid from " + path;
+        return false;
+    }
+    // The dimensions just came from this same map, so this cannot fail; the
+    // check is here because a silent fallback to whole-cell collision is
+    // exactly the sort of thing that would be found months later on a slope.
+    if (!setCollisionShapes(map, realm)) {
+        errorOut = "could not install the collision shapes from " + path;
+        return false;
+    }
+
     // WHAT THE COLLISION RULE RESOLVED TO, once per map, at load.
     //
-    // Collision is a property of the LAYER (shared/game/tiled_map.h): a layer
-    // whose `has_collision` is ticked is a wall everywhere it has a tile, and
-    // one without the property never blocks. That is one tick box per layer in
-    // an editor that does not draw it, so an author who ticks the wrong box --
-    // or forgets one -- should read it here rather than discover it by walking
-    // through a castle.
+    // A LAYER decides which cells can collide and the TILE's shapes decide
+    // where inside them (shared/game/tiled_map.h). Both halves are invisible in
+    // the editor -- a tick box in the layer panel, and a shape drawn on a tile
+    // in a different window -- so an author who ticks the wrong box, or paints a
+    // tile they never drew a shape on, should read it here rather than discover
+    // it by walking through a castle.
     std::string collides;
     std::string scenery;
     for (const TiledLayer& layer : map.layers()) {
@@ -524,10 +692,38 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm
         list += layer.name;
     }
     std::fprintf(stderr,
-                 "[map] %s: collision from %s; scenery %s; %d wall, %d water, %d ground cells\n",
+                 "[map] %s: collision from %s; scenery %s; %d wall, %d water, %d ground cells; "
+                 "%d shape sets over %d shaped cells\n",
                  path.c_str(), collides.empty() ? "no layer" : collides.c_str(),
                  scenery.empty() ? "(none)" : scenery.c_str(), map.wallCells(), map.waterCells(),
-                 map.groundCells());
+                 map.groundCells(), collisionShapeSetCount(realm),
+                 collisionShapeCellCount(realm));
+    // A shape that leaves its tile still collides -- it is filed in every cell
+    // it reaches into -- but it is nearly always a slip of the mouse in Tiled's
+    // Tile Collision Editor rather than a decision, and nothing in the editor
+    // shows it. Reported, with the distance, so it can be put back.
+    if (collisionOverhangUnits(realm) > 0.0) {
+        std::fprintf(stderr,
+                     "[map] %s: a collision shape reaches %.3f world units outside its own tile; "
+                     "it still blocks, in every cell it reaches, but check it was meant\n",
+                     path.c_str(), collisionOverhangUnits(realm));
+    }
+    // A cell on a colliding layer whose tile carries no shape blocks NOTHING.
+    // Legal -- a walkable footpath painted onto the dirt layer is exactly this
+    // -- and the one way a map can look solid in the editor and be walkable in
+    // the game, so it is a warning with the tiles named.
+    if (map.unshapedBlockingCells() > 0) {
+        std::string names;
+        for (const std::string& name : map.unshapedBlockingTiles()) {
+            if (!names.empty()) names += ", ";
+            names += name;
+        }
+        std::fprintf(stderr,
+                     "[map] WARNING %s: %d cells on a colliding layer use a tile with no "
+                     "collision shape and so block nothing (%s); draw shapes on them in Tiled's "
+                     "Tile Collision Editor, or move them to a layer that does not collide\n",
+                     path.c_str(), map.unshapedBlockingCells(), names.c_str());
+    }
     // A map nobody ticked a box on is walkable everywhere, boundary wall
     // included. Legal, and almost certainly not meant.
     if (collides.empty()) {
@@ -542,15 +738,183 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm
                              "layers that do not collide; those cells are plain ground\n",
                      path.c_str(), name.c_str());
     }
-    // The grid is DERIVED, not painted: tiled_map.h folds every layer of the
-    // map down to one Tile per cell, and that is the only thing about a map
-    // this class -- or the wire -- ever carries. The artwork stays in the map
-    // file, where the client reads it.
-    if (!setTiles(map.tiles(), map.width(), map.height(), realm)) {
-        errorOut = "could not install the tile grid from " + path;
+    seed_ = 0;   // an authored map, not a generated one
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// The authored collision shapes
+// ---------------------------------------------------------------------------
+
+bool Terrain::hasCollisionShapes(Realm realm) const { return !shapeGrid(realm).empty(); }
+
+int Terrain::collisionShapeSetCount(Realm realm) const {
+    return static_cast<int>(shapeGrid(realm).sets.size());
+}
+
+int Terrain::collisionShapeCellCount(Realm realm) const {
+    return shapeGrid(realm).cellsWithShapes;
+}
+
+double Terrain::collisionOverhangUnits(Realm realm) const {
+    return shapeGrid(realm).overhangUnits;
+}
+
+void Terrain::clearCollisionShapes(Realm realm) {
+    ShapeGrid& store = shapeGrid(realm);
+    if (store.cols == 0 && store.rows == 0 && store.refs.empty() && store.sets.empty()) return;
+    store = ShapeGrid();
+}
+
+bool Terrain::setCollisionShapes(const TiledMap& map, Realm realm) {
+    if (!isWorldRealm(realm)) return false;
+    const Grid& g = grid(realm);
+    // The store is indexed by the grid's dimensions, so it has to BE the same
+    // map. A mismatch leaves whole-cell collision in place rather than
+    // installing geometry for somewhere else.
+    if (map.width() <= 0 || map.height() <= 0) return false;
+    if (g.cols != map.width() || g.rows != map.height()) return false;
+
+    const std::size_t cellCount =
+        static_cast<std::size_t>(map.width()) * static_cast<std::size_t>(map.height());
+    ShapeGrid store;
+    store.cols = map.width();
+    store.rows = map.height();
+
+    // One set per (tile, orientation) the map actually paints on a colliding
+    // layer, built the first time that pair is seen: at most eight per tile in
+    // the tileset, and 86 for the shipped garden. Every cell painted with that
+    // pair then shares one already-transformed ring.
+    std::unordered_map<std::uint64_t, std::uint32_t> setOfPair;
+    // The cells each set reaches, in step with store.sets. Almost always the
+    // owning cell alone; see ShapeReach.
+    std::vector<ShapeReach> reachOfSet;
+    const auto setFor = [&](const TiledCell& cell, const TiledTileType& type) -> std::uint32_t {
+        const std::uint8_t flags = cell.flags & 7u;
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(cell.type)) << 3) | flags;
+        const auto found = setOfPair.find(key);
+        if (found != setOfPair.end()) return found->second;
+        CollisionShapeSet built;
+        bool first = true;
+        for (const TiledShape& turned : orientTileShapes(type.shapes, flags)) {
+            CollisionShape shape;
+            shape.points = turned.points;
+            shape.bounds = ringBounds(shape.points);
+            shape.rectangle = ringIsItsBox(shape.points, shape.bounds);
+            built.bounds = first ? shape.bounds : unionRect(built.bounds, shape.bounds);
+            first = false;
+            built.shapes.push_back(std::move(shape));
+        }
+        const std::uint32_t at = static_cast<std::uint32_t>(store.sets.size());
+        reachOfSet.push_back(shapeReach(built.bounds));
+        store.sets.push_back(std::move(built));
+        setOfPair.emplace(key, at);
+        return at;
+    };
+
+    // Two passes over the layers: count the refs per cell, then fill them. The
+    // second pass runs bottom layer first, so a cell's refs come out in LAYER
+    // ORDER and the last one to contain a point is the topmost -- which is what
+    // decides whether that point is water or wall. Two cells of ONE layer can
+    // both reach a third through an overhang; they carry the same layer number,
+    // so which of them names the kind is unspecified, exactly as it is for two
+    // shapes of one tile.
+    //
+    // `visit` is handed the cell the ref goes IN and the offset back to the
+    // cell that owns the geometry, which is (0, 0) for every shape drawn inside
+    // its tile.
+    std::vector<std::uint32_t> counts(cellCount + 1, 0);
+    const auto eachContributingCell = [&](const auto& visit) {
+        std::size_t layerIndex = 0;
+        for (const TiledLayer& layer : map.layers()) {
+            // A ref's layer is one byte, and it is only ever compared: a map
+            // with more than 255 layers has its deepest ones share a number
+            // rather than wrapping round to the bottom of the stack.
+            const std::uint8_t thisLayer =
+                static_cast<std::uint8_t>(std::min<std::size_t>(layerIndex++, 255));
+            if (!layer.collides) continue;
+            for (std::size_t i = 0; i < cellCount && i < layer.cells.size(); ++i) {
+                const TiledCell& cell = layer.cells[i];
+                if (cell.type < 0) continue;
+                const std::size_t typeIndex = static_cast<std::size_t>(cell.type);
+                if (typeIndex >= map.palette().size()) continue;
+                const TiledTileType& type = map.palette()[typeIndex];
+                if (type.shapes.empty()) continue;   // contributes nothing; see tiled_map.h
+                const std::uint32_t set = setFor(cell, type);
+                const ShapeReach& reach = reachOfSet[set];
+                if (reach.ownCellOnly()) {
+                    visit(i, set, type, thisLayer, 0, 0);
+                    continue;
+                }
+                const int tx = static_cast<int>(i % static_cast<std::size_t>(store.cols));
+                const int ty = static_cast<int>(i / static_cast<std::size_t>(store.cols));
+                for (int dy = reach.dyMin; dy <= reach.dyMax; ++dy) {
+                    for (int dx = reach.dxMin; dx <= reach.dxMax; ++dx) {
+                        const int nx = tx + dx;
+                        const int ny = ty + dy;
+                        if (nx < 0 || ny < 0 || nx >= store.cols || ny >= store.rows) continue;
+                        visit(static_cast<std::size_t>(ny) * static_cast<std::size_t>(store.cols) +
+                                  static_cast<std::size_t>(nx),
+                              set, type, thisLayer, -dx, -dy);
+                    }
+                }
+            }
+        }
+    };
+    eachContributingCell([&](std::size_t i, std::uint32_t, const TiledTileType&, std::uint8_t, int,
+                             int) { ++counts[i]; });
+    store.firstRef.assign(cellCount + 1, 0);
+    std::uint32_t total = 0;
+    for (std::size_t i = 0; i < cellCount; ++i) {
+        store.firstRef[i] = total;
+        if (counts[i] != 0) ++store.cellsWithShapes;
+        total += counts[i];
+    }
+    store.firstRef[cellCount] = total;
+    store.refs.assign(total, ShapeGrid::Ref());
+    std::vector<std::uint32_t> cursor(store.firstRef.begin(), store.firstRef.end() - 1);
+    eachContributingCell([&](std::size_t i, std::uint32_t set, const TiledTileType& type,
+                             std::uint8_t layerIndex, int dx, int dy) {
+        ShapeGrid::Ref ref;
+        ref.set = set;
+        ref.dx = static_cast<std::int16_t>(dx);
+        ref.dy = static_cast<std::int16_t>(dy);
+        ref.layer = layerIndex;
+        ref.water = type.water;
+        store.refs[cursor[i]++] = ref;
+    });
+
+    // How far any shape reaches outside its own cell, in world units. Zero for
+    // every shape drawn inside its tile. Nothing in a query uses it -- the refs
+    // above already reach every cell a shape touches -- but an author who
+    // nudged a vertex a fraction of a unit past a tile edge cannot see that in
+    // Tiled, so the load report says it.
+    double overhang = 0.0;
+    for (const CollisionShapeSet& set : store.sets) {
+        if (set.shapes.empty()) continue;
+        overhang = std::max(overhang, -set.bounds.left());
+        overhang = std::max(overhang, -set.bounds.top());
+        overhang = std::max(overhang, set.bounds.right() - kTileSize);
+        overhang = std::max(overhang, set.bounds.bottom() - kTileSize);
+    }
+    store.overhangUnits = std::max(0.0, overhang);
+
+    shapeGrid(realm) = std::move(store);
+    return true;
+}
+
+bool Terrain::loadCollisionShapes(const std::string& path, std::string& errorOut, Realm realm) {
+    TiledMap map;
+    if (!map.load(path, errorOut)) return false;
+    if (!setCollisionShapes(map, realm)) {
+        errorOut = path + " is " + std::to_string(map.width()) + "x" +
+                   std::to_string(map.height()) + " cells, but realm " +
+                   std::to_string(realmIndex(realm)) + " holds a " +
+                   std::to_string(tileCols(realm)) + "x" + std::to_string(tileRows(realm)) +
+                   " grid; its collision stays whole-cell";
         return false;
     }
-    seed_ = 0;   // an authored map, not a generated one
     return true;
 }
 
@@ -566,15 +930,26 @@ bool Terrain::setTiles(const std::vector<std::uint8_t>& tiles, int cols, int row
                       : index(g, cols / 2, rows / 2);
     if (!tileBlocks(atTile(g.spawnTile % g.cols, g.spawnTile / g.cols, realm))) return true;
     // A map whose middle is solid is perfectly legal -- a cave level starts
-    // inside rock. Take the nearest open tile instead of refusing the map.
+    // inside rock, and now that a cell blocks where its SHAPES are, an authored
+    // map's middle cell is solid far more often than it used to be. Take the
+    // nearest open tile instead of refusing the map. For any realm: this
+    // fallback used to be reserved for the non-overworld realms, which refused
+    // every small overworld map whose centre cell happened to be painted.
     int tx = 0;
     int ty = 0;
-    if (realm != Realm::Overworld &&
-        nearestOpenTile(tileCenter(g.cols / 2, g.rows / 2), tx, ty, realm)) {
+    if (nearestOpenTile(tileCenter(g.cols / 2, g.rows / 2), tx, ty, realm)) {
         g.spawnTile = index(g, tx, ty);
         return true;
     }
-    return false;
+    // No open CELL anywhere, which no longer means there is nowhere to stand:
+    // a cell counts as blocking when it holds any shape at all, and a map whose
+    // every cell holds one -- a small map floored entirely with dirt edges -- is
+    // mostly walkable. So the map loads, with the middle as the last-resort
+    // spawn; the doors on its object layers are what actually place a player.
+    std::fprintf(stderr,
+                 "[map] every cell of this %dx%d grid holds a blocking shape; spawnPoint() "
+                 "falls back to the middle of it\n", cols, rows);
+    return true;
 }
 
 void Terrain::generateSections(Rng& rng) {
@@ -825,6 +1200,209 @@ void Terrain::connectAll() {
 // Collision
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The exact tests, one cell at a time
+// ---------------------------------------------------------------------------
+//
+// Each of the three below is asked about ONE IN-GRID CELL and answers from that
+// cell's authored shapes, or -- when the cell has none -- from its coarse Tile
+// over the whole 300-unit square. Which of the two is in play is a property of
+// the cell, not of the map: a map may perfectly well have shapes on some cells
+// and none on others, and mixing them is only ever conservative.
+
+int Terrain::cellLayerAt(int tx, int ty, Vec2 p, Realm realm, bool& water) const {
+    const Grid& g = grid(realm);
+    const ShapeGrid& store = shapeGrid(realm);
+    const Vec2 base{p.x - tx * kTileSize, p.y - ty * kTileSize};
+    int best = -1;
+    if (store.cols == g.cols && store.rows == g.rows && !store.firstRef.empty()) {
+        const std::size_t cell = static_cast<std::size_t>(index(g, tx, ty));
+        const std::uint32_t from = store.firstRef[cell];
+        const std::uint32_t to = store.firstRef[cell + 1];
+        for (std::uint32_t i = from; i < to; ++i) {
+            const ShapeGrid::Ref& ref = store.refs[i];
+            const CollisionShapeSet& set = store.sets[ref.set];
+            // A ref's geometry is in ITS OWN cell's coordinates, which is this
+            // cell for all but an overhanging shape. See ShapeGrid::Ref.
+            const Vec2 local = ref.dx == 0 && ref.dy == 0
+                                   ? base
+                                   : Vec2{base.x - ref.dx * kTileSize, base.y - ref.dy * kTileSize};
+            if (!rectHolds(set.bounds, local)) continue;
+            for (const CollisionShape& shape : set.shapes) {
+                if (!rectHolds(shape.bounds, local)) continue;
+                // An axis-aligned rectangle IS its box, so the reject just
+                // above was the containment test.
+                if (!shape.rectangle &&
+                    !pointInRing(Ring{shape.points.data(), shape.points.size()}, local)) {
+                    continue;
+                }
+                // Refs are in layer order, so this is a running maximum; the
+                // topmost shape containing the point names the KIND.
+                if (static_cast<int>(ref.layer) >= best) {
+                    best = static_cast<int>(ref.layer);
+                    water = ref.water;
+                }
+                break;
+            }
+        }
+        // The cell HAS authored shapes: they are the whole answer, including
+        // when the point is in none of them.
+        if (from != to) return best;
+    }
+    // The whole-cell fallback answers for THIS CELL'S 300-unit square, and only
+    // for points in it. Its two siblings below get that for free -- they test a
+    // segment or a circle against the square itself, which IS the containment
+    // test -- and this one has to say so. No caller violates it today, but one
+    // did: a neighbourhood scan that handed each cell around a point the point
+    // in the middle turned one shape-less blocking cell (a client's wire grid, a
+    // test's setTile) into a solid 3x3 of open ground.
+    if (base.x < 0.0 || base.y < 0.0 || base.x > kTileSize || base.y > kTileSize) return -1;
+    const Tile tile = atTile(tx, ty, realm);
+    if (!tileBlocks(tile)) return -1;
+    water = tileIsWater(tile);
+    return 0;
+}
+
+bool Terrain::cellTouchesSegment(int tx, int ty, Vec2 a, Vec2 b, double eps, Realm realm) const {
+    const Grid& g = grid(realm);
+    const ShapeGrid& store = shapeGrid(realm);
+    const Vec2 origin{tx * kTileSize, ty * kTileSize};
+    const Vec2 localA = a - origin;
+    const Vec2 localB = b - origin;
+    const double left = std::min(localA.x, localB.x) - eps;
+    const double right = std::max(localA.x, localB.x) + eps;
+    const double top = std::min(localA.y, localB.y) - eps;
+    const double bottom = std::max(localA.y, localB.y) + eps;
+    if (store.cols == g.cols && store.rows == g.rows && !store.firstRef.empty()) {
+        const std::size_t cell = static_cast<std::size_t>(index(g, tx, ty));
+        const std::uint32_t from = store.firstRef[cell];
+        const std::uint32_t to = store.firstRef[cell + 1];
+        for (std::uint32_t i = from; i < to; ++i) {
+            const ShapeGrid::Ref& ref = store.refs[i];
+            const CollisionShapeSet& set = store.sets[ref.set];
+            // Into the owning cell's coordinates; see ShapeGrid::Ref.
+            const Vec2 shift{ref.dx * kTileSize, ref.dy * kTileSize};
+            const Vec2 refA{localA.x - shift.x, localA.y - shift.y};
+            const Vec2 refB{localB.x - shift.x, localB.y - shift.y};
+            if (!rectOverlaps(set.bounds, left - shift.x, top - shift.y, right - shift.x,
+                              bottom - shift.y)) {
+                continue;
+            }
+            for (const CollisionShape& shape : set.shapes) {
+                if (!rectOverlaps(shape.bounds, left - shift.x, top - shift.y, right - shift.x,
+                                  bottom - shift.y)) {
+                    continue;
+                }
+                if (ringTouchesSegment(Ring{shape.points.data(), shape.points.size()}, refA, refB,
+                                       eps)) {
+                    return true;
+                }
+            }
+        }
+        if (from != to) return false;
+    }
+    if (!tileBlocks(atTile(tx, ty, realm))) return false;
+    const std::array<Vec2, 4> square = wholeCellRing();
+    return ringTouchesSegment(Ring{square.data(), square.size()}, localA, localB, eps);
+}
+
+bool Terrain::cellPushCircle(int tx, int ty, Vec2 p, double radius, Realm realm, Vec2& pushed,
+                             bool& flat) const {
+    const Grid& g = grid(realm);
+    const ShapeGrid& store = shapeGrid(realm);
+    const Vec2 origin{tx * kTileSize, ty * kTileSize};
+    const Vec2 local = p - origin;
+    const double reach = radius;
+    std::optional<RingPush> corner;
+    if (store.cols == g.cols && store.rows == g.rows && !store.firstRef.empty()) {
+        const std::size_t cell = static_cast<std::size_t>(index(g, tx, ty));
+        const std::uint32_t from = store.firstRef[cell];
+        const std::uint32_t to = store.firstRef[cell + 1];
+        for (std::uint32_t i = from; i < to; ++i) {
+            const ShapeGrid::Ref& ref = store.refs[i];
+            const CollisionShapeSet& set = store.sets[ref.set];
+            // Into the owning cell's coordinates, and back out again for the
+            // answer; see ShapeGrid::Ref.
+            const Vec2 shift{ref.dx * kTileSize, ref.dy * kTileSize};
+            const Vec2 refLocal{local.x - shift.x, local.y - shift.y};
+            if (!rectOverlaps(set.bounds, refLocal.x - reach, refLocal.y - reach,
+                              refLocal.x + reach, refLocal.y + reach)) {
+                continue;
+            }
+            for (const CollisionShape& shape : set.shapes) {
+                if (!rectOverlaps(shape.bounds, refLocal.x - reach, refLocal.y - reach,
+                                  refLocal.x + reach, refLocal.y + reach)) {
+                    continue;
+                }
+                const std::optional<RingPush> push =
+                    pushOutOfRing(Ring{shape.points.data(), shape.points.size()}, refLocal, radius);
+                if (!push) continue;
+                // A face hit ends the search; a corner hit is only taken if no
+                // face hit turns up. See findCollision.
+                if (push->flat) {
+                    pushed = push->position + origin + shift;
+                    flat = true;
+                    return true;
+                }
+                if (!corner) corner = RingPush{push->position + shift, push->flat};
+            }
+        }
+        if (from != to) {
+            if (!corner) return false;
+            pushed = corner->position + origin;
+            flat = false;
+            return true;
+        }
+    }
+    if (!tileBlocks(atTile(tx, ty, realm))) return false;
+    const std::array<Vec2, 4> square = wholeCellRing();
+    const std::optional<RingPush> push =
+        pushOutOfRing(Ring{square.data(), square.size()}, local, radius);
+    if (!push) return false;
+    pushed = push->position + origin;
+    flat = push->flat;
+    return true;
+}
+
+int Terrain::blockingLayerAt(Vec2 p, Realm realm, bool& water, bool outsideBlocks) const {
+    water = false;
+    const Grid& g = grid(realm);
+    const int tx = toTileCoord(p.x);
+    const int ty = toTileCoord(p.y);
+    if (tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) {
+        // Off the grid. Wall everywhere for gameplay -- which is what closes the
+        // world without a single caller bounds-checking -- and air for the
+        // sight test, whose reference simply has no grid entry out there.
+        return outsideBlocks ? 0 : -1;
+    }
+    // ONE cell. A shape that leaves its tile is filed in every cell it touches
+    // (ShapeGrid), so the cell a point is in is the only cell that can hold
+    // geometry containing it.
+    return cellLayerAt(tx, ty, p, realm, water);
+}
+
+std::optional<Terrain::ShapeCollision> Terrain::findCollision(Vec2 position, double radius,
+                                                              Realm realm) const {
+    const double reach = radius + kCollisionScanBuffer;
+    const int minX = std::max(0, toTileCoord(position.x - reach));
+    const int maxX = std::min(tileCols(realm) - 1, toTileCoord(position.x + reach));
+    const int minY = std::max(0, toTileCoord(position.y - reach));
+    const int maxY = std::min(tileRows(realm) - 1, toTileCoord(position.y + reach));
+    std::optional<ShapeCollision> corner;
+    for (int tileY = minY; tileY <= maxY; ++tileY) {
+        for (int tileX = minX; tileX <= maxX; ++tileX) {
+            Vec2 pushed;
+            bool flat = false;
+            if (!cellPushCircle(tileX, tileY, position, radius, realm, pushed, flat)) continue;
+            // Prefer a face hit over the seam between two cells of one wall, so
+            // a body sliding along it is pushed straight off the face.
+            if (flat) return ShapeCollision{pushed, true};
+            if (!corner) corner = ShapeCollision{pushed, false};
+        }
+    }
+    return corner;
+}
+
 bool Terrain::nearestOpenTile(Vec2 p, int& outTx, int& outTy, Realm realm) const {
     const int px = toTileCoord(p.x);
     const int py = toTileCoord(p.y);
@@ -894,17 +1472,18 @@ Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius, Realm
     position.y = clamp(position.y, -kTileSize, extent.y + kTileSize);
 
     // This is the same four-pass collision solver used by
-    // resolveEntityWallCollisions() in constants.ts, against each blocking
-    // tile's plain rectangle: the edge a wall or water tile is drawn with lies
-    // inside the tile, so the rectangle is where a body actually stops.
+    // resolveEntityWallCollisions() in constants.ts, now against the SHAPES the
+    // author drew on each blocking cell's tile rather than against the cell's
+    // square: a body stops where the art stops, which on a diagonal edge is
+    // most of a cell away from where the square would have stopped it.
     bool cleared = true;
     for (int pass = 0; pass < kResolvePasses; ++pass) {
-        const std::optional<TileCollision> hit = findTileCollision(*this, position, radius, realm);
+        const std::optional<ShapeCollision> hit = findCollision(position, radius, realm);
         if (!hit) {
             cleared = true;
             break;
         }
-        position = resolveTileCollision(position, radius, *hit);
+        position = hit->position;
         result.collided = true;
         cleared = false;
     }
@@ -913,7 +1492,7 @@ Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius, Realm
     // extra check -- reached only on deep multi-tile overlap, never on
     // ordinary wall contact -- is what decides whether the body actually came
     // out clear, and it is the only thing `unresolved` says.
-    if (!cleared) cleared = !findTileCollision(*this, position, radius, realm);
+    if (!cleared) cleared = !findCollision(position, radius, realm);
 
     result.position = position;
     result.unresolved = !cleared;
@@ -932,7 +1511,7 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
     if (!isWorldRealm(realm)) return position;
 
     // Spawners and admin teleports can place a centre deep inside several
-    // blocking tiles. TypeScript's per-movement caller refuses an unresolved
+    // blocking shapes. TypeScript's per-movement caller refuses an unresolved
     // four-pass result, but these non-movement callers need a usable point.
     // Fall back only when the exact solver is still embedded; ordinary contact
     // and sliding keep the TypeScript result above.
@@ -947,10 +1526,9 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
             position.y = clamp(position.y, open.top() + inset, open.bottom() - inset);
         }
         for (int pass = 0; pass < kResolvePasses; ++pass) {
-            const std::optional<TileCollision> hit =
-                findTileCollision(*this, position, radius, realm);
+            const std::optional<ShapeCollision> hit = findCollision(position, radius, realm);
             if (!hit) break;
-            position = resolveTileCollision(position, radius, *hit);
+            position = hit->position;
         }
     }
 
@@ -965,7 +1543,16 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
 bool Terrain::blocked(Vec2 p, Realm realm) const {
     if (realm == Realm::Maze) return activeMaze().blocksPoint(p);
     if (realm == Realm::Arena) return !insideArena(p);
-    return tileBlocks(at(p, realm));
+    bool water = false;
+    return blockingLayerAt(p, realm, water) >= 0;
+}
+
+bool Terrain::inWater(Vec2 p, Realm realm) const {
+    if (!isWorldRealm(realm)) return false;
+    bool water = false;
+    // The TOPMOST shape containing the point names the kind, so a bridge drawn
+    // over a pond is a bridge. Off the grid is wall, and wall is not water.
+    return blockingLayerAt(p, realm, water) >= 0 && water;
 }
 
 Vec2 Terrain::realmExtent(Realm realm) const {
@@ -1022,9 +1609,18 @@ bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
     if (realm == Realm::Maze) return activeMaze().blocksLine(a, b);
     if (realm == Realm::Arena) return false;   // open floor, edge to edge
 
+    // The DDA visits every cell the segment passes through and asks each for
+    // the shapes filed in it. A cell it does not visit cannot hold geometry the
+    // segment touches: a shape that leaves its tile is filed in every cell it
+    // reaches into (ShapeGrid), so "filed in" is not "painted in".
+    const auto crosses = [&](int cx, int cy) {
+        if (cx < 0 || cy < 0 || cx >= tileCols(realm) || cy >= tileRows(realm)) return true;
+        return cellTouchesSegment(cx, cy, a, b, 0.0, realm);
+    };
+
     int tx = toTileCoord(a.x);
     int ty = toTileCoord(a.y);
-    if (tileBlocks(atTile(tx, ty, realm))) return true;
+    if (crosses(tx, ty)) return true;
 
     const int endTx = toTileCoord(b.x);
     const int endTy = toTileCoord(b.y);
@@ -1061,7 +1657,7 @@ bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
             ty += stepY;
             tMaxY += tDeltaY;
         }
-        if (tileBlocks(atTile(tx, ty, realm))) return true;
+        if (crosses(tx, ty)) return true;
         if (tx == endTx && ty == endTy) return false;
     }
     // Longer than twice the map: nonsense input, and unseeable is the safe
@@ -1080,7 +1676,9 @@ bool Terrain::segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps, Realm realm
     if (!std::isfinite(eps) || eps < 0.0) eps = 0.0;
 
     // Clamped to the grid, as the reference clamps its scan: tiles outside it
-    // are air, so skipping them changes nothing and keeps the loop small.
+    // are air, so skipping them changes nothing and keeps the loop small. No
+    // widening for an overhanging shape -- it is filed in every cell it reaches
+    // into, so the box the segment covers is the box to ask.
     const int minTx = std::max(0, toTileCoord(std::min(a.x, b.x) - eps));
     const int maxTx = std::min(tileCols(realm) - 1, toTileCoord(std::max(a.x, b.x) + eps));
     const int minTy = std::max(0, toTileCoord(std::min(a.y, b.y) - eps));
@@ -1088,11 +1686,7 @@ bool Terrain::segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps, Realm realm
 
     for (int ty = minTy; ty <= maxTy; ++ty) {
         for (int tx = minTx; tx <= maxTx; ++tx) {
-            if (!tileBlocks(atTile(tx, ty, realm))) continue;
-            if (segmentTouchesRect(a, b, tx * kTileSize - eps, ty * kTileSize - eps,
-                                   (tx + 1) * kTileSize + eps, (ty + 1) * kTileSize + eps)) {
-                return true;
-            }
+            if (cellTouchesSegment(tx, ty, a, b, eps, realm)) return true;
         }
     }
     return false;
@@ -1114,12 +1708,13 @@ bool Terrain::hasLineOfSight(Vec2 a, Vec2 b, Realm realm, int sampleCount) const
     const int samples = std::max(1, sampleCount);
     for (int i = 0; i <= samples; ++i) {
         const double t = static_cast<double>(i) / samples;
-        const int tx = toTileCoord(a.x + dx * t);
-        const int ty = toTileCoord(a.y + dy * t);
+        const Vec2 sample{a.x + dx * t, a.y + dy * t};
         // Outside the grid is AIR, not wall -- the reference's grid has no
         // entry out there, so leaving the map does not by itself break sight.
-        if (tx < 0 || ty < 0 || tx >= tileCols(realm) || ty >= tileRows(realm)) continue;
-        if (tileBlocks(atTile(tx, ty, realm))) return false;
+        // Each sample is a POINT against the shapes: a sample inside the notch
+        // of a concave edge sees through it, which is what the art shows.
+        bool water = false;
+        if (blockingLayerAt(sample, realm, water, /*outsideBlocks=*/false) >= 0) return false;
     }
     return true;
 }

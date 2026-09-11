@@ -363,10 +363,11 @@ Vec2 GameServer::pickBotSpawn() {
 
 Vec2 GameServer::pickBotSpawn(const std::vector<MobDisc>& blockers) {
     // EVERY area a real player can actually appear in, and nothing else: one
-    // of the overworld's player spawn rectangles, or a `common` mob band. That
-    // is exactly what the join handler allows, and it is why a bot never turns
-    // up deep in mythic ground where it is under attack from the moment it
-    // appears.
+    // of the overworld's player spawn rectangles, or a BEGINNER band -- one
+    // whose difficulty stays below the first tier a fresh flower cannot fight.
+    // That is exactly what the join handler allows, and it is why a bot never
+    // turns up deep in high-difficulty ground where it is under attack from the
+    // moment it appears.
     //
     // Sampled uniformly over the whole set, which is what spreads the
     // population over the map instead of stacking it in the beginner's corner
@@ -381,8 +382,8 @@ Vec2 GameServer::pickBotSpawn(const std::vector<MobDisc>& blockers) {
         for (const MapElement* point : map->playerSpawns()) anchors.push_back(point);
         for (const MapElement& element : map->elements()) {
             if (element.bounds.w <= 0 || element.bounds.h <= 0) continue;
-            if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
-            if (element.spawnTier != Rarity::Common) continue;
+            if (!element.isSpawnBand()) continue;
+            if (element.difficulty >= kDangerousGroundDifficulty) continue;
             anchors.push_back(&element);
         }
     }
@@ -1808,44 +1809,39 @@ bool GameServer::botHasHighRarityMobNearby(const Bot& bot, double range) {
 
 bool GameServer::botPickFarmZone(const Bot& bot, int rarityIndexValue, int rotation,
                                  Vec2& out) const {
-    // The zone type that produces the tier this bot should be fighting: the
-    // bot already prefers a mob one tier above its gear, and a spawn zone
-    // spawns mobs of its declared tier.
-    const auto zoneTierFor = [](int index) {
-        if (index >= rarityIndex(Rarity::Ultra)) return Rarity::Mythic;   // ultra+ hunt mythic ground
-        if (index == rarityIndex(Rarity::Mythic)) return Rarity::Mythic;  // mythic stays on mythic
-        if (index == rarityIndex(Rarity::Legendary)) return Rarity::Mythic;
-        if (index == rarityIndex(Rarity::Epic)) return Rarity::Legendary;
-        if (index == rarityIndex(Rarity::Rare)) return Rarity::Epic;
-        if (index == rarityIndex(Rarity::Uncommon)) return Rarity::Rare;
-        return Rarity::Uncommon;
-    };
-
-    // Preferred type first, then down toward common, then up toward mythic.
-    // Stops at the first type the map actually declares any zones for, so a
-    // map without rare zones still routes an uncommon-tier bot somewhere
-    // sensible.
-    std::vector<Rarity> candidates;
-    const auto push = [&](Rarity tier) {
-        if (std::find(candidates.begin(), candidates.end(), tier) == candidates.end()) {
-            candidates.push_back(tier);
-        }
-    };
-    push(zoneTierFor(rarityIndexValue));
-    for (int i = rarityIndexValue; i >= 0; --i) push(zoneTierFor(i));
-    for (int i = rarityIndexValue + 1; i <= rarityIndex(Rarity::Ultra); ++i) push(zoneTierFor(i));
+    // The tier this bot should be FIGHTING: one above its own gear, capped at
+    // the top of the wild ladder. A band spawns at the tier its difficulty
+    // says, so the bot wants the band whose tier value is nearest that.
+    const double wanted =
+        std::min(static_cast<double>(rarityIndex(Rarity::Ultra)),
+                 static_cast<double>(rarityIndexValue) + 1.0);
 
     const MapData* map = worldMaps_.forRealm(Realm::Overworld);
     if (map == nullptr) return false;
+    // The bands whose difficulty comes CLOSEST to what this bot wants, rather
+    // than a ladder of exact tiers to try in order: difficulty is continuous,
+    // so "the rare band" is not a thing a map necessarily has, and the nearest
+    // ground is always a sensible answer. Everything within half a tier of the
+    // best match is kept, so several bands of the same danger stay in the pool
+    // for the rotation below to spread bots over.
     std::vector<Vec2> zones;
-    for (const Rarity tier : candidates) {
-        for (const MapElement& element : map->elements()) {
-            if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
-            if (element.spawnTier != tier) continue;
-            if (element.bounds.w <= 0 || element.bounds.h <= 0) continue;
-            zones.push_back(element.centre());
+    double best = 0.0;
+    bool haveBest = false;
+    for (const MapElement& element : map->elements()) {
+        if (!element.isSpawnBand()) continue;
+        if (element.bounds.w <= 0 || element.bounds.h <= 0) continue;
+        const double miss = std::abs(tierValueForDifficulty(element.difficulty) - wanted);
+        if (!haveBest || miss < best) {
+            best = miss;
+            haveBest = true;
         }
-        if (!zones.empty()) break;
+    }
+    if (!haveBest) return false;
+    for (const MapElement& element : map->elements()) {
+        if (!element.isSpawnBand()) continue;
+        if (element.bounds.w <= 0 || element.bounds.h <= 0) continue;
+        if (std::abs(tierValueForDifficulty(element.difficulty) - wanted) > best + 0.5) continue;
+        zones.push_back(element.centre());
     }
     if (zones.empty()) return false;
 

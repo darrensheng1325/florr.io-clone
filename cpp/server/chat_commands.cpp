@@ -703,7 +703,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             help += "/cmd &lt;command&gt; - Execute server command (alternative)<br/>";
             help += "Available server commands: save, list-players, list-sockets, "
                     "set_max_enemies, set_bot_count &lt;0-" + std::to_string(kMaxBots) +
-                    "|default&gt;, spawn_special_mobs, spawn &lt;mobType&gt; &lt;rarity&gt; "
+                    "|default&gt;, spawn &lt;mobType&gt; &lt;rarity&gt; "
                     "[x] [y] [amount] [stack|unstack], killall (kill all wild mobs), teleport "
                     "&lt;playerId/username&gt; &lt;x&gt; &lt;y&gt;, teleport_all &lt;x&gt; "
                     "&lt;y&gt; (move every player and bot), teleport_bots &lt;x&gt; &lt;y&gt; "
@@ -1082,12 +1082,6 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         // wrong by the time the line is read.
         reply += " (was " + plural(static_cast<int>(bots_.size()), "bot", "bots") + ").";
         out(reply);
-        return;
-    }
-
-    if (verb == "spawn_special_mobs") {
-        spawning_->requestSpecialPass();
-        out("Special mobs spawned");
         return;
     }
 

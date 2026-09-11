@@ -199,7 +199,8 @@ void ModeSpawner::runMaze(World& world, const Terrain& terrain, const ContentReg
             if (nearMob(world, grid, Realm::Maze, at, commonRadius, kMazeSpawnMobGap)) continue;
 
             // Depth zone -> tier, with a little jitter either way. Never above
-            // mythic: ultras are the boss pass's alone.
+            // mythic: the maze's own ladder stops there, and its one ultra is
+            // the boss room's (see below), not something a depth zone rolls.
             const int zone = maze.zoneOfCell(gx, gy);
             if (zone < 0) continue;
             int tierIndex = zone;

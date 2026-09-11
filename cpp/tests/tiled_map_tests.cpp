@@ -24,10 +24,12 @@ using namespace flix;
 // a gid) is exactly the rule that breaks silently. The shipped map gets one
 // test of its own at the bottom, which is about the map, not about the reader.
 //
-// The rule every collision test here is about: a cell is BLOCKED when any
-// layer whose `has_collision` property is set has a tile there, and it is
-// Water rather than Wall when the topmost such tile is tagged `water` in the
-// tileset. No tile decides whether anything blocks.
+// The rule every collision test here is about: a cell COLLIDES where the SHAPES
+// of its tile are, for each layer whose `has_collision` property is set; the
+// coarse Tile grid says only whether a cell holds any such shape, and it is
+// Water rather than Wall when the topmost contributing tile is tagged `water` in
+// the tileset. A layer decides which cells can collide; a tile decides where
+// inside them, and a tile with no shapes decides nowhere.
 
 namespace {
 
@@ -48,13 +50,26 @@ std::string write(const std::string& name, const std::string& text) {
     return path;
 }
 
+/// One tile's `objectgroup`, as Tiled's Tile Collision Editor writes one: a
+/// single rectangle filling the whole tile.
+///
+/// Every structural tile in the fixture carries one, because a tile with NO
+/// shape contributes no collision at all -- which is a rule of its own, and
+/// `grass` below is the tile that exercises it.
+constexpr const char* kFullTileShape = R"(, "objectgroup": {
+   "draworder": "index", "id": 2, "name": "", "opacity": 1, "type": "objectgroup",
+   "visible": true, "x": 0, "y": 0,
+   "objects": [ { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+                  "x": 0, "y": 0, "width": 300, "height": 300 } ] })";
+
 /// The tileset the fixture maps below paint from. Tagged exactly the way
 /// maps/tileset.tsj tags its own: a `water` boolean, a `covers_everything`
-/// boolean, and nothing else. Nothing here says whether a tile blocks,
-/// because no tile does.
+/// boolean, and per-tile collision shapes. Nothing here says whether a tile
+/// blocks, because no tile does -- only where it blocks if its layer collides.
 ///
-/// gid = local id + 1, so: 1 grass, 2 castle, 3 water, 4 bridge, 5 dirt.
-constexpr const char* kTileset = R"({
+/// gid = local id + 1, so: 1 grass, 2 castle, 3 water, 4 bridge, 5 dirt. `grass`
+/// is the one tile with NO collision shape.
+const std::string kTileset = std::string(R"({
  "columns": 0, "name": "fixture", "tilecount": 5, "tiledversion": "1.10.1",
  "tilewidth": 300, "tileheight": 300, "tilerendersize": "grid",
  "type": "tileset", "version": "1.10",
@@ -62,14 +77,140 @@ constexpr const char* kTileset = R"({
   { "id": 0, "image": "tiles/grass.svg",
     "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ] },
   { "id": 1, "image": "tiles/castle.svg",
-    "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ] },
+    "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ])") +
+    kFullTileShape + R"( },
   { "id": 2, "image": "tiles/water.svg",
-    "properties": [ { "name": "water", "type": "bool", "value": true } ] },
-  { "id": 3, "image": "tiles/bridge.svg" },
+    "properties": [ { "name": "water", "type": "bool", "value": true } ])" + kFullTileShape +
+    R"( },
+  { "id": 3, "image": "tiles/bridge.svg")" + kFullTileShape + R"( },
   { "id": 4, "image": "tiles/dirt.svg",
-    "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ] }
+    "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ])" +
+    kFullTileShape + R"( }
  ]
 })";
+
+/// A SECOND tileset, drawn at 256 like maps/tileset.tsj, whose tiles carry one
+/// of each shape kind Tiled can write.
+///
+/// 256 rather than 300 is the whole point of it: every shape here has to come
+/// out scaled by 300/256 on both axes, and a fixture at the map's own tile size
+/// could not tell a correct scale from no scale at all.
+///
+/// gid = local id + 1: 1 whole (a rectangle over the entire 256 tile), 2 half
+/// (its left half), 3 turned (a rectangle the author rotated 90 degrees about
+/// its own corner), 4 corner (a triangle), 5 round (an ellipse), 6 open (a
+/// POLYLINE, which is not an area and must be skipped), 7 bare (no shapes).
+constexpr const char* kSmallTileset = R"({
+ "columns": 0, "name": "small", "tilecount": 8, "tiledversion": "1.10.1",
+ "tilewidth": 256, "tileheight": 256, "tilerendersize": "grid",
+ "type": "tileset", "version": "1.10",
+ "tiles": [
+  { "id": 0, "image": "tiles/whole.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 256, "height": 256 } ] } },
+  { "id": 1, "image": "tiles/half.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 128, "height": 256 } ] } },
+  { "id": 2, "image": "tiles/turned.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 90, "visible": true,
+        "x": 0, "y": 0, "width": 256, "height": 128 } ] } },
+  { "id": 3, "image": "tiles/corner.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 0, "height": 0,
+        "polygon": [ { "x": 0, "y": 0 }, { "x": 256, "y": 256 }, { "x": 0, "y": 256 } ] } ] } },
+  { "id": 4, "image": "tiles/round.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true, "ellipse": true,
+        "x": 0, "y": 0, "width": 256, "height": 256 } ] } },
+  { "id": 5, "image": "tiles/open.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 0, "height": 0,
+        "polyline": [ { "x": 0, "y": 0 }, { "x": 256, "y": 256 } ] } ] } },
+  { "id": 6, "image": "tiles/bare.svg", "imagewidth": 256, "imageheight": 256 },
+  { "id": 7, "image": "tiles/tilted.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 90, "visible": true, "ellipse": true,
+        "x": 0, "y": 0, "width": 256, "height": 128 } ] } }
+ ]
+})";
+
+/// A tileset Tiled writes AFTER somebody drops one larger image into an image
+/// collection: the tileset-level tilewidth/tileheight jump to the biggest image
+/// (512 here) while every existing tile keeps its own 256-square image and the
+/// collision shapes drawn in it. Reading the shape in the TILESET's space would
+/// silently halve every authored shape in the game.
+constexpr const char* kMixedSizeTileset = R"({
+ "columns": 0, "name": "mixed", "tilecount": 2, "tiledversion": "1.10.1",
+ "tilewidth": 512, "tileheight": 512, "tilerendersize": "grid",
+ "type": "tileset", "version": "1.10",
+ "tiles": [
+  { "id": 0, "image": "tiles/whole.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 256, "height": 256 } ] } },
+  { "id": 1, "image": "tiles/big.svg", "imagewidth": 512, "imageheight": 512,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 512, "height": 512 } ] } }
+ ]
+})";
+
+/// A SPRITESHEET tileset: one image for the lot, so a tile has no image of its
+/// own and the tileset's tile size is the only space there is to read a shape
+/// in.
+constexpr const char* kSheetTileset = R"({
+ "columns": 2, "name": "sheet", "tilecount": 2, "tiledversion": "1.10.1",
+ "tilewidth": 256, "tileheight": 256, "tilerendersize": "grid",
+ "image": "tiles/sheet.svg", "imagewidth": 512, "imageheight": 256,
+ "type": "tileset", "version": "1.10",
+ "tiles": [
+  { "id": 0,
+    "objectgroup": { "type": "objectgroup", "draworder": "index", "id": 2, "name": "",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 256, "height": 256 } ] } }
+ ]
+})";
+
+/// The box a shape spans, for an assertion about where it landed.
+Rect boundsOf(const TiledShape& shape) {
+    double minX = shape.points.empty() ? 0.0 : shape.points[0].x;
+    double minY = shape.points.empty() ? 0.0 : shape.points[0].y;
+    double maxX = minX;
+    double maxY = minY;
+    for (const Vec2& point : shape.points) {
+        minX = std::min(minX, point.x);
+        maxX = std::max(maxX, point.x);
+        minY = std::min(minY, point.y);
+        maxY = std::max(maxY, point.y);
+    }
+    return {minX, minY, maxX - minX, maxY - minY};
+}
+
+/// Doubled signed area of a ring, for the winding assertion.
+double ringArea(const TiledShape& shape) {
+    double total = 0.0;
+    for (std::size_t i = 0; i < shape.points.size(); ++i) {
+        const Vec2& a = shape.points[i];
+        const Vec2& b = shape.points[(i + 1) % shape.points.size()];
+        total += a.x * b.y - b.x * a.y;
+    }
+    return total;
+}
 
 /// A tile layer, as Tiled writes one: `cells` is already a comma-separated
 /// list of gids, flip bits and all.
@@ -276,7 +417,7 @@ TEST(an_empty_cell_on_a_colliding_layer_is_still_ground) {
     CHECK_EQ(int(cellAt(map, 0, 1, 0).art), -1);
 }
 
-TEST(flip_bits_are_stripped_for_collision_and_kept_for_the_art) {
+TEST(flip_bits_reach_the_art_and_turn_the_collision_shapes) {
     std::string error;
     write("fixture.tsj", kTileset);
     TiledMap map;
@@ -289,8 +430,8 @@ TEST(flip_bits_are_stripped_for_collision_and_kept_for_the_art) {
     CHECK((rotated.flags & kTileFlipHorizontal) != 0);
     CHECK((rotated.flags & kTileFlipVertical) != 0);
     CHECK((rotated.flags & kTileFlipDiagonal) != 0);
-    // ...and they have to be masked off before the gid is resolved, or the
-    // tile would not resolve at all and the cell would not block.
+    // ...they have to be masked off before the GID is resolved, or the tile
+    // would not resolve at all and the cell would not block...
     CHECK(tileAt(map, 2, 2) == Tile::Wall);
     // An unflipped cell of the same tile carries no bits.
     CHECK_EQ(int(cellAt(map, 2, 0, 0).flags & (kTileFlipHorizontal | kTileFlipVertical |
@@ -561,4 +702,333 @@ TEST(the_shipped_map_loads) {
     // Both defaults fall out of the map id when the file says nothing.
     CHECK(data.biome() == "garden");
     CHECK(data.defaultMobGroup() == "garden");
+}
+
+// ---------------------------------------------------------------------------
+// The per-tile collision shapes
+// ---------------------------------------------------------------------------
+
+TEST(a_tile_with_no_collision_shape_blocks_nothing_even_on_a_colliding_layer) {
+    // Tiled's own semantic, and the one the whole rewrite turns on: a colliding
+    // layer contributes the SHAPES of what it paints, so a tile nobody drew a
+    // shape on contributes nothing wherever it is painted. That is how an
+    // author paints a walkable footpath onto the dirt layer -- and also how a
+    // map looks solid in the editor and is walkable in the game, so the cells it
+    // happens in are counted and the tiles named.
+    std::string error;
+    write("fixture.tsj", kTileset);
+    TiledMap map;
+    // `grass` is the fixture's one unshaped tile, painted here on a layer that
+    // very much does collide.
+    CHECK(map.load(write("unshaped.tmj", mapOf(2, 2, layer("walls", 2, 2, "1,1,2,1", "true"))),
+                   error));
+    CHECK_EQ(map.wallCells(), 1);            // only the castle, which has a shape
+    CHECK_EQ(map.groundCells(), 3);
+    CHECK(tileAt(map, 0, 0) == Tile::Ground);
+    CHECK(tileAt(map, 0, 1) == Tile::Wall);
+    CHECK_EQ(map.unshapedBlockingCells(), 3);
+    const std::vector<std::string> named = map.unshapedBlockingTiles();
+    CHECK(named.size() == 1);
+    if (!named.empty()) CHECK(named[0] == "grass.svg");
+    // The art is still painted; it is collision the tile has nothing to say
+    // about.
+    CHECK_EQ(int(cellAt(map, 0, 0, 0).art), 0);
+
+    // And a map whose colliding layers only ever paint shaped tiles reports
+    // nothing, which is the state a finished map is in.
+    TiledMap clean;
+    CHECK(clean.load(write("three_layers.tmj", threeLayerMap()), error));
+    CHECK_EQ(clean.unshapedBlockingCells(), 0);
+    CHECK(clean.unshapedBlockingTiles().empty());
+    CHECK_EQ(clean.shapedBlockingCells(), clean.wallCells() + clean.waterCells());
+
+    // And it counts CELLS, not (cell, layer) pairs. The shipped map has three
+    // colliding layers, so an author who brushed one shapeless tile across the
+    // same ten cells of two of them used to be told twenty cells of their map
+    // were walkable when ten were -- a number that cannot be compared with the
+    // map's size, which is the only thing the warning is for.
+    TiledMap twice;
+    const std::string both =
+        layer("walls", 2, 2, "1,1,1,1", "true") + ",\n" + layer("more", 2, 2, "1,1,1,1", "true");
+    CHECK(twice.load(write("unshaped_twice.tmj", mapOf(2, 2, both)), error));
+    CHECK_EQ(twice.unshapedBlockingCells(), 4);
+    CHECK_EQ(twice.groundCells(), 4);
+}
+
+TEST(a_tiles_shapes_are_scaled_from_the_tilesets_tile_size_onto_the_cell) {
+    // The tileset draws at 256 and the map's cells are 300, so every shape is
+    // stretched by 300/256 per axis. Neither number is written down in the
+    // engine: both come out of the files, and this is the fixture that would
+    // catch a hardcoded one.
+    std::string error;
+    write("small.tsj", kSmallTileset);
+    TiledMap map;
+    CHECK(map.load(write("scaled.tmj",
+                         mapOf(2, 1, layer("walls", 2, 1, "1,2", "true"),
+                               R"([ { "firstgid": 1, "source": "small.tsj" } ])")),
+                   error));
+    CHECK(error.empty());
+
+    // A rectangle over the WHOLE 256 tile covers the whole 300 cell, corner to
+    // corner -- not 256 units of it with a walkable strip left over.
+    const std::vector<TiledShape>& whole = map.palette()[0].shapes;
+    CHECK(whole.size() == 1);
+    if (whole.size() == 1) {
+        const Rect box = boundsOf(whole[0]);
+        CHECK_NEAR(box.left(), 0.0, 1e-9);
+        CHECK_NEAR(box.top(), 0.0, 1e-9);
+        CHECK_NEAR(box.right(), kTileSize, 1e-9);
+        CHECK_NEAR(box.bottom(), kTileSize, 1e-9);
+        CHECK(whole[0].points.size() == 4);
+        // Wound positive, so an edge's (dy, -dx) points out of the shape.
+        CHECK(ringArea(whole[0]) > 0.0);
+    }
+
+    // Half the tile is half the cell, on the axis it was drawn on.
+    const std::vector<TiledShape>& half = map.palette()[1].shapes;
+    CHECK(half.size() == 1);
+    if (half.size() == 1) {
+        const Rect box = boundsOf(half[0]);
+        CHECK_NEAR(box.right(), kTileSize * 0.5, 1e-9);
+        CHECK_NEAR(box.bottom(), kTileSize, 1e-9);
+    }
+}
+
+TEST(every_shape_kind_tiled_can_write_arrives_except_the_open_one) {
+    std::string error;
+    write("small.tsj", kSmallTileset);
+    TiledMap map;
+    CHECK(map.load(write("kinds.tmj",
+                         mapOf(2, 1, layer("walls", 2, 1, "1,4", "true"),
+                               R"([ { "firstgid": 1, "source": "small.tsj" } ])")),
+                   error));
+
+    // A rotated rectangle turns about its own top-left corner, which is where
+    // Tiled anchors an object's transform. Rotated 90 degrees, a 256x128
+    // rectangle at the origin sweeps into x in [-128, 0] -- outside its tile,
+    // which is legal: a shape is filed in every cell it reaches (shapeReach),
+    // so it collides there and the coarse grid says so too.
+    const std::vector<TiledShape>& turned = map.palette()[2].shapes;
+    CHECK(turned.size() == 1);
+    if (turned.size() == 1) {
+        const Rect box = boundsOf(turned[0]);
+        CHECK_NEAR(box.left(), -kTileSize * 0.5, 1e-6);
+        CHECK_NEAR(box.right(), 0.0, 1e-6);
+        CHECK_NEAR(box.top(), 0.0, 1e-6);
+        CHECK_NEAR(box.bottom(), kTileSize, 1e-6);
+    }
+
+    // A polygon arrives as itself, its points made absolute and scaled.
+    const std::vector<TiledShape>& corner = map.palette()[3].shapes;
+    CHECK(corner.size() == 1);
+    if (corner.size() == 1) {
+        CHECK(corner[0].points.size() == 3);
+        CHECK(ringArea(corner[0]) > 0.0);
+        const Rect box = boundsOf(corner[0]);
+        CHECK_NEAR(box.right(), kTileSize, 1e-9);
+        CHECK_NEAR(box.bottom(), kTileSize, 1e-9);
+    }
+
+    // An ellipse is polygonised: enough points that the ring never falls far
+    // inside the curve, and a box that is still the ellipse's own.
+    const std::vector<TiledShape>& round = map.palette()[4].shapes;
+    CHECK(round.size() == 1);
+    if (round.size() == 1) {
+        CHECK(round[0].points.size() >= 8);
+        CHECK(ringArea(round[0]) > 0.0);
+        const Rect box = boundsOf(round[0]);
+        CHECK_NEAR(box.left(), 0.0, 1.0);
+        CHECK_NEAR(box.right(), kTileSize, 1.0);
+    }
+
+    // A ROTATED ellipse turns exactly as a rotated rectangle does, about the
+    // top-left of its bounding box: a 256x128 ellipse lying along x, turned 90
+    // degrees, stands along y and leaves its tile to the left. It used to come
+    // out unturned -- collision lying along x where the art stands along y,
+    // with no warning -- because the ellipse branch was the one kind that never
+    // read `rotation`.
+    const std::vector<TiledShape>& tilted = map.palette()[7].shapes;
+    CHECK(tilted.size() == 1);
+    if (tilted.size() == 1) {
+        const Rect box = boundsOf(tilted[0]);
+        CHECK_NEAR(box.left(), -kTileSize * 0.5, 1.0);
+        CHECK_NEAR(box.right(), 0.0, 1.0);
+        CHECK_NEAR(box.top(), 0.0, 1.0);
+        CHECK_NEAR(box.bottom(), kTileSize, 1.0);
+        // And it is genuinely the turned ellipse, not the turned box: an
+        // ellipse fills pi/4 of its bounding rectangle. (ringArea is the
+        // DOUBLED signed area, as the winding check above uses it.)
+        CHECK_NEAR(0.5 * ringArea(tilted[0]) / (box.w * box.h), kPi * 0.25, 0.01);
+    }
+
+    // A POLYLINE is an open path. There is no inside to it, so it is skipped
+    // with a warning rather than closed on the author's behalf.
+    CHECK(map.palette()[5].shapes.empty());
+    // And a tile the author never drew on has none, which is not an error.
+    CHECK(map.palette()[6].shapes.empty());
+}
+
+TEST(a_shape_is_read_in_its_own_tiles_image_not_the_tilesets_display_grid) {
+    // maps/tileset.tsj is an IMAGE COLLECTION ("columns": 0), and for one of
+    // those Tiled's tileset-level tilewidth/tileheight is only the display
+    // grid: it is the largest image in the collection, and Tiled rewrites it
+    // the moment a bigger tile is dropped in. The Tile Collision Editor draws
+    // in the tile's own image regardless.
+    //
+    // So this tileset -- a 256 tile and a 512 tile, tileset size 512, which is
+    // exactly what Tiled writes after that drop -- must put BOTH tiles' whole
+    // shapes over the whole cell. Reading the tileset's number first halved
+    // every authored shape in the game and changed not one line of the load
+    // report.
+    std::string error;
+    write("mixed.tsj", kMixedSizeTileset);
+    TiledMap map;
+    CHECK(map.load(write("mixed.tmj",
+                         mapOf(2, 1, layer("walls", 2, 1, "1,2", "true"),
+                               R"([ { "firstgid": 1, "source": "mixed.tsj" } ])")),
+                   error));
+    for (int tile = 0; tile < 2; ++tile) {
+        const std::vector<TiledShape>& shapes = map.palette()[static_cast<std::size_t>(tile)].shapes;
+        CHECK(shapes.size() == 1);
+        if (shapes.size() != 1) continue;
+        const Rect box = boundsOf(shapes[0]);
+        CHECK_NEAR(box.left(), 0.0, 1e-9);
+        CHECK_NEAR(box.top(), 0.0, 1e-9);
+        CHECK_NEAR(box.right(), kTileSize, 1e-9);
+        CHECK_NEAR(box.bottom(), kTileSize, 1e-9);
+    }
+
+    // And a SPRITESHEET tileset still works, which is the case the tileset's
+    // own tile size is the fallback for: its tiles have no image of their own.
+    write("sheet.tsj", kSheetTileset);
+    TiledMap sheet;
+    CHECK(sheet.load(write("sheet.tmj",
+                           mapOf(1, 1, layer("walls", 1, 1, "1", "true"),
+                                 R"([ { "firstgid": 1, "source": "sheet.tsj" } ])")),
+                     error));
+    const std::vector<TiledShape>& only = sheet.palette()[0].shapes;
+    CHECK(only.size() == 1);
+    if (only.size() == 1) {
+        const Rect box = boundsOf(only[0]);
+        CHECK_NEAR(box.right(), kTileSize, 1e-9);
+        CHECK_NEAR(box.bottom(), kTileSize, 1e-9);
+    }
+}
+
+TEST(all_eight_orientations_put_a_shape_where_the_art_is) {
+    // The flip bits turn a cell's collision by the SAME matrix they turn its
+    // art by (orientInTile), so the wall is where the picture is. Checked
+    // against Tiled's own definition of the composition -- anti-diagonal first,
+    // then horizontal, then vertical -- worked out here by hand rather than read
+    // back out of the function under test.
+    const double side = kTileSize;
+    struct Case { std::uint8_t flags; Vec2 in; Vec2 out; const char* what; };
+    const Vec2 topLeft{10.0, 20.0};
+    const Case cases[] = {
+        {0, topLeft, {10.0, 20.0}, "as drawn"},
+        {kTileFlipHorizontal, topLeft, {side - 10.0, 20.0}, "mirrored"},
+        {kTileFlipVertical, topLeft, {10.0, side - 20.0}, "flipped"},
+        {static_cast<std::uint8_t>(kTileFlipHorizontal | kTileFlipVertical), topLeft,
+         {side - 10.0, side - 20.0}, "half turn"},
+        {kTileFlipDiagonal, topLeft, {20.0, 10.0}, "transposed"},
+        {static_cast<std::uint8_t>(kTileFlipDiagonal | kTileFlipHorizontal), topLeft,
+         {side - 20.0, 10.0}, "quarter turn clockwise"},
+        {static_cast<std::uint8_t>(kTileFlipDiagonal | kTileFlipVertical), topLeft,
+         {20.0, side - 10.0}, "quarter turn anticlockwise"},
+        {static_cast<std::uint8_t>(kTileFlipDiagonal | kTileFlipHorizontal | kTileFlipVertical),
+         topLeft, {side - 20.0, side - 10.0}, "anti-transposed"},
+    };
+    for (const Case& c : cases) {
+        const Vec2 got = orientInTile(c.in, c.flags, side);
+        if (std::abs(got.x - c.out.x) > 1e-9 || std::abs(got.y - c.out.y) > 1e-9) {
+            std::printf("  %s (flags %d): (%.1f,%.1f) -> (%.1f,%.1f), expected (%.1f,%.1f)\n",
+                        c.what, int(c.flags), c.in.x, c.in.y, got.x, got.y, c.out.x, c.out.y);
+        }
+        CHECK_NEAR(got.x, c.out.x, 1e-9);
+        CHECK_NEAR(got.y, c.out.y, 1e-9);
+    }
+    // None of the eight is the same map as any other, which is what makes one
+    // Wang tile serve four rotations and is the property a transposed row would
+    // quietly break.
+    for (std::size_t i = 0; i < 8; ++i) {
+        for (std::size_t j = i + 1; j < 8; ++j) {
+            const Vec2 a = orientInTile({7.0, 13.0}, static_cast<std::uint8_t>(i), side);
+            const Vec2 b = orientInTile({7.0, 13.0}, static_cast<std::uint8_t>(j), side);
+            CHECK(std::abs(a.x - b.x) > 1e-9 || std::abs(a.y - b.y) > 1e-9);
+        }
+    }
+
+    // And a whole shape goes through the same transform, coming out wound
+    // positive again even where the flip mirrored it.
+    std::string error;
+    write("small.tsj", kSmallTileset);
+    TiledMap map;
+    CHECK(map.load(write("turns.tmj",
+                         mapOf(1, 1, layer("walls", 1, 1, "2", "true"),
+                               R"([ { "firstgid": 1, "source": "small.tsj" } ])")),
+                   error));
+    const std::vector<TiledShape>& half = map.palette()[1].shapes;   // the LEFT half
+    CHECK(half.size() == 1);
+    if (half.size() != 1) return;
+    for (std::uint8_t flags = 0; flags < 8; ++flags) {
+        const std::vector<TiledShape> turned = orientTileShapes(half, flags);
+        CHECK(turned.size() == 1);
+        if (turned.size() != 1) continue;
+        CHECK(ringArea(turned[0]) > 0.0);
+        const Rect box = boundsOf(turned[0]);
+        // The left half becomes the left, right, top or bottom half, and
+        // nothing else: a half tile has no eight distinct images, only four.
+        const bool vertical = std::abs(box.right() - box.left() - kTileSize * 0.5) < 1e-9;
+        if (vertical) {
+            CHECK_NEAR(box.bottom() - box.top(), kTileSize, 1e-9);
+        } else {
+            CHECK_NEAR(box.right() - box.left(), kTileSize, 1e-9);
+            CHECK_NEAR(box.bottom() - box.top(), kTileSize * 0.5, 1e-9);
+        }
+    }
+}
+
+TEST(the_shipped_map_collides_with_authored_shapes_everywhere) {
+    // About maps/garden.tmj rather than about the reader: every cell the author
+    // painted on a colliding layer uses a tile they drew a shape on. A cell that
+    // did not would be a hole in a castle wall nobody could see in the editor,
+    // so it is worth one assertion on the shipped file.
+    TiledMap map;
+    std::string error;
+    if (!map.load(shippedMapPath(), error)) {
+        std::printf("  %s\n", error.c_str());
+        CHECK(false);
+        return;
+    }
+    if (map.unshapedBlockingCells() != 0) {
+        std::string names;
+        for (const std::string& name : map.unshapedBlockingTiles()) names += " " + name;
+        std::printf("  garden.tmj: %d cells on a colliding layer have no collision shape (%s)\n",
+                    map.unshapedBlockingCells(), names.c_str());
+    }
+    CHECK_EQ(map.unshapedBlockingCells(), 0);
+    CHECK(map.unshapedBlockingTiles().empty());
+    // Every shaped cell is a non-Ground cell and the other way about, which is
+    // what makes the coarse grid a faithful summary of the shapes.
+    CHECK_EQ(map.shapedBlockingCells(), map.wallCells() + map.waterCells());
+    CHECK(map.shapedBlockingCells() > 1000);
+
+    // The structural tiles are shaped and the scenery is not -- and the shapes
+    // are NOT their whole tile, which is the entire point of authoring them: a
+    // castle edge blocks part of its cell.
+    int shaped = 0;
+    bool sawPartialTile = false;
+    for (const TiledTileType& tile : map.palette()) {
+        if (tile.shapes.empty()) continue;
+        ++shaped;
+        for (const TiledShape& shape : tile.shapes) {
+            CHECK(shape.points.size() >= 3);
+            const Rect box = boundsOf(shape);
+            CHECK(box.w > 0.0);
+            CHECK(box.h > 0.0);
+            if (box.w < kTileSize - 1.0 || box.h < kTileSize - 1.0) sawPartialTile = true;
+        }
+    }
+    CHECK(shaped > 20);
+    CHECK(sawPartialTile);
 }

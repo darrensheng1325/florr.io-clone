@@ -21,6 +21,9 @@
 #include "client/world_view.h"
 #include "shared/core/types.h"
 #include "shared/game/constants.h"
+// TileOrientation and tileOrientation(): the map format owns that transform
+// now, because the collision shapes are turned by the same one.
+#include "shared/game/tiled_map.h"
 
 namespace flix {
 
@@ -29,29 +32,6 @@ class MapData;
 class Terrain;
 class WorldMaps;
 struct MobConfig;
-
-/// One map cell's artwork orientation: the rotation to apply about the cell's
-/// centre, and whether the result is then mirrored across its own vertical
-/// axis. A canvas composes translate * rotate * scale, so this pair IS the
-/// matrix R(radians) * diag(mirror ? -1 : 1, 1).
-struct TileOrientation {
-    double radians = 0;
-    bool mirror = false;
-};
-
-/// The orientation Tiled's three flip bits name, for a cell's `flags` (the
-/// kTileFlip* bits; anything above them is ignored).
-///
-/// Tiled defines the ORDER these compose in: the ANTI-DIAGONAL flip first -- a
-/// transpose, (u,v) -> (v,u) -- then horizontal, then vertical. So the matrix
-/// a cell wants is V^v * H^h * D^d, and the eight of them are the eight
-/// symmetries of the square. Applying them in any other order draws three of
-/// the four rotations mirrored, and an edge tile that serves all four
-/// rotations of one corner is exactly where that shows.
-///
-/// Declared out here, rather than buried in the draw loop, so the mapping can
-/// be checked against Tiled's spec on its own.
-TileOrientation tileOrientation(std::uint8_t flags);
 
 /// One piece of an explosion's debris. Velocity and life are per second here;
 /// the browser build counts both per frame at 60 Hz.

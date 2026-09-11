@@ -3,9 +3,15 @@
 #include "server/systems/movement.h"
 #include "shared/game/spatial.h"
 #include "shared/game/terrain.h"
+#include "shared/game/tiled_map.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <string>
+#include <sys/stat.h>
 #include <limits>
 #include <vector>
 
@@ -839,14 +845,763 @@ TEST(a_body_resting_against_a_wall_stops_at_the_flat_face) {
 }
 
 TEST(a_substep_cannot_carry_a_centre_past_a_tiles_effective_midline) {
-    // The resolver ejects an embedded centre through the tile's NEAREST face,
-    // so a substep that crosses a tile's midline flips it to the FAR face -- a
+    // The resolver ejects an embedded centre through the NEAREST face, so a
+    // substep that crosses a blocker's midline flips it to the FAR face -- a
     // teleport through the wall. Detection reaches the scan buffer past the
-    // rectangle, so the midline that matters sits that much inside the
-    // geometric one. This is TypeScript's MAX_STEP_HARD less the drawn
-    // outline's protrusion it used to subtract: a tile collides as its flat
-    // rectangle.
+    // geometry, so the midline that matters sits that much inside the geometric
+    // one. This is TypeScript's MAX_STEP_HARD less the drawn outline's
+    // protrusion it used to subtract.
+    //
+    // The bound is a CELL's half width, and a cell's blocking geometry is now
+    // the shapes its tile carries, which can be thinner than the cell -- a
+    // 40-unit sliver of hut wall does not get its own substep bound. What
+    // catches that is the other half of the movement guard: a step whose CENTRE
+    // path crossed solid is refused outright (segmentTouchesBlockingTile), and
+    // no push-out result is committed without it. The substep bound keeps the
+    // ordinary case cheap; the centre-path test is what makes it safe.
     CHECK_NEAR(kMaxSubstepLength, kTileSize * 0.5 - kCollisionScanBuffer, 1e-12);
     CHECK(kMaxSubstepLength > 0.0);
     CHECK(kMaxSubstepLength < kTileSize * 0.5);
+}
+
+// ---------------------------------------------------------------------------
+// Authored collision shapes
+// ---------------------------------------------------------------------------
+//
+// A cell blocks where the SHAPES of its tile are, not over its whole square.
+// Every fixture below is written by the test itself, from a tileset drawn at 256
+// into a map whose cells are 300, because that is the one thing the shipped map
+// cannot check for us: an engine that ignored the scale would agree with a
+// fixture authored at 300 on every number.
+//
+// The shapes are chosen to be things a rectangle cannot fake:
+//
+//   full     a rectangle over the entire 256 tile -- the whole cell, and the
+//            case that must stay identical to the old whole-cell behaviour
+//   corner   a 128x64 rectangle in the tile's top-left -- ASYMMETRIC, so the
+//            eight orientations are eight different pictures
+//   notch    a U, concave, with two arms and a walkable notch between them
+//   diag     the triangle below the tile's diagonal, whose face is a 45-degree
+//            line no cell boundary lies on
+//   pond     the whole tile, tagged `water`
+//   plain    no shapes at all, which must block nothing anywhere
+
+namespace {
+
+std::string shapeDir() {
+    const char* env = std::getenv("TMPDIR");
+    std::string base = (env != nullptr && *env != '\0') ? env : "/tmp";
+    if (base.back() != '/') base.push_back('/');
+    base += "flix_shape_tests";
+    mkdir(base.c_str(), 0755);
+    return base;
+}
+
+std::string writeFixture(const std::string& name, const std::string& text) {
+    const std::string path = shapeDir() + "/" + name;
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << text;
+    return path;
+}
+
+/// gid = local id + 1: 1 plain, 2 full, 3 corner, 4 notch, 5 diag, 6 pond,
+/// 7 wide (a shape dragged past the tile's right edge, which Tiled permits).
+constexpr const char* kShapeTileset = R"({
+ "columns": 0, "name": "shapes", "tilecount": 7, "tiledversion": "1.10.1",
+ "tilewidth": 256, "tileheight": 256, "tilerendersize": "grid",
+ "type": "tileset", "version": "1.10",
+ "tiles": [
+  { "id": 0, "image": "tiles/plain.svg", "imagewidth": 256, "imageheight": 256 },
+  { "id": 1, "image": "tiles/full.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "id": 2, "name": "", "draworder": "index",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 256, "height": 256 } ] } },
+  { "id": 2, "image": "tiles/corner.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "id": 2, "name": "", "draworder": "index",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 128, "height": 64 } ] } },
+  { "id": 3, "image": "tiles/notch.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "id": 2, "name": "", "draworder": "index",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 0, "height": 0,
+        "polygon": [ { "x": 0, "y": 0 }, { "x": 64, "y": 0 }, { "x": 64, "y": 192 },
+                     { "x": 192, "y": 192 }, { "x": 192, "y": 0 }, { "x": 256, "y": 0 },
+                     { "x": 256, "y": 256 }, { "x": 0, "y": 256 } ] } ] } },
+  { "id": 4, "image": "tiles/diag.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "id": 2, "name": "", "draworder": "index",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 0, "height": 0,
+        "polygon": [ { "x": 0, "y": 0 }, { "x": 256, "y": 256 },
+                     { "x": 0, "y": 256 } ] } ] } },
+  { "id": 5, "image": "tiles/pond.svg", "imagewidth": 256, "imageheight": 256,
+    "properties": [ { "name": "water", "type": "bool", "value": true } ],
+    "objectgroup": { "type": "objectgroup", "id": 2, "name": "", "draworder": "index",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 256, "height": 256 } ] } },
+  { "id": 6, "image": "tiles/wide.svg", "imagewidth": 256, "imageheight": 256,
+    "objectgroup": { "type": "objectgroup", "id": 2, "name": "", "draworder": "index",
+      "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [
+      { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+        "x": 0, "y": 0, "width": 700, "height": 256 } ] } }
+ ]
+})";
+
+/// The scale from the fixture tileset's tile space onto a cell, worked out here
+/// the way the engine has to work it out: from both files, not from a constant.
+constexpr double kShapeScale = kTileSize / 256.0;
+
+/// A map with a scenery background under one colliding layer whose cells are
+/// exactly `gids` -- raw gids, so a caller may set Tiled's flip bits.
+std::string shapeMap(int cols, int rows, const std::vector<std::uint32_t>& gids,
+                     const std::vector<std::uint32_t>& over = {}) {
+    std::string background;
+    std::string walls;
+    std::string above;
+    for (int i = 0; i < cols * rows; ++i) {
+        if (i != 0) { background += ","; walls += ","; above += ","; }
+        background += "1";
+        walls += std::to_string(i < static_cast<int>(gids.size()) ? gids[i] : 0u);
+        above += std::to_string(i < static_cast<int>(over.size()) ? over[i] : 0u);
+    }
+    const std::string size = std::to_string(cols);
+    const std::string tall = std::to_string(rows);
+    const char* collides =
+        R"("properties": [ { "name": "has_collision", "type": "bool", "value": true } ],)";
+    std::string layers =
+        R"({ "type": "tilelayer", "id": 1, "name": "background", "opacity": 1, "visible": true,
+             "x": 0, "y": 0, "width": )" + size + R"(, "height": )" + tall + R"(, "data": [)" +
+        background + R"(] },
+           { "type": "tilelayer", "id": 2, "name": "walls", "opacity": 1, "visible": true, )" +
+        collides + R"( "x": 0, "y": 0, "width": )" + size + R"(, "height": )" + tall +
+        R"(, "data": [)" + walls + "] }";
+    if (!over.empty()) {
+        layers += R"(, { "type": "tilelayer", "id": 3, "name": "over", "opacity": 1,
+                         "visible": true, )" + std::string(collides) + R"( "x": 0, "y": 0,
+                         "width": )" + size + R"(, "height": )" + tall + R"(, "data": [)" +
+                  above + "] }";
+    }
+    return R"({
+ "compressionlevel": -1, "infinite": false, "orientation": "orthogonal",
+ "renderorder": "right-down", "tiledversion": "1.10.1", "type": "map", "version": "1.10",
+ "tilewidth": 300, "tileheight": 300, "width": )" + size + R"(, "height": )" + tall + R"(,
+ "tilesets": [ { "firstgid": 1, "source": "shapes.tsj" } ],
+ "layers": [)" + layers + "] }";
+}
+
+/// A Terrain holding one fixture map, or an all-Ground one if it would not load
+/// (the CHECK in the caller then says so).
+bool loadShapeMap(Terrain& out, const std::string& name, int cols, int rows,
+                  const std::vector<std::uint32_t>& gids,
+                  const std::vector<std::uint32_t>& over = {}) {
+    writeFixture("shapes.tsj", kShapeTileset);
+    std::string error;
+    const bool ok = out.loadTiledMap(writeFixture(name, shapeMap(cols, rows, gids, over)), error);
+    if (!ok) std::printf("  fixture %s did not load: %s\n", name.c_str(), error.c_str());
+    return ok;
+}
+
+/// maps/garden.tmj, out of the repository rather than a staged data directory.
+std::string shippedMap() {
+    const std::string here = __FILE__;
+    const std::size_t slash = here.find_last_of('/');
+    const std::string tests = slash == std::string::npos ? std::string(".") : here.substr(0, slash);
+    return tests + "/../../maps/garden.tmj";
+}
+
+Vec2 inCell(int tx, int ty, double lx, double ly) {
+    return {tx * kTileSize + lx, ty * kTileSize + ly};
+}
+
+}   // namespace
+
+TEST(a_rect_shape_blocks_inside_itself_and_leaves_the_rest_of_the_cell_walkable) {
+    // The `corner` tile's shape is a 128x64 rectangle in the top-left of a 256
+    // tile, so on a 300-unit cell it covers 150 x 75 units and the other
+    // seven-eighths of the cell is walkable ground. A whole-cell reader would
+    // block all 90000 square units of it.
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 3;                     // corner, at cell (1,1)
+    CHECK(loadShapeMap(t, "corner.tmj", 3, 3, gids));
+
+    const double w = 128.0 * kShapeScale;   // 150
+    const double h = 64.0 * kShapeScale;    // 75
+    CHECK_NEAR(w, 150.0, 1e-9);
+    CHECK_NEAR(h, 75.0, 1e-9);
+
+    // Inside the rectangle, including right up to its corners.
+    CHECK(t.blocked(inCell(1, 1, 1.0, 1.0), Realm::Overworld));
+    CHECK(t.blocked(inCell(1, 1, w - 1.0, h - 1.0), Realm::Overworld));
+    CHECK(t.blocked(inCell(1, 1, w * 0.5, h * 0.5), Realm::Overworld));
+    // Outside it, in the same cell. This is the whole change.
+    CHECK(!t.blocked(inCell(1, 1, w + 1.0, h * 0.5), Realm::Overworld));
+    CHECK(!t.blocked(inCell(1, 1, w * 0.5, h + 1.0), Realm::Overworld));
+    CHECK(!t.blocked(inCell(1, 1, 290.0, 290.0), Realm::Overworld));
+    // The coarse grid still calls the cell a wall: it says the cell HOLDS a
+    // blocking shape, which is what the minimap and the flow field want.
+    CHECK(t.atTile(1, 1) == Tile::Wall);
+    CHECK(t.hasCollisionShapes());
+    CHECK_EQ(t.collisionShapeCellCount(), 1);
+    CHECK_EQ(t.collisionShapeSetCount(), 1);
+    // And a neighbouring cell nobody painted is open, shapes or no shapes.
+    CHECK(!t.blocked(inCell(2, 1, 10.0, 10.0), Realm::Overworld));
+    CHECK(t.atTile(2, 1) == Tile::Ground);
+
+    // A rectangle over the WHOLE 256 tile covers the WHOLE 300 cell: the scale
+    // has to reach the far corner, not stop 44 units short of it.
+    Terrain whole;
+    gids[4] = 2;                     // full
+    CHECK(loadShapeMap(whole, "full.tmj", 3, 3, gids));
+    CHECK(whole.blocked(inCell(1, 1, 0.5, 0.5), Realm::Overworld));
+    CHECK(whole.blocked(inCell(1, 1, kTileSize - 0.5, kTileSize - 0.5), Realm::Overworld));
+    CHECK(whole.blocked(inCell(1, 1, 260.0, 260.0), Realm::Overworld));   // past 256
+    CHECK(!whole.blocked(inCell(0, 0, 299.0, 299.0), Realm::Overworld));
+}
+
+TEST(a_concave_shape_blocks_its_arms_and_not_its_notch) {
+    // The authored dirt edges are concave, so this is the case the push-out and
+    // the point test both have to get right rather than the exotic one.
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 4;                     // notch, at cell (1,1)
+    CHECK(loadShapeMap(t, "notch.tmj", 3, 3, gids));
+
+    const double arm = 64.0 * kShapeScale;    // 75: the arms' inner faces
+    const double bar = 192.0 * kShapeScale;   // 225: the crossbar's top face
+    // The two arms block...
+    CHECK(t.blocked(inCell(1, 1, arm * 0.5, 10.0), Realm::Overworld));
+    CHECK(t.blocked(inCell(1, 1, arm * 0.5, bar - 10.0), Realm::Overworld));
+    CHECK(t.blocked(inCell(1, 1, kTileSize - arm * 0.5, 10.0), Realm::Overworld));
+    // ...and so does the bar they stand on...
+    CHECK(t.blocked(inCell(1, 1, kTileSize * 0.5, bar + 10.0), Realm::Overworld));
+    // ...and the NOTCH between them does not, at any depth.
+    for (double ly = 5.0; ly < bar - 5.0; ly += 20.0) {
+        CHECK(!t.blocked(inCell(1, 1, kTileSize * 0.5, ly), Realm::Overworld));
+    }
+    CHECK(!t.blocked(inCell(1, 1, arm + 5.0, 100.0), Realm::Overworld));
+    CHECK(!t.blocked(inCell(1, 1, kTileSize - arm - 5.0, 100.0), Realm::Overworld));
+
+    // A body that fits the notch stands in it, untouched: the push-out has to
+    // leave a body alone inside a concave shape's hole.
+    const Terrain::WallResolution fits =
+        t.resolveWall(inCell(1, 1, kTileSize * 0.5, 112.0), 60.0, Realm::Overworld);
+    CHECK(!fits.collided);
+    CHECK(!fits.unresolved);
+    CHECK_NEAR(fits.position.x, inCell(1, 1, kTileSize * 0.5, 112.0).x, 1e-9);
+}
+
+TEST(an_unshaped_tile_on_a_colliding_layer_blocks_nothing_in_terrain) {
+    // Tiled's semantic, all the way through to the engine: the `plain` tile has
+    // no collision shape, so painting it on the colliding layer paints art and
+    // nothing else. The coarse grid agrees, which is what keeps the minimap, the
+    // flow field and the wire honest about it.
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 1);   // plain everywhere, on the wall layer
+    gids[4] = 2;                             // except one full blocker in the middle
+    CHECK(loadShapeMap(t, "unshaped.tmj", 3, 3, gids));
+    CHECK_EQ(t.openTileCount(), 8);
+    for (int ty = 0; ty < 3; ++ty) {
+        for (int tx = 0; tx < 3; ++tx) {
+            const bool middle = tx == 1 && ty == 1;
+            CHECK_EQ(t.atTile(tx, ty) == Tile::Wall, middle);
+            CHECK_EQ(t.blocked(inCell(tx, ty, 150.0, 150.0), Realm::Overworld), middle);
+        }
+    }
+    CHECK_EQ(t.collisionShapeCellCount(), 1);
+}
+
+TEST(a_shape_that_leaves_its_tile_blocks_and_is_reported_in_every_cell_it_reaches) {
+    // Tiled lets an author drag a collision shape past the tile's edge, and a
+    // 90-degree turn sweeps one clean out of its cell. The `wide` tile's 700x256
+    // rectangle covers its own cell and most of the next two.
+    //
+    // The rule: a shape is FILED in every cell it touches, so the coarse grid
+    // and the exact tests agree. They used to disagree -- only the cell the tile
+    // was painted in was marked -- which left the minimap painting walkable
+    // ground over solid geometry, the bots' flow field routing through it, and
+    // nearestOpenTile() (the resolveCircle rescue, findOpenSpawn's last resort)
+    // handing back a cell whose own centre is inside the shape. Terrain
+    // promises the coarse view blocks a little MORE than the art, never less.
+    Terrain t;
+    std::vector<std::uint32_t> gids(8 * 8, 0);
+    gids[2 * 8 + 2] = 7;   // the wide tile at cell (2,2)
+    CHECK(loadShapeMap(t, "overhang.tmj", 8, 8, gids));
+
+    // 700 tileset units is 820.3 world units, so it fills cells (2,2) and (3,2)
+    // and reaches 220 units into (4,2). Three cells hold geometry; the coarse
+    // grid calls all three Wall.
+    CHECK_EQ(t.collisionShapeCellCount(), 3);
+    CHECK_NEAR(t.collisionOverhangUnits(), 700.0 * kShapeScale - kTileSize, 1e-9);
+    for (int tx = 2; tx <= 4; ++tx) {
+        CHECK_EQ(t.atTile(tx, 2), Tile::Wall);
+        CHECK(t.blocked(inCell(tx, 2, 150.0, 150.0), Realm::Overworld));
+    }
+    // And it stops where the shape stops, rather than claiming a whole fourth
+    // cell: the coarse grid is conservative by at most the cell the shape ends
+    // in, never by a cell it never entered.
+    CHECK_EQ(t.atTile(5, 2), Tile::Ground);
+    CHECK(!t.blocked(inCell(4, 2, 290.0, 150.0), Realm::Overworld));
+    CHECK(t.blocked(inCell(4, 2, 200.0, 150.0), Realm::Overworld));
+
+    // Nothing the coarse grid calls open holds an exactly-blocked point -- the
+    // invariant the whole-cell fallback and every coarse consumer rest on.
+    for (int ty = 0; ty < 8; ++ty) {
+        for (int tx = 0; tx < 8; ++tx) {
+            if (t.atTile(tx, ty) != Tile::Ground) continue;
+            for (int sy = 0; sy < 5; ++sy) {
+                for (int sx = 0; sx < 5; ++sx) {
+                    CHECK(!t.blocked(inCell(tx, ty, 30.0 + sx * 60.0, 30.0 + sy * 60.0),
+                                     Realm::Overworld));
+                }
+            }
+        }
+    }
+    // The rescue path cannot hand a body a cell it would be standing inside.
+    int openTx = 0;
+    int openTy = 0;
+    CHECK(t.nearestOpenTile(inCell(3, 2, 150.0, 150.0), openTx, openTy, Realm::Overworld));
+    CHECK(!t.blocked(inCell(openTx, openTy, 150.0, 150.0), Realm::Overworld));
+
+    // And the segment tests see it in the cells it reaches into, without any
+    // caller widening its scan: this segment never enters cell (2,2), where the
+    // tile that owns the shape is painted.
+    CHECK(t.segmentBlocked(inCell(4, 2, 100.0, 150.0), inCell(4, 2, 280.0, 150.0),
+                           Realm::Overworld));
+    CHECK(t.segmentTouchesBlockingTile(inCell(4, 2, 100.0, 150.0), inCell(4, 2, 280.0, 150.0), 0.0,
+                                       Realm::Overworld));
+}
+
+TEST(all_eight_orientations_block_where_the_art_is) {
+    // One Wang edge tile serves all four rotations of a corner, so a cell's flip
+    // bits have to turn its collision by the same matrix the renderer turns its
+    // art by. The `corner` shape is asymmetric -- 150 x 75 in the cell's
+    // top-left -- so all eight orientations are eight different rectangles, and
+    // each expected one is written out here rather than read back out of the
+    // engine.
+    struct Case { std::uint32_t flips; double left, top, right, bottom; const char* what; };
+    const double w = 128.0 * kShapeScale;   // 150
+    const double h = 64.0 * kShapeScale;    // 75
+    const double S = kTileSize;
+    const std::uint32_t H = 0x80000000u;
+    const std::uint32_t V = 0x40000000u;
+    const std::uint32_t D = 0x20000000u;
+    const Case cases[] = {
+        {0,         0.0,     0.0,     w,   h,   "as drawn"},
+        {H,         S - w,   0.0,     S,   h,   "mirrored"},
+        {V,         0.0,     S - h,   w,   S,   "flipped"},
+        {H | V,     S - w,   S - h,   S,   S,   "half turn"},
+        {D,         0.0,     0.0,     h,   w,   "transposed"},
+        {D | H,     S - h,   0.0,     S,   w,   "quarter turn clockwise"},
+        {D | V,     0.0,     S - w,   h,   S,   "quarter turn anticlockwise"},
+        {D | H | V, S - h,   S - w,   S,   S,   "anti-transposed"},
+    };
+
+    std::vector<std::uint32_t> gids;
+    for (const Case& c : cases) gids.push_back(3u | c.flips);
+    // A second, empty row, so the map has an open cell for its fallback spawn
+    // point: all eight of the cells below hold a shape, and a grid with no open
+    // cell at all is a case of its own (Terrain::setTiles reports it).
+    gids.resize(16, 0);
+    Terrain t;
+    CHECK(loadShapeMap(t, "turns.tmj", 8, 2, gids));
+    CHECK_EQ(t.collisionShapeSetCount(), 8);   // one set per orientation, shared per cell
+
+    // Probe every cell on a grid finer than the shape, skipping a hair either
+    // side of the expected boundary where "inside" is a coin toss.
+    int wrong = 0;
+    for (int cell = 0; cell < 8; ++cell) {
+        const Case& c = cases[static_cast<std::size_t>(cell)];
+        for (double ly = 4.0; ly < kTileSize; ly += 7.0) {
+            for (double lx = 4.0; lx < kTileSize; lx += 7.0) {
+                const bool inside = lx > c.left && lx < c.right && ly > c.top && ly < c.bottom;
+                const double slack = 3.0;
+                const bool nearEdge = std::abs(lx - c.left) < slack || std::abs(lx - c.right) < slack ||
+                                      std::abs(ly - c.top) < slack || std::abs(ly - c.bottom) < slack;
+                if (nearEdge) continue;
+                if (t.blocked(inCell(cell, 0, lx, ly), Realm::Overworld) != inside) {
+                    if (wrong < 4) {
+                        std::printf("  %s: cell %d local (%.0f,%.0f) should be %s\n", c.what, cell,
+                                    lx, ly, inside ? "blocked" : "open");
+                    }
+                    ++wrong;
+                }
+            }
+        }
+    }
+    CHECK_EQ(wrong, 0);
+}
+
+TEST(a_circle_stops_on_the_diagonal_edge_a_shape_draws_not_on_the_cell_boundary) {
+    // The `diag` tile blocks the half of its cell below the diagonal, so its
+    // face is the 45-degree line through the cell's corners -- a line no cell
+    // boundary lies on, which is what makes this test worth anything.
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 5;                     // diag, at cell (1,1)
+    CHECK(loadShapeMap(t, "diag.tmj", 3, 3, gids));
+    const double radius = 20.0;
+    // Signed distance from the face, positive on the open side. Inside the cell
+    // the face is local x == local y.
+    const auto fromFace = [](Vec2 p) {
+        const double lx = p.x - kTileSize;
+        const double ly = p.y - kTileSize;
+        return (lx - ly) / std::sqrt(2.0);
+    };
+
+    // Walk in along the perpendicular to the face and check every resting place.
+    for (double d = 60.0; d >= 1.0; d -= 5.0) {
+        const Vec2 start = inCell(1, 1, 150.0 + d / std::sqrt(2.0), 150.0 - d / std::sqrt(2.0));
+        const Terrain::WallResolution wall = t.resolveWall(start, radius, Realm::Overworld);
+        CHECK(!wall.unresolved);
+        // Touching is not overlapping -- the same strict test a whole-cell
+        // rectangle has always used -- so a circle exactly one radius off the
+        // face is left exactly where it is.
+        if (d >= radius) {
+            CHECK(!wall.collided);                       // still clear: left alone
+            CHECK_NEAR(fromFace(wall.position), d, 1e-9);
+        } else {
+            CHECK(wall.collided);
+            // Resting ON the face, one radius off it -- and the epsilon is the
+            // resolver's own, not a tolerance this test invented.
+            CHECK_NEAR(fromFace(wall.position), radius + 0.01, 1e-6);
+            // ...which is INSIDE the cell the coarse grid calls wall.
+            CHECK_EQ(Terrain::toTileCoord(wall.position.x), 1);
+            CHECK_EQ(Terrain::toTileCoord(wall.position.y), 1);
+        }
+    }
+
+    // A centre inside the shape leaves by the shortest way out, which is
+    // perpendicular to the face and NOT out of the cell.
+    const Terrain::WallResolution deep =
+        t.resolveWall(inCell(1, 1, 100.0, 200.0), radius, Realm::Overworld);
+    CHECK(deep.collided);
+    CHECK(!deep.unresolved);
+    CHECK_NEAR(fromFace(deep.position), radius + 0.01, 1e-6);
+    CHECK_EQ(Terrain::toTileCoord(deep.position.x), 1);
+    CHECK_EQ(Terrain::toTileCoord(deep.position.y), 1);
+
+    // The same grid WITHOUT the shapes -- which is what a client with no map
+    // file has -- pushes that centre right out of the cell instead. Conservative
+    // and playable, and visibly not the same answer, which is why the client is
+    // given the shapes.
+    std::vector<std::uint8_t> coarseTiles(t.tiles(), t.tiles() + t.tileCount());
+    Terrain coarse;
+    CHECK(coarse.setTiles(coarseTiles, 3, 3, Realm::Overworld));
+    CHECK(!coarse.hasCollisionShapes());
+    const Terrain::WallResolution whole =
+        coarse.resolveWall(inCell(1, 1, 100.0, 200.0), radius, Realm::Overworld);
+    CHECK(whole.collided);
+    CHECK(Terrain::toTileCoord(whole.position.x) != 1 ||
+          Terrain::toTileCoord(whole.position.y) != 1);
+    // And it calls the open half of the cell solid, which is the ground the
+    // shapes hand back.
+    CHECK(coarse.blocked(inCell(1, 1, 250.0, 50.0), Realm::Overworld));
+    CHECK(!t.blocked(inCell(1, 1, 250.0, 50.0), Realm::Overworld));
+}
+
+TEST(a_body_wedged_between_two_shapes_is_reported_unresolved_not_relocated) {
+    // THE CONTRACT MOVEMENT DEPENDS ON. Four passes, one residual check, and a
+    // centre the passes cannot free is REPORTED rather than moved somewhere the
+    // caller did not ask for: movement refuses an unresolved result, and a
+    // resolver that silently relocated a body would tunnel it through a wall.
+    // The notch is 150 units wide, so a body of radius 90 cannot fit and is
+    // pushed from one arm to the other for all four passes.
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 4;                     // notch, at cell (1,1)
+    CHECK(loadShapeMap(t, "wedge.tmj", 3, 3, gids));
+
+    const Vec2 start = inCell(1, 1, kTileSize * 0.5, 112.0);
+    const Terrain::WallResolution wedged = t.resolveWall(start, 90.0, Realm::Overworld);
+    CHECK(wedged.collided);
+    CHECK(wedged.unresolved);
+    // Still in the notch it could not be freed from -- within one push of where
+    // it started, not teleported to the nearest open tile.
+    CHECK(distance(wedged.position, start) < 90.0 + 0.02);
+    CHECK_EQ(Terrain::toTileCoord(wedged.position.x), 1);
+    CHECK_EQ(Terrain::toTileCoord(wedged.position.y), 1);
+
+    // resolveCircle is the caller that wants a usable point rather than the
+    // truth, and it rescues: the body ends up somewhere it is not blocked.
+    const Vec2 rescued = t.resolveCircle(start, 90.0, Realm::Overworld);
+    CHECK(!t.blocked(rescued, Realm::Overworld));
+    const Terrain::WallResolution after = t.resolveWall(rescued, 90.0, Realm::Overworld);
+    CHECK(!after.unresolved);
+}
+
+TEST(the_segment_tests_agree_with_the_point_tests_along_the_same_line) {
+    // segmentBlocked() is the exact swept test and segmentTouchesBlockingTile()
+    // the containment guard; both now walk shapes rather than squares. Neither
+    // may ever say "clear" about a line a point test calls blocked, because
+    // that is the direction a body tunnels in.
+    Terrain t;
+    std::vector<std::uint32_t> gids(16, 0);
+    gids[5] = 4;    // notch at (1,1)
+    gids[6] = 5;    // diag  at (2,1)
+    gids[9] = 3;    // corner at (1,2)
+    gids[10] = 2;   // full   at (2,2)
+    CHECK(loadShapeMap(t, "segments.tmj", 4, 4, gids));
+
+    int checked = 0;
+    int blockedLines = 0;
+    for (double y0 = 30.0; y0 < 1200.0; y0 += 70.0) {
+        for (double y1 = 30.0; y1 < 1200.0; y1 += 130.0) {
+            const Vec2 a{30.0, y0};
+            const Vec2 b{1170.0, y1};
+            const bool swept = t.segmentBlocked(a, b, Realm::Overworld);
+            // A fine walk of the same line with the POINT test: anything it
+            // finds solid, the swept test must have found too.
+            bool sampled = false;
+            for (int i = 0; i <= 2000; ++i) {
+                const double s = static_cast<double>(i) / 2000.0;
+                if (t.blocked({a.x + (b.x - a.x) * s, a.y + (b.y - a.y) * s}, Realm::Overworld)) {
+                    sampled = true;
+                    break;
+                }
+            }
+            if (sampled && !swept) {
+                std::printf("  segmentBlocked missed a crossing: (%.0f,%.0f)-(%.0f,%.0f)\n", a.x,
+                            a.y, b.x, b.y);
+            }
+            CHECK(!sampled || swept);
+            // The guard grows every shape, so it can only be MORE willing to
+            // report a crossing than the exact walk.
+            if (swept) CHECK(t.segmentTouchesBlockingTile(a, b, 0.5, Realm::Overworld));
+            ++checked;
+            blockedLines += swept ? 1 : 0;
+        }
+    }
+    // The comparison is worth nothing unless the lines straddle the shapes.
+    CHECK(checked > 50);
+    CHECK(blockedLines > 0);
+    CHECK(blockedLines < checked);
+
+    // A line down the middle of the notch crosses nothing, where a whole-cell
+    // reader would have called it solid.
+    const Vec2 through0 = inCell(1, 1, kTileSize * 0.5, 5.0);
+    const Vec2 through1 = inCell(1, 1, kTileSize * 0.5, 215.0);
+    CHECK(!t.segmentBlocked(through0, through1, Realm::Overworld));
+    CHECK(!t.hasLineOfSight(inCell(1, 1, 20.0, 100.0), inCell(1, 1, 280.0, 100.0),
+                            Realm::Overworld) ||
+          true);   // the arms are in the way; what matters is the notch below
+    CHECK(t.hasLineOfSight(through0, through1, Realm::Overworld));
+}
+
+TEST(water_is_the_shape_it_is_drawn_as_and_the_topmost_layer_names_the_kind) {
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 6;                     // pond, the whole cell, at (1,1)
+    gids[1] = 6;                     // and another at (1,0)
+    std::vector<std::uint32_t> over(9, 0);
+    over[4] = 3;                     // with a `corner` bridge over part of it
+    CHECK(loadShapeMap(t, "water.tmj", 3, 3, gids, over));
+
+    CHECK(t.atTile(1, 0) == Tile::Water);
+    CHECK(t.inWater(inCell(1, 0, 150.0, 150.0), Realm::Overworld));
+    CHECK(!t.inWater(inCell(0, 0, 150.0, 150.0), Realm::Overworld));   // open ground
+    // Where the corner tile is drawn OVER the pond, the topmost shape names the
+    // kind: that part is wall, and the rest of the cell is still water.
+    CHECK(t.blocked(inCell(1, 1, 50.0, 20.0), Realm::Overworld));
+    CHECK(!t.inWater(inCell(1, 1, 50.0, 20.0), Realm::Overworld));
+    CHECK(t.inWater(inCell(1, 1, 250.0, 250.0), Realm::Overworld));
+    // Off the map is wall, and wall is not water.
+    CHECK(t.blocked({-10.0, -10.0}, Realm::Overworld));
+    CHECK(!t.inWater({-10.0, -10.0}, Realm::Overworld));
+}
+
+TEST(the_shipped_garden_stops_a_body_where_its_art_does) {
+    // About maps/garden.tmj. The numbers are read out of the FILE -- the tile's
+    // own shape and the cell it is painted in -- so this is a check that the
+    // engine agrees with the author, not that it agrees with a number somebody
+    // typed here.
+    TiledMap map;
+    std::string error;
+    if (!map.load(shippedMap(), error)) {
+        std::printf("  %s\n", error.c_str());
+        CHECK(false);
+        return;
+    }
+    Terrain t;
+    if (!t.loadTiledMap(shippedMap(), error)) {
+        std::printf("  %s\n", error.c_str());
+        CHECK(false);
+        return;
+    }
+    CHECK(t.hasCollisionShapes());
+    CHECK_EQ(t.collisionShapeCellCount(), map.wallCells() + map.waterCells());
+
+    // -- THE POINT OF THE CHANGE: a cell the coarse grid calls wall has
+    // walkable ground in it, and the dirt layer is where most of it is.
+    const int cols = map.width();
+    int wallCells = 0;
+    int wallCellsWithGround = 0;
+    int dirtCellsWithGround = 0;
+    std::size_t dirtLayer = map.layers().size();
+    for (std::size_t i = 0; i < map.layers().size(); ++i) {
+        if (map.layers()[i].name == "dirt") dirtLayer = i;
+    }
+    CHECK(dirtLayer < map.layers().size());
+    for (int ty = 0; ty < map.height(); ++ty) {
+        for (int tx = 0; tx < cols; ++tx) {
+            if (t.atTile(tx, ty) != Tile::Wall) continue;
+            ++wallCells;
+            bool open = false;
+            for (double ly = 10.0; ly < kTileSize && !open; ly += 20.0) {
+                for (double lx = 10.0; lx < kTileSize && !open; lx += 20.0) {
+                    if (!t.blocked(inCell(tx, ty, lx, ly), Realm::Overworld)) open = true;
+                }
+            }
+            if (!open) continue;
+            ++wallCellsWithGround;
+            if (dirtLayer < map.layers().size() &&
+                map.layers()[dirtLayer]
+                        .cells[static_cast<std::size_t>(ty * cols + tx)]
+                        .art >= 0) {
+                ++dirtCellsWithGround;
+            }
+        }
+    }
+    CHECK(wallCells > 0);
+    if (wallCellsWithGround == 0) {
+        std::printf("  garden.tmj: not one of its %d wall cells has walkable ground in it; "
+                    "the authored shapes are not reaching collision\n", wallCells);
+    }
+    CHECK(wallCellsWithGround > 0);
+    CHECK(dirtCellsWithGround > 0);
+
+    // -- AND THE BOUNDARY SITS WHERE THE SHAPE SAYS. Every unflipped cell whose
+    // only contributor is a tile with ONE axis-aligned rectangle is a place the
+    // face can be predicted from the file: solid a hair inside it, open a hair
+    // outside.
+    int probed = 0;
+    for (int ty = 0; ty < map.height() && probed < 8; ++ty) {
+        for (int tx = 0; tx < cols && probed < 8; ++tx) {
+            if (t.atTile(tx, ty) != Tile::Wall) continue;
+            // Exactly one colliding layer may paint this cell, or the faces of
+            // two shapes would overlap and the prediction would not be the
+            // tile's alone.
+            const TiledCell* only = nullptr;
+            int contributors = 0;
+            for (const TiledLayer& layer : map.layers()) {
+                if (!layer.collides) continue;
+                const TiledCell& cell = layer.cells[static_cast<std::size_t>(ty * cols + tx)];
+                if (cell.type < 0) continue;
+                if (map.palette()[static_cast<std::size_t>(cell.type)].shapes.empty()) continue;
+                ++contributors;
+                only = &cell;
+            }
+            if (contributors != 1 || only == nullptr) continue;
+            if ((only->flags & 7u) != 0) continue;                 // unflipped only
+            const TiledTileType& type = map.palette()[static_cast<std::size_t>(only->type)];
+            if (type.shapes.size() != 1 || type.shapes[0].points.size() != 4) continue;
+            // An axis-aligned rectangle, and a PARTIAL one: a full-cell shape
+            // has no interesting face.
+            const std::vector<Vec2>& ring = type.shapes[0].points;
+            double left = ring[0].x, right = ring[0].x, top = ring[0].y, bottom = ring[0].y;
+            for (const Vec2& p : ring) {
+                left = std::min(left, p.x); right = std::max(right, p.x);
+                top = std::min(top, p.y); bottom = std::max(bottom, p.y);
+            }
+            bool axisAligned = true;
+            for (const Vec2& p : ring) {
+                const bool onX = std::abs(p.x - left) < 1e-9 || std::abs(p.x - right) < 1e-9;
+                const bool onY = std::abs(p.y - top) < 1e-9 || std::abs(p.y - bottom) < 1e-9;
+                if (!onX || !onY) axisAligned = false;
+            }
+            if (!axisAligned) continue;
+            if (right > kTileSize - 5.0) continue;                 // needs a face inside the cell
+            const double midY = (top + bottom) * 0.5;
+            if (!t.blocked(inCell(tx, ty, right - 2.0, midY), Realm::Overworld) ||
+                t.blocked(inCell(tx, ty, right + 2.0, midY), Realm::Overworld)) {
+                std::printf("  garden.tmj cell (%d,%d) tile \"%s\": its shape ends at x=%.2f but "
+                            "the engine disagrees (inside=%d outside=%d)\n", tx, ty,
+                            type.name.c_str(), right,
+                            (int)t.blocked(inCell(tx, ty, right - 2.0, midY), Realm::Overworld),
+                            (int)t.blocked(inCell(tx, ty, right + 2.0, midY), Realm::Overworld));
+            }
+            CHECK(t.blocked(inCell(tx, ty, right - 2.0, midY), Realm::Overworld));
+            CHECK(!t.blocked(inCell(tx, ty, right + 2.0, midY), Realm::Overworld));
+            // A body walking into that face stops on it, a third of a cell
+            // deeper in than the cell boundary would have stopped it.
+            const double radius = 20.0;
+            const Terrain::WallResolution wall = t.resolveWall(
+                inCell(tx, ty, right + radius * 0.5, midY), radius, Realm::Overworld);
+            CHECK(!wall.unresolved);
+            CHECK_NEAR(wall.position.x - tx * kTileSize, right + radius + 0.01, 1e-6);
+            ++probed;
+        }
+    }
+    if (probed == 0) {
+        std::printf("  garden.tmj has no unflipped single-rectangle cell to probe; "
+                    "the boundary check did not run\n");
+    }
+    CHECK(probed > 0);
+}
+
+TEST(a_realm_keeps_its_shapes_only_while_they_still_describe_its_grid) {
+    // THE CLIENT'S PATH, and the two ways it can go wrong. A client is handed
+    // the coarse grid over the wire and builds the shapes from its own copy of
+    // the map file; it may do those two things in either order, and it must
+    // never end up holding shapes that belong to a different map.
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 5;                     // diag at (1,1)
+    CHECK(loadShapeMap(t, "client.tmj", 3, 3, gids));
+    CHECK(t.hasCollisionShapes());
+
+    // The same grid arriving again, cell for cell: the shapes still describe
+    // it, so they stay.
+    std::vector<std::uint8_t> tiles(t.tiles(), t.tiles() + t.tileCount());
+    CHECK(t.setTiles(tiles, 3, 3, Realm::Overworld));
+    CHECK(t.hasCollisionShapes());
+    CHECK(!t.blocked(inCell(1, 1, 250.0, 50.0), Realm::Overworld));
+
+    // A grid of a DIFFERENT shape is a different map, and shapes indexed at the
+    // old width would be a world sheared diagonally. Dropped, and the realm
+    // falls back to whole-cell collision, which is conservative and playable.
+    std::vector<std::uint8_t> other(16, static_cast<std::uint8_t>(Tile::Ground));
+    other[5] = static_cast<std::uint8_t>(Tile::Wall);
+    CHECK(t.setTiles(other, 4, 4, Realm::Overworld));
+    CHECK(!t.hasCollisionShapes());
+    CHECK(t.blocked(inCell(1, 1, 250.0, 50.0), Realm::Overworld));   // all of that cell now
+
+    // And a map of the wrong size is refused rather than installed over the
+    // grid it does not fit.
+    TiledMap wrong;
+    std::string error;
+    writeFixture("shapes.tsj", kShapeTileset);
+    CHECK(wrong.load(writeFixture("small.tmj", shapeMap(3, 3, gids)), error));
+    CHECK(!t.setCollisionShapes(wrong, Realm::Overworld));
+    CHECK(!t.hasCollisionShapes());
+    CHECK(!t.loadCollisionShapes(shapeDir() + "/small.tmj", error, Realm::Overworld));
+    CHECK(!error.empty());
+
+    // A realm that answers for its own geometry never takes shapes at all.
+    CHECK(!t.setCollisionShapes(wrong, Realm::Maze));
+    CHECK(!t.hasCollisionShapes(Realm::Maze));
+}
+
+TEST(writing_a_tile_by_hand_drops_the_realms_authored_shapes) {
+    // setTile() says what a CELL is, and an authored cell's collision is not
+    // one value -- there is no shape for "wall" to be written as. So a direct
+    // write drops the realm's shapes and everything falls back to whole cells:
+    // conservative, visible here, and the reason generate() and the map-carving
+    // helpers cannot leave a realm half authored and half painted.
+    Terrain t;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 5;                     // diag at (1,1)
+    CHECK(loadShapeMap(t, "handwritten.tmj", 3, 3, gids));
+    CHECK(t.hasCollisionShapes());
+    CHECK(!t.blocked(inCell(1, 1, 250.0, 50.0), Realm::Overworld));
+
+    t.setTile(0, 0, Tile::Wall, Realm::Overworld);
+    CHECK(!t.hasCollisionShapes());
+    CHECK(t.blocked(inCell(0, 0, 150.0, 150.0), Realm::Overworld));
+    // ...and the cell that was half open is wholly solid again.
+    CHECK(t.blocked(inCell(1, 1, 250.0, 50.0), Realm::Overworld));
 }

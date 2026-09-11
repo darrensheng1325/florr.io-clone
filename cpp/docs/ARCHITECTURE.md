@@ -33,6 +33,9 @@ cpp/
     net/          bytebuffer.h protocol.h transport.{h,cpp}
                   web_channel.{h,cpp} -- WebSocket/WebTransport, emscripten
     game/         constants.h rarity.{h,cpp} components.h config.{h,cpp}
+                  difficulty.h -- a spawn band's number -> a blend of two rarities
+                  tiled_map.{h,cpp} terrain.{h,cpp} -- the .tmj reader and
+                  the collision it builds out of each tile's authored shapes
   server/         headless authoritative simulation
   client/         SDL2 window, rendering, UI, prediction
     ui/markup.*   the HTML subset chat lines arrive in
@@ -114,8 +117,12 @@ construction:
 
 * **Terrain** answers per realm. `Terrain::blocked/inWater/resolveCircle/
   segmentBlocked/hasLineOfSight/findOpenSpawn` all take a `Realm` (no default,
-  on purpose): the overworld is the tile grid, the maze is `activeMaze()`'s
-  corridor lattice, the arena is open floor inside a ring.
+  on purpose): the overworld is the map's authored collision shapes -- the
+  polygons and rectangles each tile carries in Tiled, placed per cell from
+  every layer marked `has_collision`, with the one-value-per-cell tile grid
+  kept beside them as the coarse view the minimap, the flow field and the fast
+  reject use -- the maze is `activeMaze()`'s corridor lattice, and the arena is
+  open floor inside a ring.
   `Terrain::clampInside` is the realm's closure — the world rectangle, the
   maze square, or the ring's inside face — and replaces the old world clamp.
 * **Broadphase** — `SpatialGrid` keeps one layer per realm; `insert` files an

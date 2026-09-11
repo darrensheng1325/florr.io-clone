@@ -21,6 +21,8 @@
 
 namespace flix {
 
+class WorldMaps;
+
 /// The account state the server sends after login, and keeps up to date.
 struct Profile {
     std::string username;
@@ -326,8 +328,27 @@ public:
     // -- state -------------------------------------------------------------
     WorldView& view() { return view_; }
     const WorldView& view() const { return view_; }
-    /// Locally regenerated from the authoritative seed in JoinAccepted.
+    /// The map grid the server sent, plus the collision SHAPES this client
+    /// read out of its own copy of the map. See setWorldMaps().
     const Terrain& terrain() const { return terrain_; }
+
+    /// Every map staged beside this client, which is where the COLLISION
+    /// SHAPES of the realm it is playing in come from.
+    ///
+    /// The grid over the wire is one value per cell -- ground, wall, water --
+    /// and that is all it can be: the shapes a cell actually blocks with are
+    /// polygons, thousands of them, and they are already in the map file both
+    /// ends ship. So the wire stays the authoritative COARSE view and the
+    /// dimensions, and the exact geometry is rebuilt locally from the file,
+    /// which the handshake's content hash has already proved identical to the
+    /// server's -- the map AND the tileset it names, which is where the shapes
+    /// are (ContentRegistry::foldMapsIntoHash).
+    ///
+    /// Optional: a client that sets none (and one whose data directory has no
+    /// map for the realm it is dropped into) collides against whole cells
+    /// instead -- see installLocalCollision(). The pointer is borrowed and
+    /// must outlive the connection; App owns the one this client uses.
+    void setWorldMaps(const WorldMaps* maps) { worldMaps_ = maps; }
 
     /// True once after the body was moved to another realm -- through a
     /// teleporter, which leads to another map. Consumed by the App, which
@@ -499,6 +520,12 @@ private:
     void handleSkinPublished(ByteReader&);
     void handleSkinDeleted(ByteReader&);
 
+    /// Rebuilds one realm's collision shapes from this client's own copy of
+    /// its map, right after the wire's grid for that realm was installed.
+    /// Called on the join and on every realm change, which are the only two
+    /// messages that carry a map.
+    void installLocalCollision(Realm realm);
+
     net::Dialer dialer_;
     Status status_ = Status::Offline;
 
@@ -517,6 +544,9 @@ private:
 
     WorldView view_;
     Terrain terrain_;
+    /// Borrowed; see setWorldMaps(). Null is a client that collides against
+    /// whole cells.
+    const WorldMaps* worldMaps_ = nullptr;
     Vec2 realmArrival_;
     bool realmChanged_ = false;
     Profile profile_;

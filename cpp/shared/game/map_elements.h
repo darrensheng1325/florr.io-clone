@@ -27,6 +27,7 @@
 #include "shared/core/json.h"
 #include "shared/core/types.h"
 #include "shared/game/components.h"
+#include "shared/game/difficulty.h"
 #include "shared/game/rarity.h"
 #include "shared/game/realm.h"
 #include "shared/game/tiled_map.h"
@@ -71,7 +72,7 @@ std::vector<ZoneMobEntry> parseMobDistribution(const std::string& text, std::str
 /// as inside for both shapes, because the rectangles these replaced were tested
 /// inclusively on every edge -- a mob standing exactly on a zone's border has
 /// always been in that zone, and a polygon that dropped it would be a silent
-/// behaviour change at every seam between two tier bands.
+/// behaviour change at every seam between two difficulty bands.
 bool zoneContains(const Rect& bounds, const std::vector<Vec2>& polygon, Vec2 at);
 
 /// The outline's area.
@@ -99,31 +100,35 @@ struct MapElement {
     /// The zone's outline in world coordinates, or empty when the outline IS
     /// `bounds`.
     ///
-    /// Mob bands are polygons: a tier band follows a coastline or a canyon,
+    /// Mob bands are polygons: a difficulty band follows a coastline or a canyon,
     /// and a rectangle over one of those either spills mobs onto the next
     /// tier's ground or leaves a wedge of its own permanently empty. Player
     /// spawn points are rectangles and teleporters are points.
     std::vector<Vec2> polygon;
 
-    /// Mob bands only: the mob tier that belongs in this band.
+    /// Mob bands only: HOW DANGEROUS this band is, on the open-ended scale
+    /// shared/game/difficulty.h defines. 0 is fully common, 100 is ultras,
+    /// 200 supers, 300 uniques; in between is a blend of two tiers.
     ///
-    /// Orthogonal to `mobDistribution`, which says WHAT spawns: a band is "epic
-    /// tier" and "half garden, half hornet" at the same time, and the tier
-    /// bands are still where the map's difficulty progression lives.
+    /// Orthogonal to `mobDistribution`, which says WHAT spawns: a band is
+    /// "difficulty 60" and "half garden, half hornet" at the same time, and the
+    /// bands are where the map's difficulty progression lives.
     ///
-    /// A `spawn` object WITHOUT a tier is a mob REGION rather than a band: see
-    /// isMobRegion() below.
-    Rarity spawnTier = Rarity::Common;
-    bool hasSpawnTier = false;
+    /// A `spawn` object WITHOUT a difficulty is a mob REGION rather than a
+    /// band: see isMobRegion() below. Difficulty ZERO is a real answer -- a
+    /// band that says `difficulty: 0` is a band of commons -- so it is the
+    /// PRESENCE of the property, not its value, that makes a band.
+    double difficulty = 0.0;
+    bool hasDifficulty = false;
 
     /// What this shape spawns, as weighted rows of group names and mob ids.
     /// Empty on a band means "whatever the region under it says".
     std::vector<ZoneMobEntry> mobDistribution;
 
-    /// True when this `spawn` object owns a POPULATION: a tier band, which is
-    /// stocked to a density of its own and which the world's ambient fill
-    /// stays out of.
-    bool isSpawnBand() const { return kind == MapElementKind::Spawn && hasSpawnTier; }
+    /// True when this `spawn` object owns a POPULATION: a difficulty band,
+    /// which is stocked to a density of its own and which the world's ambient
+    /// fill stays out of.
+    bool isSpawnBand() const { return kind == MapElementKind::Spawn && hasDifficulty; }
 
     /// True when it only says WHAT lives on this ground, and owns nothing.
     ///
@@ -132,15 +137,16 @@ struct MapElement {
     /// shape: danger runs in bands along a coastline, while "this is the
     /// desert" covers a whole quarter of the map. A region is the second
     /// question on its own -- a `spawn` object with a `mobs` distribution and
-    /// no `spawnType`. The ambient fill spawns inside one freely, at its own
-    /// natural tier spread, and asks the region only what to spawn.
+    /// no `difficulty`. The ambient fill spawns inside one freely, at the
+    /// difficulty of the ground it covers (the map's `defaultDifficulty`), and
+    /// asks the region only what to spawn.
     ///
     /// This is what replaced sectionAt() as the spawner's question. The nine
     /// sections used to decide what lived where implicitly, by geography
     /// nobody could move; a region says it, in the map, in a shape an author
     /// can drag.
     bool isMobRegion() const {
-        return kind == MapElementKind::Spawn && !hasSpawnTier && !mobDistribution.empty();
+        return kind == MapElementKind::Spawn && !hasDifficulty && !mobDistribution.empty();
     }
 
     /// Player spawn points only: the id a teleporter or a saved preference
@@ -240,6 +246,16 @@ public:
     const std::string& id() const { return id_; }
     void setId(std::string id) { id_ = std::move(id); }
 
+    /// The `.tmj` this was read from, as it was passed to loadTiled(). Empty
+    /// for a map a harness built in memory.
+    ///
+    /// Kept because the file is the only place a map's COLLISION SHAPES live: a
+    /// client is handed the coarse grid over the wire and rebuilds the exact
+    /// geometry from its own copy of the map (Terrain::loadCollisionShapes),
+    /// and it needs to be able to say which file that was without the manifest
+    /// being read a second time somewhere else.
+    const std::string& sourcePath() const { return sourcePath_; }
+
     /// What the spawn picker calls this map, from its `displayName` property.
     /// Empty falls back to the id.
     const std::string& displayName() const { return displayName_; }
@@ -261,6 +277,13 @@ public:
     /// mobs.json does not define is reported once by the spawner, which is
     /// where the content registry is; it cannot be checked here.
     const std::string& defaultMobGroup() const { return defaultMobGroup_; }
+
+    /// The difficulty of ground no band covers, from the map's
+    /// `defaultDifficulty` property. DEFAULTS TO ZERO, so a map an author has
+    /// only painted art on -- garden.tmj, today -- grows nothing but commons
+    /// until they draw a band, rather than inheriting a spread nobody asked
+    /// for. See shared/game/difficulty.h for what the number means.
+    double defaultDifficulty() const { return defaultDifficulty_; }
 
     /// The map's size in TILES. The map decides: a corridor level is a hundred
     /// tiles across and the overworld is sixty-four, and nothing here assumes
@@ -371,9 +394,11 @@ private:
     std::vector<const MapElement*> playerSpawns_;
     Realm realm_ = Realm::Overworld;
     std::string id_;
+    std::string sourcePath_;
     std::string displayName_;
     std::string biome_;
     std::string defaultMobGroup_;
+    double defaultDifficulty_ = 0.0;
     /// The map's art, straight out of the file. Copied rather than referenced
     /// because the TiledMap that parsed it is a load-time scratch object and
     /// the renderer reads these every frame.

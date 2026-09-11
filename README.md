@@ -75,7 +75,11 @@ shapes when the artwork exceeds the 24-shape limit.
 - **PvP arena** with dedicated spawner and rendering
 - **Bots** for populating servers
 - **Daily streak** rewards and a tutorial flow for new players
-- **Tiled maps** (`maps/*.tmj`, listed by `maps/maps.json`) for the world's art layers, collision, spawn zones, doors and teleporters
+- **Tiled maps** (`maps/*.tmj`, listed by `maps/maps.json`) for the world's art layers, doors and
+  teleporters. Collision is the collision shapes each tile carries in Tiled's Tile Collision
+  Editor, placed per cell from every layer marked `has_collision` — so a flower walks up to the
+  edge of the drawn stone, not to the cell boundary. A spawn band carries a `difficulty` number
+  rather than a rarity: 0 is fully common, 100 ultra, 200 super, 300 unique. See `maps/README.md`
 - **SVG → skin converter** (`SvgToSkin.html`, `scripts/svg-to-skin.js`) for turning artwork into custom-skin commands
 - **Persistence** via custom JSON database
 - **HTTPS** support (drop `cert.crt` / `cert.key` at the project root). If that
@@ -106,7 +110,6 @@ Typed on the server's stdin, or via `/admin` in chat:
 - `save` / `save <playerId>` — persist player progress
 - `list-players`, `list-sockets` — enumerate connections
 - `spawn <mobType> <rarity> [x y]` — spawn a mob (e.g. `spawn hornet legendary 1000 2000`)
-- `spawn_special_mobs` — spawn ultra/super/unique tiers
 - `set_max_enemies <n>` — cap concurrent enemy count
 
 Mob types include: `bee`, `hornet`, `mantis`, `ladybug`, `soldier_ant`, `leafbug`, `bush`, `target_dummy`, `item_spawner`. See `src/mobs.ts` for the current list.

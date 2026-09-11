@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -99,9 +100,9 @@ const ContentRegistry& synthetic() {
 /// tests further down; declared here because the fill test wants them too.
 const WorldMaps& shippedMaps();
 
-/// The AUTHORED fixture map -- bands, regions and boss plots, written by this
-/// file. Defined with the band tests for the same reason. See its definition
-/// for why the shipped map cannot stand in for it any more.
+/// The AUTHORED fixture map -- bands of several difficulties and a region,
+/// written by this file. Defined with the band tests for the same reason. See
+/// its definition for why the shipped map cannot stand in for it any more.
 const MapData& authoredMap();
 const WorldMaps& authoredMaps();
 
@@ -258,38 +259,198 @@ TEST(a_group_with_nothing_in_it_yields_no_mob_type) {
     CHECK_EQ(spawner.chooseGroupMob(content, 9999, Rarity::Common, rng), kInvalidIndex);
 }
 
-TEST(natural_rarity_drift_can_reach_ultra_but_no_higher) {
-    const ContentRegistry& content = shipped();
-    const MobConfig& bee = content.mob(content.mobIndex("bee"));
-    Rng rng(9001);
+// ---------------------------------------------------------------------------
+// The difficulty curve
+// ---------------------------------------------------------------------------
+//
+// THE INVARIANT these replaced: a spawn's rarity is a function of the GROUND'S
+// DIFFICULTY, not of a global "natural spread" table and not of a tier a band
+// names outright. A difficulty maps to a continuous tier value through the
+// anchor table in shared/game/difficulty.h, and the spawn is a blend of the two
+// tiers either side of it. The four anchors below are the design statement the
+// user wrote, so they are asserted as stated -- over a big sample, because a
+// blend is a distribution and not a value.
 
-    bool sawCommon = false;
-    bool sawMythic = false;
-    bool sawUltra = false;
-    for (int i = 0; i < 20000; ++i) {
-        const Rarity r = SpawnSystem::rollRarity(bee, rng);
-        CHECK(rarityIndex(r) <= rarityIndex(Rarity::Ultra));
-        sawCommon = sawCommon || r == Rarity::Common;
-        sawMythic = sawMythic || r == Rarity::Mythic;
-        sawUltra = sawUltra || r == Rarity::Ultra;
+namespace {
+
+/// The measured share of each rarity over `samples` rolls of one difficulty at
+/// neutral luck.
+std::array<double, kRarityCount> rolledSpread(double difficulty, int samples,
+                                              std::uint64_t seed = 4242) {
+    Rng rng(seed);
+    std::array<int, kRarityCount> counts{};
+    for (int i = 0; i < samples; ++i) {
+        ++counts[static_cast<std::size_t>(
+            rarityIndex(rollSpawnRarity(difficulty, kNeutralSpawnLuck, rng)))];
     }
-    // The tails of the table are reachable, so the ceiling above is a real
-    // bound and not an artefact of never rolling high.
-    CHECK(sawCommon);
-    CHECK(sawMythic);
-    CHECK(sawUltra);
+    std::array<double, kRarityCount> shares{};
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        shares[i] = static_cast<double>(counts[i]) / static_cast<double>(samples);
+    }
+    return shares;
 }
 
-TEST(natural_rarity_respects_min_rarity) {
+/// The expected tier index of a difficulty, straight off the pure blend.
+double expectedTier(double difficulty) {
+    const TierMix mix = tierMixForDifficulty(difficulty);
+    return rarityIndex(mix.lower) * (1.0 - mix.upperChance) +
+           rarityIndex(mix.upper) * mix.upperChance;
+}
+
+} // namespace
+
+TEST(the_difficulty_curve_hits_the_four_authored_anchors) {
+    // Difficulty 0 is FULLY common: no drift up, no drift down, nothing else in
+    // it at all. "Fully common means fully common" is why there is no downward
+    // drift in the curve and why the luck nudge is zero at neutral luck.
+    const auto zero = rolledSpread(0.0, 200000);
+    CHECK_NEAR(zero[rarityIndex(Rarity::Common)], 1.0, 1e-12);
+
+    // 100 -> 98% ultra, 2% super.
+    const auto hundred = rolledSpread(100.0, 200000);
+    CHECK_NEAR(hundred[rarityIndex(Rarity::Ultra)], 0.98, 0.005);
+    CHECK_NEAR(hundred[rarityIndex(Rarity::Super)], 0.02, 0.005);
+
+    // 200 -> nothing but supers.
+    const auto twoHundred = rolledSpread(200.0, 200000);
+    CHECK_NEAR(twoHundred[rarityIndex(Rarity::Super)], 1.0, 1e-12);
+
+    // 300 -> 95% unique, 5% apex.
+    const auto threeHundred = rolledSpread(300.0, 200000);
+    CHECK_NEAR(threeHundred[rarityIndex(Rarity::Unique)], 0.95, 0.005);
+    CHECK_NEAR(threeHundred[rarityIndex(Rarity::Apex)], 0.05, 0.005);
+
+    // And the pure blend agrees with the sample, so everything below can be
+    // asserted without paying for two hundred thousand rolls.
+    CHECK_NEAR(tierValueForDifficulty(0.0), 0.00, 1e-12);
+    CHECK_NEAR(tierValueForDifficulty(100.0), 6.02, 1e-12);
+    CHECK_NEAR(tierValueForDifficulty(200.0), 7.00, 1e-12);
+    CHECK_NEAR(tierValueForDifficulty(300.0), 8.05, 1e-12);
+}
+
+TEST(safe_ground_is_ground_that_cannot_roll_a_rare) {
+    // kDangerousGroundDifficulty is the line a door, a bot's birthplace and the
+    // beginner-band fallback all stay under, so what matters is what the blend
+    // JUST UNDER it can contain -- not what the blend AT it mostly is.
+    //
+    // The bug this pins: stating the line at t = 2 ("rare") reads as "the
+    // ground is rare here", but on a blended curve t = 1.99 is already 98.7%
+    // rare, and every one of those difficulties counted as SAFE. The line
+    // belongs at the top of pure uncommon instead.
+    const TierMix justUnder = tierMixForDifficulty(std::nextafter(
+        kDangerousGroundDifficulty, 0.0));
+    CHECK(rarityIndex(justUnder.lower) < rarityIndex(Rarity::Rare));
+    CHECK(rarityIndex(justUnder.upper) < rarityIndex(Rarity::Rare));
+    CHECK_NEAR(tierValueForDifficulty(kDangerousGroundDifficulty), 1.0, 1e-9);
+
+    // And a hair above it, a rare is on the table. If it were not, the line
+    // would simply be too low and safe ground would be needlessly small.
+    const TierMix justOver = tierMixForDifficulty(std::nextafter(
+        kDangerousGroundDifficulty, 1000.0));
+    CHECK(rarityIndex(justOver.upper) >= rarityIndex(Rarity::Rare));
+
+    // Sampled, so the claim is about what actually spawns and not only about
+    // the arithmetic: nothing rare comes out of the last safe difficulty.
+    const auto spread = rolledSpread(std::nextafter(kDangerousGroundDifficulty, 0.0), 50000);
+    for (int tier = rarityIndex(Rarity::Rare); tier < kRarityCount; ++tier) {
+        CHECK_NEAR(spread[static_cast<std::size_t>(tier)], 0.0, 1e-12);
+    }
+}
+
+TEST(a_higher_difficulty_never_spawns_a_lower_tier) {
+    // Monotonicity, over the whole authored range and past the end of it. A
+    // curve that dipped anywhere would make a stretch of a map's progression
+    // run backwards, which is the one thing a difficulty scale must not do.
+    double previous = -1.0;
+    for (double difficulty = -200.0; difficulty <= 600.0; difficulty += 0.25) {
+        const double expected = expectedTier(difficulty);
+        if (expected < previous - 1e-12) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "expected tier fell at difficulty " +
+                                         std::to_string(difficulty));
+            break;
+        }
+        previous = expected;
+        // And the two tiers of a blend are always adjacent, so a difficulty
+        // never produces something two tiers from what it says.
+        const TierMix mix = tierMixForDifficulty(difficulty);
+        CHECK(rarityIndex(mix.upper) - rarityIndex(mix.lower) <= 1);
+    }
+}
+
+TEST(difficulty_clamps_below_zero_and_ramps_past_three_hundred) {
+    // Below zero clamps: there is nothing gentler than fully common.
+    for (const double difficulty : {-1.0, -50.0, -10000.0}) {
+        const TierMix mix = tierMixForDifficulty(difficulty);
+        CHECK(mix.lower == Rarity::Common);
+        CHECK_EQ(mix.upperChance, 0.0);
+    }
+
+    // Above 300 CONTINUES the 200-to-300 slope instead of behaving like 300: a
+    // bigger number must always mean at least as dangerous, and eventually
+    // means apex. On the shipped anchors the slope is 0.0105 tiers per point,
+    // so apex is reached at difficulty 390.48 and never before it.
+    CHECK(tierValueForDifficulty(350.0) > tierValueForDifficulty(300.0));
+    CHECK_NEAR(tierValueForDifficulty(350.0), 8.05 + 50.0 * 0.0105, 1e-12);
+    CHECK(tierValueForDifficulty(389.0) < kMaxTierValue);
+    CHECK_NEAR(tierValueForDifficulty(400.0), kMaxTierValue, 1e-12);
+    CHECK_NEAR(tierValueForDifficulty(1e6), kMaxTierValue, 1e-12);
+
+    // At the top the blend is apex alone rather than an apex/nothing pair.
+    const TierMix top = tierMixForDifficulty(500.0);
+    CHECK(top.lower == Rarity::Apex);
+    CHECK(top.upper == Rarity::Apex);
+    CHECK_EQ(top.upperChance, 0.0);
+    Rng rng(7);
+    for (int i = 0; i < 1000; ++i) {
+        CHECK(rollSpawnRarity(500.0, kNeutralSpawnLuck, rng) == Rarity::Apex);
+    }
+}
+
+TEST(luck_shifts_the_curve_upward_and_never_down) {
+    // Neutral luck is exactly the anchors -- asserted above -- so the only
+    // thing left is that luck moves UP and only up. A clover buys a hundredth
+    // of a tier per point, which at difficulty zero is the chance of an
+    // uncommon rather than a common.
+    CHECK_EQ(luckTierDrift(kNeutralSpawnLuck), 0.0);
+    CHECK_EQ(luckTierDrift(0.0), 0.0);            // cursed is not punished
+    CHECK_EQ(luckTierDrift(-100.0), 0.0);
+    CHECK(luckTierDrift(kNeutralSpawnLuck + 1.0) > 0.0);
+
+    Rng rng(11);
+    int uncommons = 0;
+    const int samples = 200000;
+    for (int i = 0; i < samples; ++i) {
+        const Rarity r = rollSpawnRarity(0.0, kNeutralSpawnLuck + 1.0, rng);
+        CHECK(rarityIndex(r) <= rarityIndex(Rarity::Uncommon));
+        if (r == Rarity::Uncommon) ++uncommons;
+    }
+    // One point of luck, one hundredth of a tier.
+    CHECK_NEAR(static_cast<double>(uncommons) / samples, 0.01, 0.003);
+
+    // A luck-free roll at the same difficulty stays fully common, so the shift
+    // above is luck and not noise.
+    const auto neutral = rolledSpread(0.0, 20000);
+    CHECK_NEAR(neutral[rarityIndex(Rarity::Common)], 1.0, 1e-12);
+}
+
+TEST(min_rarity_still_floors_a_named_mob_whatever_the_ground_says) {
     const ContentRegistry& content = shipped();
     const MobConfig& evil = content.mob(content.mobIndex("evil_centipede"));
     CHECK_EQ(evil.minRarity, Rarity::Rare);
 
+    // Difficulty zero is fully common ground, and an evil centipede still
+    // cannot exist below rare: the floor is a property of the MOB, which is why
+    // min_rarity survived the removal of the rarity-zone scheme.
     Rng rng(77);
     for (int i = 0; i < 5000; ++i) {
-        const Rarity r = SpawnSystem::rollRarity(evil, rng);
-        CHECK(rarityIndex(r) >= rarityIndex(Rarity::Rare));
-        CHECK(rarityIndex(r) <= rarityIndex(Rarity::Ultra));
+        CHECK(SpawnSystem::rollRarity(evil, 0.0, kNeutralSpawnLuck, rng) == Rarity::Rare);
+    }
+    // A mob with no floor takes the ground's answer unchanged.
+    const MobConfig& bee = content.mob(content.mobIndex("bee"));
+    for (int i = 0; i < 5000; ++i) {
+        CHECK(SpawnSystem::rollRarity(bee, 0.0, kNeutralSpawnLuck, rng) == Rarity::Common);
+        CHECK(SpawnSystem::rollRarity(bee, 200.0, kNeutralSpawnLuck, rng) == Rarity::Super);
     }
 }
 
@@ -414,13 +575,13 @@ TEST(mobs_nobody_has_been_near_are_recycled) {
     CHECK(sim.spawner.census().despawnedTotal >= despawnedBefore + populated);
 }
 
-TEST(the_shipped_map_stocks_its_default_group_with_no_bands_at_all) {
-    // The new shape of the game's own data: garden.tmj draws art and a door
-    // and says nothing else. No tier bands, no mob regions, and no properties
-    // -- so the map's biome falls back to its id, its default mob group falls
-    // back to its biome, and the ambient fill has nothing but that group to go
-    // on. A map that resolved to an empty group would stand a player in an
-    // empty world, silently, which is what this pins.
+TEST(the_shipped_map_stocks_its_default_group) {
+    // The new shape of the game's own data: garden.tmj draws art and a door and
+    // declares no map properties at all, so the map's biome falls back to its
+    // id and its default mob group falls back to its biome -- and that group is
+    // what the ambient fill asks for over every square no band has given a
+    // roster of its own. A map that resolved to an empty group would stand a
+    // player in an empty world, silently, which is what this pins.
     if (!shippedMaps().forRealm(Realm::Overworld)) {
         ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
         return;
@@ -429,10 +590,33 @@ TEST(the_shipped_map_stocks_its_default_group_with_no_bands_at_all) {
     CHECK_EQ(world.defaultMobGroup(), std::string("garden"));
     const std::uint16_t garden = shipped().mobGroupIndex(world.defaultMobGroup());
     CHECK(garden != kInvalidIndex);
+    // Not "there are no bands" -- the author adds them, and gives some of them
+    // rosters of their own, as the map is balanced. What every band owes is that
+    // each row it names is something the content actually defines: a group, or a
+    // mob id. A row that resolves to neither is a typo the fill would answer
+    // with an empty zone.
     for (const MapElement& element : world.elements()) {
-        CHECK(!element.isSpawnBand());
-        CHECK(!element.isMobRegion());
+        if (!element.isSpawnBand() && !element.isMobRegion()) continue;
+        for (const ZoneMobEntry& row : element.mobDistribution) {
+            if (shipped().mobGroupIndex(row.name) == kInvalidIndex &&
+                shipped().mobIndex(row.name) == kInvalidIndex) {
+                ::testing::reportFailure(__FILE__, __LINE__,
+                                         "a band on the shipped map names \"" + row.name +
+                                             "\", which is neither a mob group nor a mob");
+            }
+        }
     }
+
+    // A band that names its OWN roster answers for what grows in it; the
+    // default group is what everywhere else falls back to, and that is what is
+    // being measured. Mobs standing on such a band are left out below.
+    const auto onABandWithItsOwnRoster = [&](Vec2 position) {
+        for (const MapElement& element : world.elements()) {
+            if (!element.isSpawnBand() || element.mobDistribution.empty()) continue;
+            if (element.contains(position)) return true;
+        }
+        return false;
+    };
 
     Sim sim;
     sim.spawner.worldMaps = &shippedMaps();
@@ -450,8 +634,9 @@ TEST(the_shipped_map_stocks_its_default_group_with_no_bands_at_all) {
         // An escort is not an ambient spawn. `ant_hole` IS a garden mob, and
         // what it puts in the world is a hell of ants that are in no garden
         // group at all -- the fill chose the hole, the hole chose them. Same
-        // exemption the boss pass's test makes, and for the same reason.
+        // exemption the hard-band test makes, and for the same reason.
         if (sim.world.has<HoleTether>(e)) return;
+        if (onABandWithItsOwnRoster(transform.position)) return;
         ++checked;
         const MobConfig& config = shipped().mob(type.configIndex);
         bool member = false;
@@ -1206,7 +1391,7 @@ const WorldMaps& shippedMaps() {
 // ---------------------------------------------------------------------------
 //
 // The shipped map is hand-drawn art with one door on it and no annotations at
-// all: no tier bands, no mob regions. That is the new normal -- an author
+// all: no difficulty bands, no mob regions. That is the new normal -- an author
 // paints a map and the mobs follow from its `defaultMobGroup` -- and it means
 // the shipped data can no longer stand in for "a map with bands on it".
 //
@@ -1228,7 +1413,7 @@ std::string writeTiledFixture(const std::string& name, const std::string& body) 
         tileset << R"({"name": "fixture", "type": "tileset", "version": "1.10",
  "tilewidth": 300, "tileheight": 300, "tilecount": 1, "columns": 0,
  "grid": {"orientation": "orthogonal", "width": 300, "height": 300},
- "tiles": [{"id": 0, "image": "tiles/grass_c_0.svg", "imagewidth": 256, "imageheight": 256}]})";
+ "tiles": [{"id": 0, "image": "tiles/grass_c_0.svg", "imagewidth": 300, "imageheight": 300}]})";
     }
     const std::string path = dir + "/" + name;
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -1237,62 +1422,102 @@ std::string writeTiledFixture(const std::string& name, const std::string& body) 
 }
 
 /// The 1x1 map body every fixture here shares: one empty cell, one tileset,
-/// and whatever `spawns` objects the caller wrote.
-std::string fixtureMapBody(const std::string& spawns) {
-    return R"({
+/// whatever `spawns` objects the caller wrote, and whatever MAP properties it
+/// wants (a `defaultDifficulty` and a `defaultMobGroup`, for the tests about
+/// ground no band covers).
+std::string fixtureMapBody(const std::string& spawns, const std::string& properties = {}) {
+    std::string out = R"({
       "type": "map", "orientation": "orthogonal", "infinite": false,
-      "width": 1, "height": 1, "tilewidth": 300, "tileheight": 300,
+      "width": 1, "height": 1, "tilewidth": 300, "tileheight": 300,)";
+    if (!properties.empty()) out += "\n      \"properties\": [" + properties + "],";
+    out += R"(
       "tilesets": [{"firstgid": 1, "source": "fixture.tsj"}], "layers": [
         {"type": "tilelayer", "name": "ground", "width": 1, "height": 1, "data": [0]},
         {"type": "objectgroup", "name": "spawns", "objects": [)" + spawns + R"(]}
       ]})";
+    return out;
 }
 
-/// One `spawn` object: a rectangle, an optional tier, and a distribution.
-/// No tier makes it a mob REGION rather than a band.
-std::string spawnObject(int id, double x, double y, double w, double h, const std::string& tier,
-                        const std::string& mobs) {
+/// One `spawn` object: a rectangle, an optional DIFFICULTY, and a distribution.
+/// No difficulty makes it a mob REGION rather than a band -- difficulty zero is
+/// a band of commons, which is why the marker for "no difficulty" is a missing
+/// property rather than a zero.
+std::string spawnObject(int id, double x, double y, double w, double h, bool hasDifficulty,
+                        double difficulty, const std::string& mobs) {
     std::string out = "{\"id\": " + std::to_string(id) + ", \"class\": \"spawn\", \"x\": " +
                       std::to_string(x) + ", \"y\": " + std::to_string(y) + ", \"width\": " +
                       std::to_string(w) + ", \"height\": " + std::to_string(h) +
                       ", \"properties\": [";
-    if (!tier.empty()) {
-        out += "{\"name\": \"spawnType\", \"type\": \"string\", \"value\": \"" + tier + "\"},";
+    if (hasDifficulty) {
+        out += "{\"name\": \"difficulty\", \"type\": \"float\", \"value\": " +
+               std::to_string(difficulty) + "},";
     }
     out += "{\"name\": \"mobs\", \"type\": \"string\", \"value\": \"" + mobs + "\"}]}";
     return out;
 }
 
+/// The DPS row's difficulties: the one difficulty per tier at which that tier
+/// is EXACTLY what the ground grows (an integer tier value, so the blend is one
+/// tier with no fraction in it). Nine rungs, common through unique -- apex is
+/// the top of the curve and a tenth dummy would need a difficulty past the
+/// clamp.
+inline constexpr int kDummyRowRungs = 9;
+const std::array<double, kDummyRowRungs>& dummyRowDifficulties() {
+    static const std::array<double, kDummyRowRungs> table = [] {
+        std::array<double, kDummyRowRungs> out{};
+        for (int i = 0; i < kDummyRowRungs; ++i) {
+            out[static_cast<std::size_t>(i)] = difficultyForTierValue(i);
+        }
+        return out;
+    }();
+    return table;
+}
+/// A `spawn` object with no difficulty: a mob region.
+std::string regionObject(int id, double x, double y, double w, double h,
+                         const std::string& mobs) {
+    return spawnObject(id, x, y, w, h, false, 0.0, mobs);
+}
+
+/// A `spawn` object WITH a difficulty: a band.
+std::string bandObject(int id, double x, double y, double w, double h, double difficulty,
+                       const std::string& mobs) {
+    return spawnObject(id, x, y, w, h, true, difficulty, mobs);
+}
+
 /// The authored overworld the band tests run against.
 ///
 ///   * a mob REGION over the whole world, naming the ant hell's roster;
-///   * a big common band in the top-left, with one target-dummy band per tier
-///     nested inside it -- the DPS row, which is the one thing on the map that
-///     is spawned because a band NAMES it rather than because a group rolled
-///     it;
-///   * a legendary hornet band, so a named row exists at a tier nothing
-///     ambient would produce there;
-///   * a mythic and an ultra plot, which is where the boss pass may stand a
-///     boss and nowhere else. Both sit well away from the region test's viewer
-///     so one test's bosses are not another's neighbourhood.
+///   * a big difficulty-0 band in the top-left, with one target-dummy band per
+///     rung nested inside it -- the DPS row, which is the one thing on the map
+///     that is spawned because a band NAMES it rather than because a group
+///     rolled it;
+///   * a difficulty-66 hornet band (legendary ground), so a named row exists at
+///     a tier the difficulty-0 ground around it would never produce;
+///   * a difficulty-83 and a difficulty-100 plot -- mythic and ultra ground --
+///     well away from the region test's viewer, so one test's high-tier mobs
+///     are not another's neighbourhood.
 const MapData& authoredMap() {
     static const MapData map = [] {
-        std::string objects = spawnObject(1, 0, 0, 60000, 60000, "", "ant_hell 100%");
-        objects += "," + spawnObject(2, 1000, 1000, 16000, 16000, "common", "");
-        // One dummy band per tier, in a row inside the common band above.
-        const char* tiers[] = {"common",  "uncommon", "rare",  "epic",   "legendary",
-                               "mythic",  "ultra",    "super", "unique"};
+        std::string objects = regionObject(1, 0, 0, 60000, 60000, "ant_hell 100%");
+        objects += "," + bandObject(2, 1000, 1000, 16000, 16000, 0.0, "");
+        // One dummy band per rung of the ladder, in a row inside the band
+        // above. The difficulties are the curve's own:
+        // dummyRowDifficulties()[i] is the difficulty whose tier value is
+        // exactly i, so that band grows nothing but tier i.
         int id = 10;
-        for (int i = 0; i < 9; ++i) {
-            objects += "," + spawnObject(id++, 1500.0 + i * 1600.0, 1500.0, 1200.0, 1200.0,
-                                         tiers[i], "target_dummy 100%");
+        for (int i = 0; i < kDummyRowRungs; ++i) {
+            objects += "," + bandObject(id++, 1500.0 + i * 1600.0, 1500.0, 1200.0, 1200.0,
+                                        dummyRowDifficulties()[static_cast<std::size_t>(i)],
+                                        "target_dummy 100%");
         }
-        objects += "," + spawnObject(30, 2000, 8000, 6000, 6000, "legendary", "hornet 100%");
-        // The boss plots. kCentre (30000, 30000) is inside the mythic one, so
-        // the neighbourhood tests have a band over them; the ultra plot is in
-        // the far corner, out of every viewer's reach.
-        objects += "," + spawnObject(40, 24000, 24000, 12000, 12000, "mythic", "");
-        objects += "," + spawnObject(41, 46000, 2000, 10000, 10000, "ultra", "");
+        objects += "," + bandObject(30, 2000, 8000, 6000, 6000,
+                                    difficultyForTierValue(rarityIndex(Rarity::Legendary)),
+                                    "hornet 100%");
+        // kCentre (30000, 30000) is inside the first of these, so the
+        // neighbourhood tests have a band over them.
+        objects += "," + bandObject(40, 24000, 24000, 12000, 12000,
+                                    difficultyForTierValue(rarityIndex(Rarity::Mythic)), "");
+        objects += "," + bandObject(41, 46000, 2000, 10000, 10000, 100.0, "");
 
         const std::string path = writeTiledFixture("authored.tmj", fixtureMapBody(objects));
         MapData out;
@@ -1321,7 +1546,7 @@ const WorldMaps& authoredMaps() {
 /// rather than against a hard-coded list that the map is free to outgrow.
 struct NamedRow {
     Rect bounds;
-    Rarity tier;
+    double difficulty = 0.0;
     std::string mobType;
 };
 
@@ -1332,7 +1557,7 @@ std::vector<NamedRow> namedBandRows() {
         for (const ZoneMobEntry& entry : element.mobDistribution) {
             // A row is a group or a mob; only the mobs are of interest here.
             if (shipped().mobGroupIndex(entry.name) != kInvalidIndex) continue;
-            rows.push_back(NamedRow{element.bounds, element.spawnTier, entry.name});
+            rows.push_back(NamedRow{element.bounds, element.difficulty, entry.name});
         }
     }
     return rows;
@@ -1346,8 +1571,8 @@ TEST(a_band_keeps_the_mob_it_names) {
         return;
     }
     const std::vector<NamedRow> rows = namedBandRows();
-    // Nine dummy rows plus the legendary hornets. A parser that drops the name
-    // leaves this at zero, which is exactly the bug this guards.
+    // Nine dummy rows plus the legendary-ground hornets. A parser that drops
+    // the name leaves this at zero, which is exactly the bug this guards.
     CHECK(rows.size() >= 10);
 
     int dummyRows = 0;
@@ -1397,6 +1622,7 @@ TEST(the_dummy_bands_actually_build_the_dps_row) {
         where.push_back(transform.position);
     });
     CHECK(dummies > 0);
+    CHECK_EQ(dummyRowDifficulties().size(), std::size_t{kDummyRowRungs});
 
     // Permanent and unkillable, so a duplicate would stand there forever: one
     // of each rarity per section, no more.
@@ -1413,15 +1639,18 @@ TEST(the_dummy_bands_actually_build_the_dps_row) {
         }
     }
 
-    // And every tier is one a dummy band actually declares. The dummy bands
-    // between them cover common..unique and the viewport sampled above
-    // overlaps several, so the set is wider than one band -- but a DRIFTED
-    // tier would fall outside it, and drift is exactly what a permanent
-    // fixture must not take (a tier nothing asked for is one the
-    // one-per-section check never cleared).
+    // And every tier is one a dummy band's DIFFICULTY actually produces. The
+    // dummy bands between them cover common..unique and the viewport sampled
+    // above overlaps several, so the set is wider than one band -- but a tier
+    // no band's difficulty can reach would fall outside it, and each of these
+    // bands sits on an exact rung of the curve, so its blend is one tier with
+    // no fraction in it.
     std::vector<Rarity> declared;
     for (const NamedRow& row : namedBandRows()) {
-        if (row.mobType == "target_dummy") declared.push_back(row.tier);
+        if (row.mobType != "target_dummy") continue;
+        const TierMix mix = tierMixForDifficulty(row.difficulty);
+        declared.push_back(mix.lower);
+        if (mix.upperChance > 0.0) declared.push_back(mix.upper);
     }
     for (const Rarity tier : tiers) {
         CHECK(std::find(declared.begin(), declared.end(), tier) != declared.end());
@@ -1464,7 +1693,8 @@ TEST(a_target_dummy_is_smaller_than_the_wild_mob_of_its_tier) {
 namespace {
 
 /// Writes a one-zone Tiled map whose spawn polygon covers a 14000-unit square,
-/// carrying `distribution` verbatim as its `mobs` property. Same one-cell
+/// carrying `distribution` verbatim as its `mobs` property. Difficulty 0, so
+/// every mob it grows is a common and these tests are about WHICH mob. Same one-cell
 /// shape as fixtureMapBody() above -- a map must name a tileset and carry a
 /// tile layer to be a map, and the Sim brings its own flat terrain.
 std::string writeZoneMap(const std::string& name, const std::string& distribution) {
@@ -1472,7 +1702,7 @@ std::string writeZoneMap(const std::string& name, const std::string& distributio
         R"({"id": 1, "class": "spawn", "x": 2000, "y": 2000,
             "polygon": [{"x":0,"y":0},{"x":14000,"y":0},{"x":14000,"y":14000},{"x":0,"y":14000}],
             "properties": [
-              {"name": "spawnType", "type": "string", "value": "common"},
+              {"name": "difficulty", "type": "int", "value": 0},
               {"name": "mobs", "type": "string", "value": ")" + distribution + R"("}
             ]})";
     return writeTiledFixture(name, fixtureMapBody(polygon));
@@ -1589,8 +1819,7 @@ TEST(a_distribution_splits_in_roughly_the_authored_proportion) {
 //
 // Every map is its own coordinate space. A band on a biome map is stocked for
 // the flower standing on THAT map, through that map's own walls, and the
-// overworld's boss pass and census never read another map's numbers as their
-// own. Each of these pins one place the spawner used to compare positions
+// overworld's own census never reads another map's numbers as its own. Each of these pins one place the spawner used to compare positions
 // across realms.
 
 namespace {
@@ -1617,19 +1846,6 @@ int mobsInRealm(World& world, Realm realm) {
     int n = 0;
     Query<MobTag, Transform> mobs{world};
     mobs.each([&](Entity, MobTag&, Transform& t) { n += t.realm == realm ? 1 : 0; });
-    return n;
-}
-
-/// The ultras standing on the overworld that the boss pass would count as
-/// its own -- a permanent fixture is not one.
-int overworldUltras(World& world) {
-    int n = 0;
-    Query<MobTag, MobType, Transform> mobs{world};
-    mobs.each([&](Entity, MobTag&, MobType& type, Transform& t) {
-        if (t.realm != Realm::Overworld || type.rarity != Rarity::Ultra) return;
-        if (shipped().mob(type.configIndex).neverAmbient) return;
-        ++n;
-    });
     return n;
 }
 
@@ -1790,132 +2006,352 @@ TEST(a_flower_on_another_map_does_not_stock_the_overworld_at_its_numbers) {
     CHECK_EQ(sim.mobCount(), 0);
 }
 
-TEST(the_boss_pass_only_ever_stands_a_boss_in_an_overworld_plot) {
-    if (!authoredMap().loaded()) {
-        ::testing::reportFailure(__FILE__, __LINE__, "the authored fixture map did not load");
+TEST(a_hard_band_is_where_every_boss_in_the_world_comes_from) {
+    // THE INVARIANT that replaced the boss pass. There is no scheduler keeping
+    // one ultra alive in the world and one super per section any more: a band's
+    // DIFFICULTY is the only thing that produces a high-tier mob, so a
+    // difficulty-200 band is full of supers and a map with no hard band has no
+    // bosses at all. Those two rules cannot coexist with a pass that rations
+    // one ultra to the whole world, which is why the pass is gone.
+    //
+    // Also checks what survived: the ANNOUNCEMENT. A super, unique or apex is
+    // queued for the chat channel from the band fill, which is now the spawn
+    // path that produces them.
+    const std::string path = writeTiledFixture(
+        "flix_hard_band.tmj",
+        fixtureMapBody(bandObject(1, 2000, 2000, 14000, 14000, 200.0, "hornet 100%")));
+    MapData map;
+    std::string error;
+    if (!map.loadTiled(path, error) || map.elements().size() != 1) {
+        std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+        CHECK(false);
         return;
     }
-    const MapData& world = authoredMap();
-    const auto inOverworldBossPlot = [&](Vec2 at) {
-        for (const MapElement& element : world.elements()) {
-            if (!element.isSpawnBand()) continue;
-            if (element.spawnTier != Rarity::Mythic && element.spawnTier != Rarity::Ultra) continue;
-            if (element.contains(at)) return true;
-        }
-        return false;
-    };
+    CHECK(map.elements()[0].isSpawnBand());
+    CHECK_NEAR(map.elements()[0].difficulty, 200.0, 1e-9);
 
-    // Many seeds, because the leak this guards was a proportional share of the
-    // mythic branch rather than every pass: a second map's mythic block at
-    // small numbers used to be sampled as if it were the overworld's.
-    int bosses = 0;
-    for (std::uint64_t seed = 1; seed <= 40; ++seed) {
-        Sim sim;
-        sim.rng.reseed(seed);
-        sim.spawner.worldMaps = &authoredMaps();
-        sim.tick({});   // the startup boss pass, nobody online
-        Query<MobTag, MobType, Transform> mobs{sim.world};
-        mobs.each([&](Entity e, MobTag&, MobType& type, Transform& t) {
-            if (rarityIndex(type.rarity) < rarityIndex(Rarity::Ultra)) return;
-            // The boss itself: its escorts ring it and its body trails it.
-            if (sim.world.has<HoleTether>(e)) return;
-            if (const BodySegment* link = sim.world.tryGet<BodySegment>(e)) {
-                if (!link->head) return;
-            }
-            ++bosses;
-            CHECK(t.realm == Realm::Overworld);
-            // The Sim's overworld is flat and ungenerated, so nothing pushed
-            // the boss off the point that was sampled for it.
-            if (!inOverworldBossPlot(t.position)) {
-                ::testing::reportFailure(__FILE__, __LINE__,
-                                         "seed " + std::to_string(seed) + ": " +
-                                             rarityName(type.rarity) + " " +
-                                             shipped().mob(type.configIndex).id +
-                                             " outside every overworld boss plot at " +
-                                             std::to_string(t.position.x) + "," +
-                                             std::to_string(t.position.y));
-            }
-        });
+    Sim sim;
+    WorldMaps maps;
+    maps.adoptSingle(map);
+    sim.spawner.worldMaps = &maps;
+    const std::vector<Vec2> players{{9000, 9000}};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    int mobs = 0;
+    Query<MobTag, MobType> live{sim.world};
+    live.each([&](Entity, MobTag&, MobType& type) {
+        ++mobs;
+        // Difficulty 200 is the super anchor: nothing else may come out of it.
+        if (type.rarity != Rarity::Super) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     std::string("a difficulty-200 band spawned a ") +
+                                         rarityName(type.rarity));
+        }
+    });
+    CHECK(mobs > 0);
+    // And every one of them was worth announcing. The queue is bounded, so this
+    // is "some were queued", not "one per mob".
+    CHECK(!sim.spawner.bossSpawns.empty());
+    for (const SpawnSystem::BossSpawn& boss : sim.spawner.bossSpawns) {
+        CHECK(rarityIndex(boss.rarity) >= rarityIndex(kAnnouncedRarity));
+        CHECK(boss.realm == Realm::Overworld);
     }
-    CHECK(bosses >= 40);   // at least the one ultra per startup pass
+    std::remove(path.c_str());
 }
 
-TEST(a_boss_in_another_realm_does_not_count_as_the_overworlds) {
-    // The census the boss pass keeps is ONE MAP's. An ultra standing on a
-    // second world map, or in the maze, is not the overworld's ultra, and the
-    // overworld must be restocked whether or not those exist.
-    //
-    // Nobody stands on the overworld anywhere in this test, and that is
-    // deliberate: the band fill runs around a VIEWER, and the authored map's
-    // mythic plot sits where the old version of this test parked one. A
-    // mythic band drifts one tier up about twice in a hundred spawns, so a
-    // viewer standing on it mints ultras of its own and "exactly one" becomes
-    // a coin toss. The boss pass does not need a viewer on the map it stocks
-    // -- only a viewer SOMEWHERE, so the server is not idle -- and this test
-    // is about the pass, so its flower stands on the other map.
-    if (!authoredMap().loaded()) {
-        ::testing::reportFailure(__FILE__, __LINE__, "the authored fixture map did not load");
+TEST(an_announced_boss_carries_the_map_it_spawned_on) {
+    // The chat line is personalised: a player in the boss's own SECTION is told
+    // it spawned, everyone else that it spawned somewhere. A section is the
+    // OVERWORLD's grid, so the boss's position only means anything once its
+    // realm is known -- and since the boss pass was deleted, a band on ANY
+    // staged map can queue one. Without the realm, a super filling a band on
+    // map two was announced as "here" to flowers standing at the same numbers
+    // on the overworld, which they cannot even reach.
+    const Realm other = worldRealm(1);
+    const std::string path = writeTiledFixture(
+        "flix_hard_band_realm1.tmj",
+        fixtureMapBody(bandObject(1, 2000, 2000, 14000, 14000, 200.0, "hornet 100%")));
+    MapData second;
+    std::string error;
+    if (!second.loadTiled(path, error, other) || second.elements().size() != 1) {
+        std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+        CHECK(false);
+        return;
+    }
+    std::vector<MapData> maps;
+    maps.push_back(MapData{});   // an empty overworld: no band, no bosses
+    maps.push_back(std::move(second));
+    WorldMaps worldMaps;
+    worldMaps.adoptMaps(std::move(maps));
+
+    Sim sim;
+    sim.spawner.worldMaps = &worldMaps;
+    installOpenGrid(sim.terrain, other, 60);
+    const std::vector<RealmPoint> players{{{9000, 9000}, other}};
+    for (int i = 0; i < 400; ++i) {
+        sim.spawner.run(sim.world, sim.terrain, shipped(), players, sim.rng, sim.now,
+                        net::kTickSeconds, sim.commands);
+        sim.commands.flush();
+        sim.now += net::kTickMillis;
+    }
+    CHECK(mobsInRealm(sim.world, other) > 0);
+    CHECK(!sim.spawner.bossSpawns.empty());
+    for (const SpawnSystem::BossSpawn& boss : sim.spawner.bossSpawns) {
+        CHECK(boss.realm == other);
+    }
+    std::remove(path.c_str());
+}
+
+TEST(a_soft_band_announces_nothing) {
+    // The other half of the announcement rule: ordinary ground is silent, so
+    // the chat line still means something. Difficulty 0 is fully common.
+    const std::string path = writeTiledFixture(
+        "flix_soft_band.tmj",
+        fixtureMapBody(bandObject(1, 2000, 2000, 14000, 14000, 0.0, "hornet 100%")));
+    MapData map;
+    std::string error;
+    if (!map.loadTiled(path, error)) {
+        CHECK(false);
         return;
     }
     Sim sim;
-    // Two realms: the authored overworld, and an empty second map whose
-    // ultras must never be counted as the overworld's.
-    static const WorldMaps twoRealms = [] {
-        WorldMaps m;
-        std::vector<MapData> maps;
-        maps.push_back(authoredMap());
-        maps.push_back(MapData{});
-        m.adoptMaps(std::move(maps));
-        return m;
-    }();
-    sim.spawner.worldMaps = &twoRealms;
-    const Realm other = worldRealm(1);
-    installOpenGrid(sim.terrain, other, 60);
-    // The startup pass stands exactly one overworld ultra, with nobody online:
-    // the world is stocked as the server boots whatever it looks like.
-    sim.tick({});
-    CHECK_EQ(overworldUltras(sim.world), 1);
+    WorldMaps maps;
+    maps.adoptSingle(map);
+    sim.spawner.worldMaps = &maps;
+    const std::vector<Vec2> players{{9000, 9000}};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
 
-    // It dies.
-    std::vector<Entity> gone;
-    Query<MobTag, MobType, Transform> mobs{sim.world};
-    mobs.each([&](Entity e, MobTag&, MobType& type, Transform& t) {
-        if (t.realm == Realm::Overworld && type.rarity == Rarity::Ultra) gone.push_back(e);
+    int mobs = 0;
+    Query<MobTag, MobType> live{sim.world};
+    live.each([&](Entity, MobTag&, MobType& type) {
+        ++mobs;
+        CHECK(type.rarity == Rarity::Common);
     });
-    for (const Entity e : gone) sim.commands.destroy(e);
-    sim.commands.flush();
-    CHECK_EQ(overworldUltras(sim.world), 0);
-
-    // Meanwhile an ultra stands on a biome map -- a mythic band's drift can
-    // mint one -- and another in the maze. Neither is the overworld's.
-    const std::uint16_t hornet = shipped().mobIndex("hornet");
-    CHECK(hornet != kInvalidIndex);
-    CHECK(sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), hornet, Rarity::Ultra,
-                               {9000, 9000}, other, sim.now, sim.rng) != NULL_ENTITY);
-    CHECK(sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), hornet, Rarity::Ultra,
-                               {3000, 3000}, Realm::Maze, sim.now, sim.rng) != NULL_ENTITY);
-    CHECK_EQ(overworldUltras(sim.world), 0);
-
-    // The overworld's ultra comes back, and the census that decides it is
-    // that map's alone. The flower whose presence lets the pass run at all is
-    // on the OTHER map, so nothing it can see stocks the overworld.
-    //
-    // Several intervals, not one: a boss pass samples the map's ultra plots
-    // uniformly, and one of the authored map's ultra plots is a target-dummy
-    // row. Landing in one is a deliberate no-op -- spawnSpecialMob refuses to
-    // stand a permanent fixture as a boss -- so the pass spends that interval
-    // and tries again at the next. Four is comfortably past a coin flip and
-    // still fails loudly if the restock never happens.
-    const std::vector<RealmPoint> elsewhere{{{9000, 9000}, other}};
-    bool restocked = false;
-    for (int pass = 0; pass < 4 && !restocked; ++pass) {
-        sim.now += kBossIntervalMillis + 1.0;
-        sim.spawner.run(sim.world, sim.terrain, shipped(), elsewhere, sim.rng, sim.now, 0.0,
-                        sim.commands);
-        sim.commands.flush();
-        restocked = overworldUltras(sim.world) == 1;
-    }
-    CHECK(restocked);
-    CHECK_EQ(mobsInRealm(sim.world, other), 1);   // and the biome map's is left be
+    CHECK(mobs > 0);
+    CHECK(sim.spawner.bossSpawns.empty());
+    std::remove(path.c_str());
 }
 
+TEST(the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares) {
+    // The SHIPPED data, end to end. garden.tmj declares no `defaultDifficulty`,
+    // so every square no band covers is difficulty zero and grows nothing but
+    // commons; the bands the author has brushed on are the only ground that is
+    // allowed to be harder, and only by as much as their own difficulty says.
+    // This is the sanity check on the whole curve -- if the default were
+    // anything but zero, a fresh flower would walk out of the one door into
+    // mobs it cannot fight.
+    //
+    // The ceiling is computed FROM THE FILE for each mob's own position, rather
+    // than written down here, so an author raising a band's difficulty does not
+    // make this test wrong -- it makes it check the new number.
+    if (!shippedMaps().forRealm(Realm::Overworld)) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+        return;
+    }
+    const MapData& world = *shippedMaps().forRealm(Realm::Overworld);
+    CHECK_EQ(world.defaultDifficulty(), 0.0);
+
+    Sim sim;
+    sim.spawner.worldMaps = &shippedMaps();
+    // Inside the shipped map's extent; the Sim brings its own flat terrain, so
+    // this is about the tier, not about walls.
+    const std::vector<Vec2> players{{9000.0, 9000.0}};
+    for (int i = 0; i < 300; ++i) sim.tick(players);
+
+    // The hardest ground the file declares anywhere, and the ceiling that buys.
+    // Nothing in the world may exceed it, wherever it has since wandered to.
+    double hardest = world.defaultDifficulty();
+    for (const MapElement& element : world.elements()) {
+        if (element.isSpawnBand()) hardest = std::max(hardest, element.difficulty);
+    }
+    const int worldCeiling = rarityIndex(tierMixForDifficulty(hardest).upper);
+
+    // How far a mob may have walked since it was placed. A mob is judged
+    // against its OWN square only when it is this far inside that square's
+    // ground -- otherwise it may have been born under a band and strolled out,
+    // and the square it is standing on now never chose it.
+    const double kWanderMargin = 4000.0;
+    const auto clearOfEveryBand = [&](Vec2 at) {
+        for (const MapElement& element : world.elements()) {
+            if (!element.isSpawnBand()) continue;
+            if (element.bounds.x - kWanderMargin < at.x && at.x < element.bounds.right() + kWanderMargin &&
+                element.bounds.y - kWanderMargin < at.y && at.y < element.bounds.bottom() + kWanderMargin) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    int mobs = 0;
+    int onDefaultGround = 0;
+    int onBandedGround = 0;
+    Query<MobTag, MobType, Transform> live{sim.world};
+    live.each([&](Entity e, MobTag&, MobType& type, Transform& transform) {
+        // An escort is not an ambient spawn, and the ground it stands on did not
+        // choose it: a nest is placed by the fill at its OWN square's tier and
+        // then lays its brood out on a ring around itself, which routinely
+        // reaches over a band's edge onto softer ground. The nest answers for
+        // the tier; the ring is just where the children fit. Same exemption --
+        // and the same reason -- as the default-group test above.
+        if (sim.world.has<HoleTether>(e)) return;
+        const double difficulty = sim.spawner.difficultyAt(transform.realm, transform.position);
+        // The hardest thing this square can roll at neutral luck: the upper half
+        // of its blend. A mob's own min_rarity still floors it above that -- that
+        // is the mob's property, not the ground's.
+        const TierMix mix = tierMixForDifficulty(difficulty);
+        const MobConfig& config = shipped().mob(type.configIndex);
+        // A body segment is the rest of the same animal as its head, laid out
+        // along it and over whatever ground that reaches; the head was judged on
+        // its own square.
+        if (config.id.find("_body") != std::string::npos) return;
+        ++mobs;
+        if (rarityIndex(type.rarity) > std::max(worldCeiling, rarityIndex(config.minRarity))) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "the shipped map spawned a " + std::string(rarityName(type.rarity)) +
+                                         " " + config.id + ", above anything the hardest ground on "
+                                         "the map (difficulty " + std::to_string(hardest) + ") can roll");
+        }
+        if (difficulty != 0.0 || !clearOfEveryBand(transform.position)) {
+            ++onBandedGround;
+            return;
+        }
+        ++onDefaultGround;
+        // Well away from every band, so this mob was placed on the map's default
+        // ground and has not walked in from anywhere harder. Difficulty zero is
+        // FULLY common: not "mostly", and not "common unless something drifted
+        // it". The map's whole default is this number.
+        (void)mix;
+        if (rarityIndex(type.rarity) > rarityIndex(config.minRarity)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "the shipped map spawned a " + std::string(rarityName(type.rarity)) +
+                                         " " + config.id + " on difficulty-zero ground");
+        }
+    });
+    CHECK(mobs > 0);
+    // Every live mob was judged against a difficulty rather than skipped by a
+    // lookup that found nothing. WHICH arm each fell into is the author's
+    // business -- the bands move as the map is balanced, and the viewer above
+    // may or may not be standing under one on any given day.
+    CHECK_EQ(onDefaultGround + onBandedGround, mobs);
+    // The announcement queue. Whether the map is hard enough to announce
+    // ANYTHING is the author's decision -- a band at difficulty 100 is ultras
+    // with a couple of supers in it, and the super is the announcement -- so
+    // what is pinned is the rule rather than the outcome: a line is queued only
+    // for a rarity that both clears the announcement threshold and is one the
+    // hardest ground on the map could actually roll. A queue with something
+    // below kAnnouncedRarity in it is chat spam; one with something above
+    // worldCeiling in it is a mob that came from nowhere on this map.
+    if (worldCeiling < rarityIndex(kAnnouncedRarity)) {
+        CHECK(sim.spawner.bossSpawns.empty());
+    }
+    for (const SpawnSystem::BossSpawn& announced : sim.spawner.bossSpawns) {
+        CHECK(rarityIndex(announced.rarity) >= rarityIndex(kAnnouncedRarity));
+        if (rarityIndex(announced.rarity) > worldCeiling) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "the shipped map announced a " +
+                                         std::string(rarityName(announced.rarity)) + " " +
+                                         shipped().mob(announced.mobIndex).id +
+                                         ", above anything its hardest ground (difficulty " +
+                                         std::to_string(hardest) + ") can roll");
+        }
+    }
+}
+
+TEST(a_bands_difficulty_beats_the_maps_default) {
+    // The two sources of a difficulty, and which wins where. The map says its
+    // open ground is difficulty 100 -- ultras, with a couple of supers in a
+    // hundred -- and one band drawn on it says difficulty 0. Inside the band,
+    // commons; outside it, ultras. A map with no band at all is the shipped
+    // case and is covered by the test below this one.
+    const std::string properties =
+        R"({"name": "defaultDifficulty", "type": "int", "value": 100},
+           {"name": "defaultMobGroup", "type": "string", "value": "garden"})";
+    const std::string band = bandObject(1, 20000, 20000, 6000, 6000, 0.0, "");
+    const std::string path =
+        writeTiledFixture("flix_default_difficulty.tmj", fixtureMapBody(band, properties));
+    MapData map;
+    std::string error;
+    if (!map.loadTiled(path, error)) {
+        std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+        CHECK(false);
+        return;
+    }
+    CHECK_EQ(map.defaultDifficulty(), 100.0);
+    CHECK_EQ(map.defaultMobGroup(), std::string("garden"));
+    std::remove(path.c_str());
+
+    WorldMaps maps;
+    maps.adoptSingle(map);
+
+    // Inside the band: the BAND's difficulty, so nothing but commons -- and the
+    // band names no mobs of its own, so its roster still comes from the map's
+    // default group. That is the "difficulty and distribution are orthogonal"
+    // rule in one assertion.
+    {
+        Sim sim;
+        sim.spawner.worldMaps = &maps;
+        const std::vector<Vec2> players{{23000, 23000}};
+        for (int i = 0; i < 400; ++i) sim.tick(players);
+        int mobs = 0;
+        Query<MobTag, MobType, Transform> live{sim.world};
+        live.each([&](Entity, MobTag&, MobType& type, Transform& t) {
+            if (!map.elements()[0].contains(t.position)) return;
+            ++mobs;
+            const MobConfig& config = shipped().mob(type.configIndex);
+            if (rarityIndex(type.rarity) > rarityIndex(config.minRarity)) {
+                ::testing::reportFailure(__FILE__, __LINE__,
+                                         "a difficulty-0 band grew a " +
+                                             std::string(rarityName(type.rarity)) + " " +
+                                             config.id);
+            }
+        });
+        CHECK(mobs > 0);
+    }
+
+    // Outside every band: the MAP's default, which the density fill rolls
+    // against. Difficulty 100 is the ultra anchor.
+    {
+        Sim sim;
+        sim.spawner.worldMaps = &maps;
+        const std::vector<Vec2> players{{40000, 40000}};
+        for (int i = 0; i < 400; ++i) sim.tick(players);
+        int mobs = 0;
+        int ultras = 0;
+        Query<MobTag, MobType> live{sim.world};
+        live.each([&](Entity, MobTag&, MobType& type) {
+            ++mobs;
+            if (type.rarity == Rarity::Ultra) ++ultras;
+            if (rarityIndex(type.rarity) < rarityIndex(Rarity::Ultra)) {
+                ::testing::reportFailure(__FILE__, __LINE__,
+                                         "difficulty-100 ground grew a " +
+                                             std::string(rarityName(type.rarity)) + " " +
+                                             shipped().mob(type.configIndex).id);
+            }
+        });
+        CHECK(mobs > 0);
+        CHECK(ultras > 0);
+    }
+}
+
+TEST(a_neverambient_mob_never_comes_from_a_group_roll_however_hard_the_ground) {
+    // The target dummy is in no group and is marked neverAmbient, so the group
+    // roll can never produce one at any difficulty: the only way it reaches the
+    // world is a band naming it outright (the DPS row above). Difficulty is a
+    // new axis; it must not become a new back door.
+    const ContentRegistry& content = shipped();
+    const std::uint16_t dummy = content.mobIndex("target_dummy");
+    CHECK(dummy != kInvalidIndex);
+    CHECK(content.mob(dummy).neverAmbient);
+
+    SpawnSystem spawner;
+    Rng rng(5150);
+    for (std::size_t group = 0; group < content.mobGroupCount(); ++group) {
+        for (int tier = 0; tier < kRarityCount; ++tier) {
+            for (int i = 0; i < 200; ++i) {
+                const std::uint16_t rolled = spawner.chooseGroupMob(
+                    content, static_cast<std::uint16_t>(group), clampRarity(tier), rng);
+                CHECK(rolled != dummy);
+            }
+        }
+    }
+}

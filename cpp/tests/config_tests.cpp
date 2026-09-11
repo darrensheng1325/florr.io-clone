@@ -928,10 +928,40 @@ TEST(the_content_hash_covers_the_staged_maps) {
     CHECK(edited.load(dir, error));
     CHECK(edited.contentHash() != withMaps.contentHash());
 
+    // AND THE TILESET THE MAP NAMES. Every collision shape in the game lives in
+    // the .tsj, not in the .tmj -- Tiled's Tile Collision Editor writes only
+    // that file -- so hashing the map alone let a server and a client hold
+    // different GEOMETRY and shake hands, which is exactly what the client's
+    // own collision leans on this hash to rule out.
+    const std::string shaped =
+        R"({"type":"map","width":1,"height":1,"tilewidth":300,"tileheight":300,)"
+        R"("tilesets":[{"firstgid":1,"source":"tiny.tsj"}],"layers":[]})";
+    const std::string tileset =
+        R"({"type":"tileset","name":"tiny","columns":0,"tilecount":1,"tilewidth":256,)"
+        R"("tileheight":256,"tiles":[{"id":0,"image":"tiles/a.svg","imagewidth":256,)"
+        R"("imageheight":256}]})";
+    CHECK(writeText(dir + "/tiny.tmj", shaped));
+    CHECK(writeText(dir + "/tiny.tsj", tileset));
+    ContentRegistry withTileset;
+    CHECK(withTileset.load(dir, error));
+
+    // One shape drawn on that tile -- the whole of what an author does in the
+    // Tile Collision Editor -- and nothing else on disk changes.
+    const std::string reshaped =
+        R"({"type":"tileset","name":"tiny","columns":0,"tilecount":1,"tilewidth":256,)"
+        R"("tileheight":256,"tiles":[{"id":0,"image":"tiles/a.svg","imagewidth":256,)"
+        R"("imageheight":256,"objectgroup":{"type":"objectgroup","objects":[{"id":1,)"
+        R"("x":0,"y":0,"width":256,"height":256,"rotation":0}]}}]})";
+    CHECK(writeText(dir + "/tiny.tsj", reshaped));
+    ContentRegistry withShapes;
+    CHECK(withShapes.load(dir, error));
+    CHECK(withShapes.contentHash() != withTileset.contentHash());
+
     // Three explicit files, no directory: nothing to fold, as before.
     ContentRegistry files;
     CHECK(files.loadFiles(dir + "/mobs.json", dir + "/petals.json", dir + "/mob_xp.json", error));
     CHECK_EQ(files.contentHash(), plain.contentHash());
     std::remove((dir + "/maps.json").c_str());
     std::remove((dir + "/tiny.tmj").c_str());
+    std::remove((dir + "/tiny.tsj").c_str());
 }

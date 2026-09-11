@@ -580,6 +580,9 @@ void GameServer::announceBossSpawns() {
         for (char& c : name) {
             if (c == '_') c = ' ';
         }
+        // Only meaningful for a boss on the overworld: `section` is that map's
+        // 3x3 grid, and another map's coordinates read as a section number that
+        // means nothing. See `here` below.
         const int section = sectionAt(boss.position);
         const std::string tier = rarityLabel(boss.rarity);
         // Wrapped in the tier's own colour, as the reference server wraps it.
@@ -595,12 +598,14 @@ void GameServer::announceBossSpawns() {
             net::Connection* connection = listener_.find(session.connection);
             if (connection == nullptr) continue;
             // Personalised: a player standing in the boss's own section is told
-            // it spawned, everyone else that it spawned "somewhere". The boss
-            // pass places on the overworld alone, and a section is that map's
-            // grid: a flower in another realm is never "here", whatever its
-            // numbers say.
+            // it spawned, everyone else that it spawned "somewhere". A band on
+            // ANY staged world map can fill with supers now -- difficulty is
+            // what makes bosses -- so the boss's OWN realm has to match before
+            // its position means anything: two maps are two coordinate spaces,
+            // and (9000, 9000) on one is not near (9000, 9000) on the other.
             const Transform* transform = world_.tryGet<Transform>(session.entity);
-            const bool here = transform != nullptr && transform->realm == Realm::Overworld &&
+            const bool here = transform != nullptr && transform->realm == boss.realm &&
+                              transform->realm == Realm::Overworld &&
                               sectionAt(transform->position) == section;
             sendChatTo(*connection, net::ChatChannel::System, "",
                        std::string("<b style=\"color: ") + colorAttribute + ";\">A " + tier +
@@ -979,7 +984,6 @@ void GameServer::handleRegister(Session& session, net::Connection& connection, B
 
     const CreateResult result = database_.createUser(username, password, addressHash);
     if (!result.ok() || !result.account) {
-        std::printf("[dbgreg] status=%d reason=%s\n", (int)result.status, result.reason.c_str());
         sendAuthResult(connection, net::AuthStatus::UsernameTaken, "", "", result.reason);
         return;
     }
@@ -1631,12 +1635,11 @@ void GameServer::bankKills() {
 
 void GameServer::announceBossDefeat(const MobType& type,
                                     const std::vector<Bounty::Share>& ranked) {
-    // The three announced tiers are the three the spawn line announces. An
-    // ultra dies as quietly as it spawned.
-    if (type.rarity != Rarity::Super && type.rarity != Rarity::Unique &&
-        type.rarity != Rarity::Apex) {
-        return;
-    }
+    // The tiers announced on the way out are exactly the tiers announced on the
+    // way in -- ONE constant, so raising kAnnouncedRarity cannot leave chat
+    // mourning a boss nobody was told about. An ultra dies as quietly as it
+    // spawned.
+    if (rarityIndex(type.rarity) < rarityIndex(kAnnouncedRarity)) return;
     // Credited to the top damage dealer alone, whatever the kill was shared
     // with: `ranked` is already sorted by damage, so that is its first row.
     if (ranked.empty()) return;

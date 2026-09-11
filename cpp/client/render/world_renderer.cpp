@@ -18,6 +18,7 @@
 #include "shared/game/config.h"
 #include "shared/game/components.h"
 #include "shared/game/constants.h"
+#include "shared/game/difficulty.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/terrain.h"
 
@@ -418,46 +419,6 @@ Rect intersection(Rect a, Rect b) {
 }
 
 } // namespace
-
-/// The eight symmetries of the square, indexed by
-/// (kTileFlipDiagonal | kTileFlipVertical | kTileFlipHorizontal).
-///
-/// Worked out from Tiled's rule -- anti-diagonal first, then horizontal, then
-/// vertical -- as the matrix V^v * H^h * D^d, in a coordinate system whose y
-/// axis points DOWN (the canvas'), so a positive rotation turns clockwise:
-///
-///     D    = [[0, 1], [1, 0]]          transpose, (u,v) -> (v,u)
-///     H    = [[-1, 0], [0, 1]]
-///     V    = [[1, 0], [0, -1]]
-///     R(t) = [[cos t, -sin t], [sin t, cos t]]
-///
-/// and a canvas rotate-then-scale is R(t) * diag(-1, 1) when `mirror` is set.
-/// Reading the rows off: H*D = [[0,-1],[1,0]] = R(+pi/2), the quarter turn
-/// CLOCKWISE that Tiled documents for D|H; V*D = R(-pi/2), its anticlockwise
-/// twin for D|V; and the four with no D are the plain reflections and the half
-/// turn.
-///
-/// All eight were checked against that derivation by rendering an asymmetric
-/// glyph through this function and comparing it, pixel for pixel, with the
-/// same glyph's unturned rasterisation permuted by V^v * H^h * D^d: every one
-/// of the eight matched exactly, none of the eight drew the same picture as
-/// any other, and swapping D|H with D|V -- the likeliest way to get this
-/// wrong -- was caught. If you change a row, redo that; the map is painted
-/// almost entirely from rotations of a handful of Wang edge tiles, so a wrong
-/// row here is wrong on most of the screen.
-TileOrientation tileOrientation(std::uint8_t flags) {
-    static constexpr TileOrientation kOrientations[8] = {
-        {0.0, false},          // 0:   as drawn
-        {0.0, true},           // H:   mirrored
-        {kPi, true},           // V:   mirrored, half turn
-        {kPi, false},          // HV:  half turn
-        {-kPi * 0.5, true},    // D:   transpose
-        {kPi * 0.5, false},    // DH:  quarter turn clockwise
-        {-kPi * 0.5, false},   // DV:  quarter turn anticlockwise
-        {kPi * 0.5, true},     // DHV: anti-transpose
-    };
-    return kOrientations[flags & 7u];
-}
 
 void WorldRenderer::ingestEvents(WorldView& view) {
     const auto isPlayer = [&view](std::uint32_t netId) {
@@ -2156,8 +2117,11 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm 
         // Under the walls, and only while the glow is held: this is a map the
         // player asks for, not a decoration.
         for (const MapElement& element : map->elements()) {
-            if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
-            ui::setFill(canvas, rarityColor(element.spawnTier), 0.25);
+            // Difficulty bands only, and painted in the tier that difficulty
+            // mostly produces -- the same colour the minimap gives the band,
+            // off the same curve the spawner rolls against.
+            if (!element.isSpawnBand()) continue;
+            ui::setFill(canvas, rarityColor(dominantTierForDifficulty(element.difficulty)), 0.25);
             // The OUTLINE, not the bounding box. Filling the box would show a
             // player a tier band covering ground it does not cover, which is
             // the one thing this overlay exists to answer.

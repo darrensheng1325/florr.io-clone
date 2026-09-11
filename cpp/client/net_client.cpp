@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 #include "client/web/reload.h"
+#include "shared/game/map_elements.h"
 
 namespace flix {
 
@@ -791,6 +793,49 @@ void NetClient::handleGuildInviteReceived(ByteReader& reader) {
     guildInvite_ = std::move(invite);
 }
 
+void NetClient::installLocalCollision(Realm realm) {
+    // The wire has just installed this realm's COARSE grid, which is
+    // authoritative and is what the minimap paints and what every shape test
+    // fast-rejects against. What it cannot carry is the geometry: a cell blocks
+    // with the shapes its tile was drawn with -- a triangle under a diagonal, an
+    // L inside a hut -- and there are thousands of them. Those live in the map
+    // file, which this client already stages for its art, and which the
+    // handshake's content hash has proved identical to the server's copy --
+    // the TILESET the map names included, since that is where the shapes
+    // themselves live (ContentRegistry::foldMapsIntoHash).
+    //
+    // So the exact answer is rebuilt here, from the file, through the SAME
+    // function the server loads with (Terrain::setCollisionShapes, by way of
+    // loadCollisionShapes). There is one place that turns a map into collision
+    // and this is not a second one.
+    terrain_.clearCollisionShapes(realm);
+
+    const MapData* map = worldMaps_ != nullptr ? worldMaps_->forRealm(realm) : nullptr;
+    const std::string path = map != nullptr ? map->sourcePath() : std::string();
+    if (path.empty()) {
+        // No local map for this realm: this client collides against whole
+        // cells, straight off the wire's grid. That is the SAFE direction to be
+        // wrong in -- a cell that blocks anywhere is treated as blocking
+        // everywhere, so this client believes in more wall than there is, never
+        // less. It loses a body-width of ground at a slope and it never draws a
+        // flower standing inside something solid. The realms with no map file
+        // at all (the arena, the maze) answer for their own geometry and never
+        // come through here.
+        return;
+    }
+
+    std::string error;
+    if (!terrain_.loadCollisionShapes(path, error, realm)) {
+        // Worth a line: it means this client is playing with coarser collision
+        // than the server is enforcing, which is playable but visibly wrong at
+        // every authored edge.
+        std::fprintf(stderr,
+                     "[map] %s: could not read the collision shapes (%s); this client falls back "
+                     "to whole-cell collision\n",
+                     path.c_str(), error.c_str());
+    }
+}
+
 void NetClient::handleJoinAccepted(ByteReader& reader) {
     const std::uint32_t selfNetId = reader.u32();
     const Vec2 spawn = reader.position();
@@ -798,8 +843,10 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     const std::int64_t mazeDay = reader.i64();
 
     // The map the body was put in: which realm it is, how big it is, and its
-    // grid. All three travel together because a client has no map file to read
-    // any of it out of, and maps are not all one size.
+    // coarse grid. All three travel together because the server is the one that
+    // decides which world a body went into, and maps are not all one size. The
+    // exact shapes inside those cells are not on the wire; they are rebuilt from
+    // the local file below.
     Realm realm = Realm::Overworld;
     std::string mapError;
     if (!readMapGrid(reader, terrain_, realm, mapError)) {
@@ -808,6 +855,9 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
         dialer_.disconnect();
         return;
     }
+
+    // The grid is in; give the realm its exact geometry from the local file.
+    installLocalCollision(realm);
 
     (void)selfNetId;
     status_ = Status::Playing;
@@ -837,6 +887,10 @@ void NetClient::handleRealmChange(ByteReader& reader) {
                      mapError.c_str());
         return;
     }
+    // A new realm is a new map: its shapes have to be built from ITS file, and
+    // the realm left behind keeps the ones it already had, because a pad leads
+    // back.
+    installLocalCollision(realm);
     // The view holds entities in the realm it was streaming; every one of them
     // is in another coordinate space now and none of them will be restated.
     view_.clear();

@@ -11,14 +11,33 @@
 // wall all the way out -- and it means resolveCircle keeps a body inside the
 // map without a single bounds check of its own.
 //
-// A tile is its rectangle. Collision, line of sight and the push-out all work
-// on the plain 300-unit squares. What a cell LOOKS like is not here at all:
-// the artwork is the map file's layers (tiled_map.h), which the client reads
-// for itself, and only this grid of three values -- ground, wall, water --
-// ever travels over the wire.
+// A CELL IS THE SHAPES ITS TILE CARRIES, not its square. The author draws
+// collision in Tiled's Tile Collision Editor, per tile, and a cell contributes
+// those shapes turned by its flip bits and scaled onto the cell -- so a body
+// walks up to the edge the art draws and stops there. Terrain keeps two views
+// of that, and the difference between them matters at every call site:
+//
+//   the COARSE grid   one Tile per cell: does this cell hold ANY blocking
+//                     shape, and of what kind. What the minimap paints, what
+//                     the bots' flow field walks, what spawn placement rejects
+//                     conservatively, and the only thing that travels over the
+//                     wire.
+//   the SHAPES        the exact geometry, per realm, beside the grid. What
+//                     blocked(), resolveWall(), resolveCircle(), the segment
+//                     tests, hasLineOfSight() and inWater() answer from.
+//
+// A realm with no shape store -- a generated map, a grid a test wrote with
+// setTile(), a client whose data directory has no map for the realm it is in --
+// falls back to the whole 300-unit square of every blocking cell, which is the
+// old behaviour and is conservative: it blocks a little more than the art does,
+// never less.
+//
+// What a cell LOOKS like is not here at all: the artwork is the map file's
+// layers (tiled_map.h), which the client reads for itself.
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,6 +47,8 @@
 #include "shared/game/realm.h"
 
 namespace flix {
+
+class TiledMap;
 
 /// Number of distinct Tile values, i.e. the size of a per-tile-kind table.
 inline constexpr int kTileKindCount = 5;
@@ -213,6 +234,47 @@ void setActiveMazeDay(std::int64_t dayNumber);
 std::int64_t currentMazeDay();
 
 // ---------------------------------------------------------------------------
+// Authored collision shapes
+// ---------------------------------------------------------------------------
+
+/// One collision polygon, in CELL-LOCAL world units: (0,0) is its cell's
+/// top-left corner, the cell is kTileSize across, y is down.
+///
+/// Closed, wound so its signed area is positive, and already turned by its
+/// cell's flip bits and scaled from the tileset's tile size onto the cell --
+/// see TiledShape. CONCAVE RINGS ARE NORMAL: the authored dirt edges are, and
+/// every test here works on them.
+///
+/// The bounding box is carried rather than recomputed because it is the reject
+/// that keeps a query down to a couple of edge tests: a scan of nine cells with
+/// two 14-sided rings each is 250 edges if you test them all and a handful if
+/// you look at the boxes first.
+struct CollisionShape {
+    std::vector<Vec2> points;
+    Rect bounds;
+    /// True when the ring IS its bounding box -- an axis-aligned rectangle,
+    /// which 29 of the shipped tileset's 40 shapes are, the whole-cell fallback
+    /// included. Containment is then the box test the reject has already done,
+    /// so the ring is never walked; it is the reason a point test against a
+    /// map floored with plain dirt costs about what the old array read cost.
+    /// Every one of the eight orientations takes an axis-aligned rectangle to
+    /// another one, so this survives the transform.
+    bool rectangle = false;
+};
+
+/// The shapes ONE (tile, orientation) pair contributes to a cell.
+///
+/// Built once per pair the map actually paints on a colliding layer -- at most
+/// eight per tile in the tileset, and 86 for the shipped garden -- and shared
+/// by every cell that paints it. That is the whole performance story: a
+/// polygon is transformed once at load, and a query adds a cell origin to a
+/// point rather than rebuilding a ring.
+struct CollisionShapeSet {
+    std::vector<CollisionShape> shapes;
+    Rect bounds;   ///< the union of the shapes' boxes, cell-local
+};
+
+// ---------------------------------------------------------------------------
 // Terrain
 // ---------------------------------------------------------------------------
 
@@ -249,14 +311,18 @@ public:
     /// side of a threshold.
     void generate(std::uint64_t seed);
 
-    /// Loads a map's collision grid. A map is a Tiled `.tmj` and nothing else;
-    /// the grid is DERIVED from the layers the author painted, by the rule in
-    /// shared/game/tiled_map.h: a tile layer whose `has_collision` property is
-    /// set blocks wherever it has a tile, and no other layer blocks at all.
+    /// Loads a map's collision: the authored SHAPES, and the coarse grid over
+    /// them. A map is a Tiled `.tmj` and nothing else; both are DERIVED from
+    /// the layers the author painted, by the rule in shared/game/tiled_map.h --
+    /// a tile layer whose `has_collision` property is set contributes the
+    /// collision shapes of every tile it paints, no other layer contributes
+    /// anything, and a tile carrying no shapes contributes nothing anywhere.
     ///
-    /// Prints what that rule resolved to -- which layers collide, and the wall
-    /// / water / ground counts -- once per map, because a tick box in the
-    /// layer panel is otherwise invisible until somebody walks through a wall.
+    /// Prints what that rule resolved to -- which layers collide, the coarse
+    /// cell counts, how many distinct shape sets it built, and a WARNING for
+    /// any cell on a colliding layer whose tile has no shapes -- once per map,
+    /// because a tick box in the layer panel and a shape nobody drew are both
+    /// invisible until somebody walks through a wall.
     ///
     /// `realm` says WHICH world this map is. Every world realm carries its own
     /// grid with its own dimensions, so a second map need not be the size of
@@ -270,11 +336,57 @@ public:
     bool loadTiledMap(const std::string& path, std::string& errorOut,
                       Realm realm = Realm::Overworld);
 
+    /// Installs ONE REALM'S AUTHORED SHAPES from a map already read, leaving
+    /// the coarse grid exactly as it is.
+    ///
+    /// THIS IS WHAT THE CLIENT CALLS. A client is handed the coarse grid over
+    /// the wire (readMapGrid) and stages the map file itself, so it can build
+    /// the same shapes the server did and predict against the same geometry --
+    /// without which prediction disagrees with the server on every slope. The
+    /// handshake's content hash covers the map's bytes AND its tileset's --
+    /// the shapes are in the tileset -- so the two are known to be the same
+    /// geometry, not merely the same map.
+    ///
+    /// Refuses a map whose dimensions do not match the grid already installed
+    /// for the realm, because shapes indexed at the wrong width are a world
+    /// sheared diagonally. A refusal leaves the realm on whole-cell collision
+    /// from the grid, which is conservative and still playable.
+    bool setCollisionShapes(const TiledMap& map, Realm realm = Realm::Overworld);
+
+    /// setCollisionShapes() straight off a `.tmj` path, for a caller that has
+    /// not already read the file.
+    bool loadCollisionShapes(const std::string& path, std::string& errorOut,
+                             Realm realm = Realm::Overworld);
+
+    /// True when a realm has authored shapes, i.e. when its collision is exact
+    /// rather than whole-cell.
+    bool hasCollisionShapes(Realm realm = Realm::Overworld) const;
+
+    /// How many distinct (tile, orientation) shape sets a realm's store holds,
+    /// and how many cells reference at least one. What the load report prints,
+    /// and what a test asserts the sharing on.
+    int collisionShapeSetCount(Realm realm = Realm::Overworld) const;
+    int collisionShapeCellCount(Realm realm = Realm::Overworld) const;
+
+    /// The furthest any of a realm's shapes reaches outside the cell it was
+    /// painted in, in world units. Zero for a tileset whose shapes were all
+    /// drawn inside their tiles; the load report says it when it is not,
+    /// because a vertex nudged past a tile edge is invisible in Tiled.
+    double collisionOverhangUnits(Realm realm = Realm::Overworld) const;
+
+    /// Drops a realm's shapes, putting it back on whole-cell collision.
+    void clearCollisionShapes(Realm realm);
+
     /// Replaces one realm's grid with an authoritative network copy.
     ///
     /// The dimensions travel WITH the tiles: a client is told the shape of the
     /// map it is being dropped into, because a grid interpreted at the wrong
     /// width is a world sheared diagonally.
+    ///
+    /// Keeps the realm's authored shapes when the dimensions match and DROPS
+    /// them when they do not: a store indexed at the old width describes a
+    /// different map. So a client may install the wire grid and its own shapes
+    /// in either order.
     bool setTiles(const std::vector<std::uint8_t>& tiles, int cols, int rows,
                   Realm realm = Realm::Overworld);
 
@@ -314,11 +426,15 @@ public:
     /// reference's wander probe saw open ground there because its wall grid
     /// simply had no entry, and the maze here answers for itself instead.
     /// Arena: outside the ring, which is the arena's one wall.
+    /// EXACT against the authored shapes: a point is blocked when it is inside
+    /// one of them, not when its cell holds one. Falls back to the cell's
+    /// coarse Tile where a realm has no shapes.
     bool blocked(Vec2 p, Realm realm) const;
-    /// Water slows; only a tile map has any.
-    bool inWater(Vec2 p, Realm realm) const {
-        return isWorldRealm(realm) && tileIsWater(at(p, realm));
-    }
+
+    /// Water slows; only a tile map has any. Exact too: the point must be
+    /// inside a water-tagged SHAPE, and the topmost shape containing it decides,
+    /// so a bridge tile drawn over a pond is not water.
+    bool inWater(Vec2 p, Realm realm) const;
 
     // -- realm geometry -------------------------------------------------------
 
@@ -369,6 +485,14 @@ public:
     /// passes and one residual check, and nothing else. A centre the passes
     /// cannot untangle is REPORTED, never relocated.
     ///
+    /// The push is against the authored SHAPES. For each one the circle
+    /// overlaps: the closest point on the ring is found; a centre inside the
+    /// ring is ejected along the shortest way out, a centre outside it but
+    /// within the radius is pushed back along the outward normal, and either
+    /// way it ends up exactly radius + epsilon clear of that closest point.
+    /// Against a full-cell rectangle that is arithmetically the same
+    /// least-penetration ejection this function has always done.
+    ///
     /// This is the entry point a movement step has to use, because `unresolved`
     /// is the signal the reference refuses on: accepting a still-overlapping
     /// result lets per-tile least-penetration ejection flip to a tile's far
@@ -396,8 +520,9 @@ public:
     /// input upstream costs the caller a shove, never the tick.
     Vec2 resolveCircle(Vec2 position, double radius, Realm realm) const;
 
-    /// True when the segment crosses any blocking tile. An exact DDA walk: no
-    /// allocation, and bounded even for nonsense endpoints.
+    /// True when the segment crosses any blocking SHAPE. A DDA walk over the
+    /// cells, testing the shapes of each: no allocation, and bounded even for
+    /// nonsense endpoints.
     ///
     /// This is the EXACT swept test, and it is not interchangeable with
     /// hasLineOfSight() below -- the reference's sight test samples, and a
@@ -406,7 +531,7 @@ public:
     bool segmentBlocked(Vec2 a, Vec2 b, Realm realm) const;
 
     /// True when the straight path between two entity CENTRES touches any
-    /// blocking tile, every tile grown by `eps` first.
+    /// blocking shape, every shape grown by `eps` first.
     ///
     /// Neither a swept body test nor a sight test: this is the containment
     /// guard the reference's movement step runs on the resolver's own output.
@@ -513,6 +638,52 @@ private:
 
     static constexpr int kNearestOpenSearchTiles = 24;
 
+    /// One realm's authored collision shapes, beside its coarse grid.
+    ///
+    /// Cell -> shapes goes through `firstRef`, a prefix table of cols*rows + 1
+    /// offsets into `refs`: the refs of cell i are refs[firstRef[i]] up to
+    /// firstRef[i + 1], in LAYER ORDER, bottom first. A cell with no blocking
+    /// shape has no refs, which is one subtraction to find out -- the same cost
+    /// as the Tile read it replaces.
+    ///
+    /// A shape is listed in EVERY cell it touches, not only the one its tile
+    /// was painted in (shapeReach). Tiled lets an author drag a collision shape
+    /// past the tile's edge, and a turn can sweep one clean into the next cell;
+    /// fanning the ref out at build time is what lets every query ask ONE cell
+    /// and be right. The alternative -- scanning a ring of neighbours in case
+    /// some shape overhangs -- cost a measured 2-4x on blocked(), resolveWall()
+    /// and the sight test for a shipped map whose worst overhang is 0.39 units,
+    /// because a whole 300-unit ring is the smallest ring there is.
+    struct ShapeGrid {
+        /// One layer's contribution to one cell: which shape set, which layer
+        /// it came from (bottom is 0, so the largest wins a kind dispute),
+        /// whether that tile is water-tagged, and WHERE THE SHAPE'S OWN CELL IS
+        /// relative to the cell this ref is filed under.
+        ///
+        /// `dx`/`dy` are zero for all but a shape that leaves its tile, and
+        /// they are what the shape's points are measured from: a ref's geometry
+        /// lives in the coordinates of cell (tx + dx, ty + dy).
+        struct Ref {
+            std::uint32_t set = 0;
+            std::int16_t dx = 0;
+            std::int16_t dy = 0;
+            std::uint8_t layer = 0;
+            bool water = false;
+        };
+        int cols = 0;
+        int rows = 0;
+        std::vector<CollisionShapeSet> sets;
+        std::vector<Ref> refs;
+        std::vector<std::uint32_t> firstRef;
+        int cellsWithShapes = 0;
+        /// The furthest any shape reaches outside its own cell, in world units.
+        /// Reported at load so an author who nudged a vertex past a tile edge
+        /// can see it; nothing in a query reads it, because the fan-out above
+        /// already put the shape in every cell it touches.
+        double overhangUnits = 0.0;
+        bool empty() const { return cols <= 0 || rows <= 0 || refs.empty(); }
+    };
+
     /// One world realm's tile grid.
     ///
     /// `cols`/`rows` are the map's own dimensions, so two realms may be
@@ -529,6 +700,49 @@ private:
 
     Grid& grid(Realm realm) { return grids_[realmIndex(realm)]; }
     const Grid& grid(Realm realm) const { return grids_[realmIndex(realm)]; }
+
+    ShapeGrid& shapeGrid(Realm realm) { return shapes_[realmIndex(realm)]; }
+    const ShapeGrid& shapeGrid(Realm realm) const { return shapes_[realmIndex(realm)]; }
+
+    // -- the exact tests, one cell at a time --------------------------------
+    //
+    // Each takes the cell it is asked about and answers from that cell's
+    // authored shapes, falling back to the whole 300-unit square when the cell
+    // has none but its coarse Tile blocks. That fallback is what keeps a
+    // generated map, a grid a test wrote with setTile(), and a client with no
+    // map file working unchanged.
+    //
+    // The callers pass IN-GRID cells only; what a point off the grid is (wall
+    // for gameplay, air for the sight test) is the caller's rule, not a cell's.
+
+    /// The topmost colliding layer whose shape contains `p`, or -1 when nothing
+    /// there does; `water` is that layer's kind.
+    int cellLayerAt(int tx, int ty, Vec2 p, Realm realm, bool& water) const;
+
+    /// True when the segment touches any of the cell's shapes, each grown by
+    /// `eps`.
+    bool cellTouchesSegment(int tx, int ty, Vec2 a, Vec2 b, double eps, Realm realm) const;
+
+    /// Where this cell's shapes push a circle to, and whether the push came off
+    /// a face rather than a corner. False when the circle is clear of the cell.
+    bool cellPushCircle(int tx, int ty, Vec2 p, double radius, Realm realm, Vec2& pushed,
+                        bool& flat) const;
+
+    /// The topmost layer whose shape contains `p`, over every cell that could
+    /// reach it, or -1. `outsideBlocks` is what a point off the grid means:
+    /// Wall for every gameplay query, which is what closes the world, and AIR
+    /// for hasLineOfSight(), whose reference has no grid entry out there.
+    int blockingLayerAt(Vec2 p, Realm realm, bool& water, bool outsideBlocks = true) const;
+
+    /// The cell whose geometry the next push-out pass should act on, and where
+    /// it puts the centre. A face hit wins over a corner hit, so a body sliding
+    /// along a wall is pushed straight off the face it is touching and never
+    /// off the seam between two cells of it.
+    struct ShapeCollision {
+        Vec2 position;
+        bool flat = false;
+    };
+    std::optional<ShapeCollision> findCollision(Vec2 position, double radius, Realm realm) const;
 
     int index(const Grid& g, int tx, int ty) const { return ty * g.cols + tx; }
     bool passableIndex(const Grid& g, int i) const {
@@ -554,6 +768,9 @@ private:
     /// two realms are geometry, not tiles, and every query dispatches to them
     /// before it ever looks in here.
     std::array<Grid, kMaxRealms> grids_;
+    /// One shape store per realm, empty until a map is loaded into it. The
+    /// maze and the arena never have one -- they are geometry of their own.
+    std::array<ShapeGrid, kMaxRealms> shapes_;
     std::uint64_t seed_ = 0;
 };
 

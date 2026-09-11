@@ -161,10 +161,4 @@ inline double stallPower(Rarity source, Rarity target) {
     return std::min(1.0, std::pow(3.0, rarityIndex(source) - rarityIndex(target)));
 }
 
-/// Natural spawn weights by tier. Tiers above mythic never spawn in the wild;
-/// they exist only through crafting, tier upgrades and boss logic.
-inline constexpr std::array<double, kRarityCount> kNaturalSpawnWeight = {
-    0.40, 0.30, 0.15, 0.10, 0.04, 0.01, 0.0, 0.0, 0.0, 0.0,
-};
-
 } // namespace flix

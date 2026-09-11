@@ -27,6 +27,7 @@
 #include "shared/game/components.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
+#include "shared/game/difficulty.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/rarity.h"
 #include "shared/game/terrain.h"
@@ -89,12 +90,6 @@ struct NestWaves {
 inline constexpr int kMobsPerPlayer = 16;
 inline constexpr double kSpawnViewportHalfWidth = kViewportWidth * 0.5 + kViewportBuffer;
 inline constexpr double kSpawnViewportHalfHeight = kViewportHeight * 0.5 + kViewportBuffer;
-
-/// The luck a spawn is charged to when nothing owns it. TypeScript's neutral
-/// value is one rather than zero, and every point of it buys another
-/// percentage point of tier upgrade on top of the base two
-/// (src/server/shared/playerModifiers.ts:50, src/server/enemySpawner.ts:775).
-inline constexpr double kNeutralSpawnLuck = 1.0;
 
 /// Hard ceilings. The global one is what a full server actually costs; the
 /// per-section one stops a party camping one biome from owning the whole
@@ -179,10 +174,10 @@ inline constexpr double kSpawnScatterRadius = 240.0;
 inline constexpr int kSpawnPlacementAttempts = 100;
 
 /// The map's spawn rectangles are a SECOND population driver, independent of
-/// the neighbourhood fill. The rectangle declares the tier that belongs in it,
-/// which is the whole rarity progression of the map -- walking from the
-/// beginner corner into the mythic band is walking from one rectangle into
-/// another. The density fill stays out of them entirely
+/// the neighbourhood fill. The rectangle declares its DIFFICULTY, which is the
+/// whole rarity progression of the map -- walking from the beginner corner into
+/// a difficulty-100 band is walking from one rectangle into another. The
+/// density fill stays out of them entirely
 /// (src/server/spawnZoneManager.ts, src/server/enemySpawner.ts:756).
 inline constexpr double kZoneIntervalMillis = 1000.0;
 
@@ -208,21 +203,13 @@ inline constexpr int kZonePlacementAttempts = 60;
 /// ground rather than as a pit.
 inline constexpr double kTargetMobDensity = 9000.0 / (kWorldSize * kWorldSize);
 
-/// Boss upkeep. One ultra is kept alive at all times, every section is kept
-/// stocked with a super, and a unique is rolled for whenever a super exists.
-/// The pass is slow on purpose: a boss is meant to be hunted, not farmed.
-inline constexpr double kBossIntervalMillis = 60000.0;
-inline constexpr double kSuperInUltraZoneChance = 0.75;
-inline constexpr double kUniqueSpawnChance = 0.25;
-
-/// The one place `super` appears without the boss pass: an ultra rectangle
-/// rolls it in a hundred.
-inline constexpr double kUltraZoneSuperChance = 0.01;
-
-/// Attempts a boss gets at stepping out of a player's lap, and at landing
-/// inside the slice of a zone that lies in the section being filled.
-inline constexpr int kBossPlacementAttempts = 50;
-inline constexpr int kZoneSectionAttempts = 50;
+/// The tier at which a spawn is worth telling the whole server about. Supers,
+/// uniques and apexes are events; everything below is scenery.
+///
+/// There is no boss PASS any more -- bosses come from zone difficulty, and a
+/// difficulty-200 band is full of supers by design -- so this is a property of
+/// the spawn that happened rather than of a scheduler.
+inline constexpr Rarity kAnnouncedRarity = Rarity::Super;
 
 // ---------------------------------------------------------------------------
 // SpawnSystem
@@ -301,19 +288,24 @@ public:
     ///
     /// The reference announces supers and uniques with a per-player line whose
     /// wording depends on where that player is standing; this system has no
-    /// view of the socket list, so it reports rather than broadcasts. Ultras
-    /// are deliberately silent and never appear here.
+    /// view of the socket list, so it reports rather than broadcasts. Anything
+    /// below kAnnouncedRarity -- an ultra included -- is deliberately silent
+    /// and never appears here.
     struct BossSpawn {
         std::uint16_t mobIndex = 0;
         Rarity rarity = Rarity::Super;
         Vec2 position;
+        /// The map it appeared on. A band on ANY staged world map announces --
+        /// difficulty is what makes bosses now, and every map has difficulty --
+        /// so `position` is only comparable with a player's after this matches.
+        Realm realm = Realm::Overworld;
     };
     /// Drained by the runtime. Bounded rather than unbounded, so a server that
     /// never drains it keeps the newest announcements instead of growing.
     std::vector<BossSpawn> bossSpawns;
 
     /// `players` is every connected flower with a body; the neighbourhood
-    /// fill, the zones and the boss pass serve the OVERWORLD ones, and the
+    /// fill and the zones serve the OVERWORLD ones, and the
     /// census keeps a mob in another realm alive for as long as anyone is in
     /// that realm at all -- the arena and the maze are populated by
     /// ModeSpawner, whole, not by viewport.
@@ -354,21 +346,24 @@ public:
     std::uint16_t chooseAmbientMobAt(const ContentRegistry& content, Realm realm, Vec2 at,
                                      Rarity rarity, Rng& rng);
 
-    /// Natural tier roll plus the reference's upgrade-first/downgrade-second
-    /// drift, then raised for a direct spawn of a min-rarity mob.
-    static Rarity rollRarity(const MobConfig& config, Rng& rng);
-    static Rarity rollNaturalRarity(int section, double luck, Rng& rng);
+    /// The rarity one mob spawns at on difficulty-`difficulty` ground: the
+    /// difficulty curve's own roll (shared/game/difficulty.h), then raised to
+    /// the mob's own min_rarity floor.
+    ///
+    /// The floor is the mob's, not the ground's: `evil_centipede` does not
+    /// exist below rare, so asking difficulty 0 for one still gets a rare.
+    static Rarity rollRarity(const MobConfig& config, double difficulty, double luck, Rng& rng);
+
+    /// How dangerous the ground at `at` is: the difficulty of the first band
+    /// covering it, and otherwise the map's own `defaultDifficulty`.
+    ///
+    /// This is the one answer to "what tier does this square grow", and the
+    /// density fill and the band fill both go through it. A realm with no
+    /// staged map -- a bare-Terrain harness -- is difficulty zero, so a test
+    /// that loads no map gets commons rather than a spread nobody declared.
+    double difficultyAt(Realm realm, Vec2 at) const;
 
     const Census& census() const { return census_; }
-
-    /// Runs the boss pass on the next tick instead of waiting out its timer.
-    ///
-    /// The admin console's `/admin spawn_special_mobs` asks for exactly this
-    /// and nothing more: the pass itself decides what is missing -- one ultra,
-    /// a super per bare section, a unique beside a super -- so forcing the
-    /// clock forward is the whole command, and duplicating that reasoning at
-    /// the call site would be a second answer to the same question.
-    void requestSpecialPass() { nextBossMillis_ = 0; }
 
 private:
     /// One `spawn` rectangle and where it is in its fill cycle.
@@ -385,7 +380,9 @@ private:
         /// zones outlive nothing but they are rebuilt from a MapData the system
         /// does not own.
         std::vector<Vec2> polygon;
-        Rarity tier = Rarity::Common;
+        /// How dangerous this band is; what every spawn inside it is rolled
+        /// against. See shared/game/difficulty.h.
+        double difficulty = 0.0;
         /// Which map this band belongs to. Bands are gathered from every
         /// staged map, so this is what keeps one map's band from stocking
         /// another's identical coordinates.
@@ -443,7 +440,7 @@ private:
                        const std::vector<Viewer>& viewers, Rng& rng, double nowMillis);
 
     /// One mob inside `zone`, or NULL_ENTITY when the rectangle had nowhere to
-    /// put it. The tier is the zone's own, never a natural roll.
+    /// put it. The tier comes from the zone's own difficulty.
     Entity spawnInZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                        const SpawnZone& zone, const std::vector<Viewer>& viewers, Rng& rng,
                        double nowMillis);
@@ -462,34 +459,21 @@ private:
     bool permanentFixtureExists(World& world, std::uint16_t mobIndex, Rarity rarity, Realm realm,
                                 int section);
 
-    /// Keeps the world's boss population topped up: one ultra, one super per
-    /// section, and a unique rolled for whenever a super is out.
-    void runSpecialMobs(World& world, const Terrain& terrain, const ContentRegistry& content,
-                        const std::vector<Viewer>& viewers, Rng& rng, double nowMillis);
-
-    /// Places one boss in a rectangle of the tier's own kind. `targetSection`
-    /// is the section a super is being spawned FOR (-1 otherwise), and
-    /// `superSections` vetoes a final position whose section already has one.
-    Entity spawnSpecialMob(World& world, const Terrain& terrain, const ContentRegistry& content,
-                           Rarity tier, int targetSection,
-                           const std::array<bool, kSectionCount>* superSections,
-                           const std::vector<Viewer>& viewers, Rng& rng, double nowMillis);
-
-    /// Queues one boss for whoever owns the chat channel.
-    void announceBoss(std::uint16_t mobIndex, Rarity rarity, Vec2 position);
+    /// Queues one boss for whoever owns the chat channel, when the spawn was
+    /// notable enough to be worth one: kAnnouncedRarity and up, and never a
+    /// permanent fixture (a super target dummy is a DPS post, not an event).
+    void announceIfNotable(const ContentRegistry& content, std::uint16_t mobIndex, Rarity rarity,
+                           Vec2 position, Realm realm);
 
     void rebuildZones(const ContentRegistry& content);
 
-    /// Mobs the last census saw inside `bounds`, inclusive on every edge as
-    /// the reference's own count is.
-    bool sampleZonePoint(const SpawnZone& zone, Rng&, Vec2& out) const;
     /// The mob a band fill should place: the band's own distribution when it
     /// declares one, and otherwise whatever `at` would grow anyway -- the
     /// region under it, then the map's default.
     std::uint16_t chooseZoneMobType(const ContentRegistry&, const SpawnZone&, Vec2 at, Rarity,
                                     Rng&);
 
-    /// The distribution `at` grows, ignoring tier bands: the mob region
+    /// The distribution `at` grows, ignoring difficulty bands: the mob region
     /// covering it, or the map's `defaultMobGroup`. kInvalidIndex when neither
     /// names anything the content has.
     std::uint16_t chooseRegionMobAt(const ContentRegistry&, Realm, Vec2 at, Rarity, Rng&);
@@ -507,12 +491,6 @@ private:
     bool crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap) const;
 
     bool inAnySpawnZone(Vec2 position, int section) const;
-
-    /// A uniform point in some rectangle of that tier, or false when the map
-    /// declares none. `...InSection` restricts it to the part of the rectangle
-    /// that lies inside one 20000-unit section.
-    bool randomPointInZoneType(Rarity tier, Rng& rng, Vec2& out) const;
-    bool randomPointInZoneTypeInSection(Rarity tier, int section, Rng& rng, Vec2& out) const;
 
     /// True when `position` is somewhere a new mob may legally appear.
     bool placementAllowed(const Terrain& terrain, const std::vector<Viewer>& viewers,
@@ -556,11 +534,10 @@ private:
     /// The overworld's rectangle, read off the terrain at the top of every
     /// run().
     ///
-    /// The density fill and the boss pass are overworld-only by construction,
-    /// and both need the map's extent to know where its border band is -- but
-    /// several of the helpers they reach through (sampleZonePoint,
-    /// randomPointInZoneType) are handed no Terrain and would each have to
-    /// grow a parameter for it. Cached once a tick instead. It is a MAP fact,
+    /// The density fill is overworld-only by construction, and it needs the
+    /// map's extent to know where its border band is -- but
+    /// several of the helpers they reach through are handed no Terrain and
+    /// would each have to grow a parameter for it. Cached once a tick instead. It is a MAP fact,
     /// not a constant: the shipped world is 19200 units square, not the
     /// historical 60000, and a hard-coded square let ambient mobs spawn flush
     /// against the real map's right and bottom walls while correctly refusing
@@ -580,13 +557,9 @@ private:
     std::set<std::string> unknownZoneMobs_;
     const WorldMaps* zoneMaps_ = nullptr;
     std::uint32_t zoneContentHash_ = 0;
-    /// Both start due, so the first tick stocks the zones a player can already
-    /// see and puts the world's ultra out rather than waiting a minute for it.
+    /// Starts due, so the first tick stocks the zones a player can already see
+    /// rather than waiting out an interval first.
     double nextZoneMillis_ = 0;
-    double nextBossMillis_ = 0;
-    /// Whether the boot-time boss pass has happened. It is the one pass that
-    /// runs over an empty server.
-    bool bossPassRan_ = false;
 
     /// Per-player neighbourhood counts, the players themselves and the despawn
     /// list, kept as members so the pass does not allocate once it has run a

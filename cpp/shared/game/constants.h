@@ -51,11 +51,12 @@ inline constexpr int kTilesPerAxis = static_cast<int>(kWorldSize / kTileSize);  
 /// encoded before it ever goes on the wire.
 inline constexpr int kMaxTilesPerAxis = 512;
 
-/// Slack folded into the tile-scan reach so a body already resting at the
+/// Slack folded into the cell-scan reach so a body already resting at the
 /// push-out distance still registers as in contact. TypeScript's
 /// COLLISION_BUFFER. It is NOT added to the collision shape: a body collides
-/// with a wall as a disc of exactly its own radius against the tile's flat
-/// 300-unit rectangle.
+/// with a wall as a disc of exactly its own radius against the SHAPES the
+/// author drew on that cell's tile (shared/game/tiled_map.h) -- or, for a cell
+/// whose tile carries none, against its flat 300-unit rectangle.
 inline constexpr double kCollisionScanBuffer = 5.0;
 
 enum class Tile : std::uint8_t {

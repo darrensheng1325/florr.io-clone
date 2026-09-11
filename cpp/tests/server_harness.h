@@ -163,19 +163,35 @@ inline bool copyFile(const std::string& from, const std::string& to) {
     return writeFile(to, text);
 }
 
-/// The tileset every fixture map paints from: one plain tile, one water tile.
+/// The tileset every fixture map paints from: ground, wall, water, and one
+/// DIAGONAL wall whose collision is half its cell.
 ///
-/// NEITHER is tagged solid, because there is no such tag any more. Collision
-/// is the LAYER's `has_collision` property and nothing else, so what makes the
-/// second tile a wall is which layer fixtureMap() paints it on. `water` is the
-/// one tag left and it says only what KIND of blocker a colliding cell is --
-/// exactly as maps/tileset.tsj uses it.
+/// Nothing is tagged solid, because there is no such tag: a cell blocks where
+/// a layer with `has_collision` paints a tile that CARRIES COLLISION SHAPES,
+/// which is Tiled's own semantic (shared/game/tiled_map.h). So each blocking
+/// tile here declares an `objectgroup`, exactly as maps/tileset.tsj does --
+/// the three whole-cell ones a rectangle over the entire tile, and
+/// `castle_tri` a triangle over the half below its diagonal. A tile with no
+/// objectgroup (the grass) contributes no collision wherever it is painted,
+/// which is what makes the background layer scenery twice over.
+///
+/// The shapes are in the TILE'S OWN IMAGE SPACE, which is what Tiled's Tile
+/// Collision Editor draws in and what the loader reads them in -- 300 here, so
+/// the load scales them by one. (This is an image-collection tileset, so every
+/// tile declares its image size and the tileset-level tilewidth/tileheight is
+/// only the display grid; the two agree here.) The shipped tileset draws at 256
+/// into 300-unit cells and is the case that exercises the scale; a fixture that
+/// also rescaled would make every expected number in a test an arithmetic
+/// puzzle.
+///
+/// `water` is the one tag left on a tile and it says only what KIND of blocker
+/// a colliding cell is -- exactly as maps/tileset.tsj uses it.
 inline std::string fixtureTileset() {
     return R"({
  "columns": 0,
  "grid": { "height": 300, "orientation": "orthogonal", "width": 300 },
  "name": "fixture",
- "tilecount": 3,
+ "tilecount": 4,
  "tiledversion": "1.10.1",
  "tileheight": 300,
  "tilerendersize": "grid",
@@ -183,13 +199,29 @@ inline std::string fixtureTileset() {
  "type": "tileset",
  "version": "1.10",
  "tiles": [
-  { "id": 0, "image": "tiles/grass_c_0.svg", "imageheight": 256, "imagewidth": 256,
+  { "id": 0, "image": "tiles/grass_c_0.svg", "imageheight": 300, "imagewidth": 300,
     "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ] },
-  { "id": 1, "image": "tiles/castle_c_0.svg", "imageheight": 256, "imagewidth": 256,
-    "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ] },
-  { "id": 2, "image": "tiles/water_c_0.svg", "imageheight": 256, "imagewidth": 256,
+  { "id": 1, "image": "tiles/castle_c_0.svg", "imageheight": 300, "imagewidth": 300,
+    "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ],
+    "objectgroup": { "draworder": "index", "id": 2, "name": "", "opacity": 1,
+      "type": "objectgroup", "visible": true, "x": 0, "y": 0,
+      "objects": [ { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+                     "x": 0, "y": 0, "width": 300, "height": 300 } ] } },
+  { "id": 2, "image": "tiles/water_c_0.svg", "imageheight": 300, "imagewidth": 300,
     "properties": [ { "name": "water", "type": "bool", "value": true },
-                    { "name": "covers_everything", "type": "bool", "value": true } ] }
+                    { "name": "covers_everything", "type": "bool", "value": true } ],
+    "objectgroup": { "draworder": "index", "id": 2, "name": "", "opacity": 1,
+      "type": "objectgroup", "visible": true, "x": 0, "y": 0,
+      "objects": [ { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+                     "x": 0, "y": 0, "width": 300, "height": 300 } ] } },
+  { "id": 3, "image": "tiles/castle_tri_0.svg", "imageheight": 300, "imagewidth": 300,
+    "properties": [ { "name": "covers_everything", "type": "bool", "value": true } ],
+    "objectgroup": { "draworder": "index", "id": 2, "name": "", "opacity": 1,
+      "type": "objectgroup", "visible": true, "x": 0, "y": 0,
+      "objects": [ { "id": 1, "name": "", "type": "", "rotation": 0, "visible": true,
+                     "x": 0, "y": 0, "width": 0, "height": 0,
+                     "polygon": [ { "x": 0, "y": 0 }, { "x": 300, "y": 300 },
+                                  { "x": 0, "y": 300 } ] } ] } }
  ]
 })";
 }
@@ -216,23 +248,37 @@ inline std::string fixtureDoor(const std::string& spawnId, const std::string& la
     return out;
 }
 
-/// One `spawns` object: a mob REGION when `tier` is empty (it only says what
-/// lives on this ground), a tier BAND when it is not.
+/// One `spawns` object with no difficulty: a mob REGION, which only says what
+/// lives on this ground.
 ///
 /// A fixture map needs one of these or a `defaultMobGroup`, or the spawner has
 /// nothing to put on it -- the map's id is its default group, and `hollow` is
 /// not a group mobs.json defines.
 inline std::string fixtureRegion(double x, double y, double w, double h,
-                                 const std::string& mobs, const std::string& tier = {}) {
-    std::string out = "{ \"id\": 80, \"name\": \"\", \"type\": \"spawn\", \"visible\": true,"
-                      " \"rotation\": 0, \"x\": " + std::to_string(x) +
-                      ", \"y\": " + std::to_string(y) + ", \"width\": " + std::to_string(w) +
-                      ", \"height\": " + std::to_string(h) + ", \"properties\": [";
-    if (!tier.empty()) {
-        out += "{ \"name\": \"spawnType\", \"type\": \"string\", \"value\": \"" + tier + "\" },";
-    }
-    out += "{ \"name\": \"mobs\", \"type\": \"string\", \"value\": \"" + mobs + "\" }]}";
-    return out;
+                                 const std::string& mobs) {
+    return "{ \"id\": 80, \"name\": \"\", \"type\": \"spawn\", \"visible\": true,"
+           " \"rotation\": 0, \"x\": " + std::to_string(x) +
+           ", \"y\": " + std::to_string(y) + ", \"width\": " + std::to_string(w) +
+           ", \"height\": " + std::to_string(h) + ", \"properties\": ["
+           "{ \"name\": \"mobs\", \"type\": \"string\", \"value\": \"" + mobs + "\" }]}";
+}
+
+/// One `spawns` object WITH a difficulty: a spawn BAND, which owns a
+/// population of its own at the tier that difficulty buys.
+///
+/// A number, not a rarity name -- zero is fully common and three hundred is
+/// unique with a little apex in it; see the difficulty curve in
+/// shared/game/difficulty.h. Written as a float property because that is what
+/// Tiled writes for any number an author types into one.
+inline std::string fixtureBand(double x, double y, double w, double h, const std::string& mobs,
+                               double difficulty) {
+    return "{ \"id\": 81, \"name\": \"\", \"type\": \"spawn\", \"visible\": true,"
+           " \"rotation\": 0, \"x\": " + std::to_string(x) +
+           ", \"y\": " + std::to_string(y) + ", \"width\": " + std::to_string(w) +
+           ", \"height\": " + std::to_string(h) + ", \"properties\": ["
+           "{ \"name\": \"difficulty\", \"type\": \"float\", \"value\": " +
+           std::to_string(difficulty) + " },"
+           "{ \"name\": \"mobs\", \"type\": \"string\", \"value\": \"" + mobs + "\" }]}";
 }
 
 /// One `teleporters` object: a POINT, which is how every pad is authored.
@@ -261,24 +307,29 @@ inline std::string fixturePad(double x, double y, const std::string& targetMap,
 /// walls layer paints; the default is a one-cell border, which is what most
 /// callers want. `waterAt` is the same for the water layer, and a cell it
 /// claims is a blocker of a different KIND: it still stops a body, and it is
-/// what tileIsWater() is true of.
+/// what tileIsWater() is true of. `diagonalAt` paints the DIAGONAL wall tile,
+/// whose authored shape is the triangle below its diagonal -- a cell that
+/// blocks half of itself, which is what the whole map is made of now and what
+/// a whole-cell collision reader cannot tell from a full wall.
 ///
 /// Note the background layer: it paints every cell, INCLUDING the ones under
-/// the walls, and it never blocks a thing. A reader that took collision off
-/// the tiles rather than off the layer would make this whole map solid.
+/// the walls, and it never blocks a thing -- twice over, since its tile
+/// carries no collision shapes either.
 inline std::string fixtureMap(int cols, int rows, const std::string& doors,
                               const std::string& pads, const std::string& spawns = {},
                               const std::function<bool(int, int)>& solidAt = {},
-                              const std::function<bool(int, int)>& waterAt = {}) {
+                              const std::function<bool(int, int)>& waterAt = {},
+                              const std::function<bool(int, int)>& diagonalAt = {}) {
     std::string background, wall, water;
     for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < cols; ++x) {
             const bool border = x == 0 || y == 0 || x == cols - 1 || y == rows - 1;
-            const bool solid = solidAt ? solidAt(x, y) : border;
-            const bool wet = waterAt && waterAt(x, y) && !solid;
+            const bool diagonal = diagonalAt && diagonalAt(x, y);
+            const bool solid = !diagonal && (solidAt ? solidAt(x, y) : border);
+            const bool wet = waterAt && waterAt(x, y) && !solid && !diagonal;
             if (!background.empty()) { background += ","; wall += ","; water += ","; }
             background += "1";
-            wall += solid ? "2" : "0";
+            wall += diagonal ? "4" : (solid ? "2" : "0");
             water += wet ? "3" : "0";
         }
     }
@@ -360,6 +411,7 @@ inline std::string stageDataDir(const std::string& name,
     copyFile(dataDir() + "/grass_c_0.svg", dir + "/grass_c_0.svg");
     copyFile(dataDir() + "/castle_c_0.svg", dir + "/castle_c_0.svg");
     copyFile(dataDir() + "/water_c_0.svg", dir + "/water_c_0.svg");
+    copyFile(dataDir() + "/castle_tri_0.svg", dir + "/castle_tri_0.svg");
 
     std::string manifest = "{\n  \"maps\": [";
     for (std::size_t i = 0; i < maps.size(); ++i) {

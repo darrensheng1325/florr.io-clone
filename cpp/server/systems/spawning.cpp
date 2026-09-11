@@ -134,18 +134,9 @@ bool nearAnyPlayer(const std::vector<SpawnSystem::Viewer>& viewers, Realm realm,
     return false;
 }
 
-/// The one-step tier drift every spawn path ends with: one roll up and, only
-/// if that misses, one roll down, so the two can never both apply.
-Rarity applyTierDrift(Rarity rarity, double luck, Rng& rng) {
-    const double upgradeChance = clamp(0.02 + std::max(0.0, luck) * 0.01, 0.0, 1.0);
-    if (rng.chance(upgradeChance)) return upgradeRarity(rarity);
-    if (rng.chance(dropDowngradeChance(rarity))) return downgradeRarity(rarity);
-    return rarity;
-}
-
 /// True when a rectangle overlaps any player's buffered viewport. What decides
-/// whether a spawn zone is worth stocking at all: the map has 151 of them and
-/// only the handful somebody can see are simulated.
+/// whether a spawn zone is worth stocking at all: only the handful somebody can
+/// see are simulated.
 bool zoneInView(const Rect& bounds, Realm realm,
                 const std::vector<SpawnSystem::Viewer>& viewers) {
     for (const SpawnSystem::Viewer& viewer : viewers) {
@@ -282,7 +273,7 @@ std::uint16_t SpawnSystem::chooseRegionMobAt(const ContentRegistry& content, Rea
 std::uint16_t SpawnSystem::chooseAmbientMobAt(const ContentRegistry& content, Realm realm, Vec2 at,
                                               Rarity rarity, Rng& rng) {
     rebuildZones(content);
-    // A tier band that names its own mobs wins over the ground it sits on:
+    // A difficulty band that names its own mobs wins over the ground it sits on:
     // that is what a band naming `hornet` is for.
     for (const SpawnZone& zone : zones_) {
         if (zone.realm != realm) continue;
@@ -310,32 +301,23 @@ bool SpawnSystem::permanentFixtureExists(World& world, std::uint16_t mobIndex, R
     return found;
 }
 
-Rarity SpawnSystem::rollRarity(const MobConfig& config, Rng& rng) {
-    const Rarity rolled = rollNaturalRarity(-1, 1.0, rng);
+Rarity SpawnSystem::rollRarity(const MobConfig& config, double difficulty, double luck,
+                               Rng& rng) {
+    const Rarity rolled = rollSpawnRarity(difficulty, luck, rng);
     return clampRarity(std::max(rarityIndex(rolled), rarityIndex(config.minRarity)));
 }
 
-Rarity SpawnSystem::rollNaturalRarity(int section, double luck, Rng& rng) {
-    static constexpr std::array<double, kRarityCount> kEqualRarityWeights = {
-        0.94 / 6.0, 0.94 / 6.0, 0.94 / 6.0, 0.94 / 6.0,
-        0.94 / 6.0, 0.94 / 6.0, 0.05, 0.001, 0.0, 0.0,
-    };
-    const auto& weights = section == 7 ? kEqualRarityWeights : kNaturalSpawnWeight;
-    double total = 0.0;
-    for (const double weight : weights) total += weight;
-
-    int tier = 0;
-    if (total > 0.0) {
-        double roll = rng.unit() * total;
-        for (int i = 0; i < kRarityCount; ++i) {
-            if (weights[static_cast<std::size_t>(i)] <= 0.0) continue;
-            tier = i;
-            roll -= weights[static_cast<std::size_t>(i)];
-            if (roll < 0.0) break;
-        }
+double SpawnSystem::difficultyAt(Realm realm, Vec2 at) const {
+    // A band first: it is the author drawing danger onto a shape, and it wins
+    // over whatever the map says its open ground is. First match in map order,
+    // as every other shape lookup here is.
+    for (const SpawnZone& zone : zones_) {
+        if (zone.realm != realm) continue;
+        if (!zoneContains(zone.bounds, zone.polygon, at)) continue;
+        return zone.difficulty;
     }
-
-    return applyTierDrift(clampRarity(tier), luck, rng);
+    const MapData* map = worldMaps != nullptr ? worldMaps->forRealm(realm) : nullptr;
+    return map != nullptr ? map->defaultDifficulty() : 0.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -565,11 +547,9 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
         fillNeighbourhoods(world, terrain, content, viewers_, rng, nowMillis);
     }
 
-    // Three independent clocks in the reference, and they stay independent
-    // here: the zones and the bosses read the last census rather than taking
-    // one of their own, so neither is tied to the density pass's cadence.
+    // Its own clock, and it reads the last census rather than taking one of
+    // its own, so the band fill is not tied to the density pass's cadence.
     runSpawnZones(world, terrain, content, viewers_, rng, nowMillis);
-    runSpecialMobs(world, terrain, content, viewers_, rng, nowMillis);
 }
 
 void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& players) {
@@ -722,10 +702,11 @@ bool SpawnSystem::placementAllowed(const Terrain& terrain, const std::vector<Vie
     // the point.
     if (inBorderBand(position, overworldExtent_)) return false;
     if (terrain.blocked(position, Realm::Overworld)) return false;
-    // A spawn rectangle owns its own population, at its own tier. The density
-    // fill stays out of one entirely: letting it in is what fills a legendary
-    // zone with commons, because this pass rolls the natural spread and knows
-    // nothing about the map (src/server/enemySpawner.ts:752-756).
+    // A spawn rectangle owns its own population, at its own difficulty. The
+    // density fill stays out of one entirely: letting it in would let a band's
+    // ground be stocked twice, once by the band's own difficulty and once by
+    // the map default the fill rolls out here
+    // (src/server/enemySpawner.ts:752-756).
     if (inAnySpawnZone(position, sectionOut)) return false;
     if (nearAnyPlayer(viewers, Realm::Overworld, position, kMinSpawnDistance)) return false;
     return !crowdedAt(Realm::Overworld, position, kPreliminarySpawnRadius, kMinMobSpawnSpacing);
@@ -812,11 +793,13 @@ void SpawnSystem::fillNeighbourhoods(World& world, const Terrain& terrain,
 
             // Tier before type, because a mob's eligibility depends on the
             // tier: min_rarity takes a mob out of its groups below its floor.
-            // The roll is charged to the player whose neighbourhood asked for
-            // the mob -- luck is what a clover loadout buys, and a spawn owned
-            // by nobody would never feel it
+            // The DIFFICULTY of the ground decides it -- which out here, where
+            // the fill deliberately stays out of every band, is the map's own
+            // `defaultDifficulty`. The roll is charged to the player whose
+            // neighbourhood asked for the mob -- luck is what a clover loadout
+            // buys, and a spawn owned by nobody would never feel it
             // (src/server/enemySpawner.ts:775-777).
-            Rarity rarity = rollNaturalRarity(section, viewer.luck, rng);
+            Rarity rarity = rollSpawnRarity(difficultyAt(Realm::Overworld, at), viewer.luck, rng);
             // WHAT lives here is the map's business: the band covering this
             // point, or the map's default group when no band does.
             std::uint16_t type = chooseAmbientMobAt(content, Realm::Overworld, at, rarity, rng);
@@ -849,6 +832,7 @@ void SpawnSystem::fillNeighbourhoods(World& world, const Terrain& terrain,
                 mobPlacements_.push_back(MobPlacement{transform->position,
                                                       body != nullptr ? body->radius : 0.0,
                                                       Realm::Overworld});
+                announceIfNotable(content, type, rarity, transform->position, transform->realm);
             }
             ++neighbours_[i];
         }
@@ -993,7 +977,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             SpawnZone zone;
             zone.bounds = element.bounds;
             zone.polygon = element.polygon;
-            zone.tier = element.spawnTier;
+            zone.difficulty = element.difficulty;
             zone.realm = map.realm();
             zone.mobs = element.mobDistribution;
 
@@ -1068,25 +1052,6 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     }
 }
 
-/// A point inside one zone's outline that is not in the map's border band.
-///
-/// Rejection sampling over the bounding box: uniform over the outline, and a
-/// zone that fills little of its box just spends more of the tries. False when
-/// they ran out, which is what the callers' own retry logic already handles.
-bool SpawnSystem::sampleZonePoint(const SpawnZone& zone, Rng& rng, Vec2& out) const {
-    // Only the boss pass samples this way, and it places on the overworld
-    // alone (its pickers skip every other realm's zones), so the overworld's
-    // extent is the right one by construction.
-    for (int attempt = 0; attempt < kZonePlacementAttempts; ++attempt) {
-        const Vec2 candidate = samplePointInRect(zone.bounds, overworldExtent_, rng);
-        if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
-        if (inBorderBand(candidate, overworldExtent_)) continue;
-        out = candidate;
-        return true;
-    }
-    return false;
-}
-
 std::uint16_t SpawnSystem::rollResolvedRows(const ContentRegistry& content,
                                            const std::vector<SpawnZone::ResolvedRow>& rows,
                                            Rarity rarity, Rng& rng) const {
@@ -1122,7 +1087,7 @@ std::uint16_t SpawnSystem::chooseZoneMobType(const ContentRegistry& content,
                                             const SpawnZone& zone, Vec2 at, Rarity rarity,
                                             Rng& rng) {
     // No distribution of its own: whatever this ground grows anyway. That is
-    // what a band saying only "epic tier" means -- the same mobs as the
+    // what a band saying only `difficulty: 50` means -- the same mobs as the
     // meadow beside it, three tiers up.
     if (zone.resolved.empty()) return chooseRegionMobAt(content, zone.realm, at, rarity, rng);
     return rollResolvedRows(content, zone.resolved, rarity, rng);
@@ -1255,15 +1220,12 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
     // it for an overworld band and judges any other map as a whole.
     const int section = sectionAt(at);
 
-    // The band's own tier, never a natural roll: this is where the map's
-    // rarity progression comes from. An ultra band is also the only place
-    // `super` appears without the boss pass -- one roll in a hundred.
-    Rarity rarity = zone.tier;
-    if (rarity == Rarity::Ultra) {
-        rarity = rng.chance(kUltraZoneSuperChance) ? Rarity::Super : Rarity::Ultra;
-    } else {
-        rarity = applyTierDrift(rarity, luck, rng);
-    }
+    // The band's own DIFFICULTY, run through the one curve: this is where the
+    // map's rarity progression comes from, and where every boss in the world
+    // now comes from -- a difficulty-200 band is full of supers because its
+    // author said so, not because a separate pass decided the world was owed
+    // one.
+    Rarity rarity = rollSpawnRarity(zone.difficulty, luck, rng);
     std::uint16_t type = chooseZoneMobType(content, zone, at, rarity, rng);
     if (type == kInvalidIndex) return NULL_ENTITY;
     // A band naming a mob outright can name one below its own tier; the mob's
@@ -1285,278 +1247,26 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
         mobPlacements_.push_back(MobPlacement{transform->position,
                                               body != nullptr ? body->radius : 0.0,
                                               transform->realm});
+        announceIfNotable(content, type, rarity, transform->position, transform->realm);
     }
     return spawned;
 }
 
 // ---------------------------------------------------------------------------
-// Bosses
+// Announcements
 // ---------------------------------------------------------------------------
 
-void SpawnSystem::runSpecialMobs(World& world, const Terrain& terrain,
-                                 const ContentRegistry& content,
-                                 const std::vector<Viewer>& viewers, Rng& rng, double nowMillis) {
-    if (zones_.empty()) return;
-    if (nowMillis < nextBossMillis_) return;
-    const bool startup = !bossPassRan_;
-    bossPassRan_ = true;
-    nextBossMillis_ = nowMillis + kBossIntervalMillis;
-    // The reference stocks the world once as it boots, whatever it looks like,
-    // and after that only while somebody is online -- its timer keeps running
-    // over an empty server but skips its body, so a boss killed with nobody
-    // watching is not replaced until someone comes back.
-    if (!startup && viewers.empty()) return;
-
-    int ultras = 0;
-    int supers = 0;
-    int uniques = 0;
-    // Recomputed from the world every pass rather than tracked: a boss dying
-    // anywhere would otherwise leak its section's slot forever.
-    std::array<bool, kSectionCount> superSections{};
-    allMobs_->each([&](Entity, MobTag&, Transform& transform, MobType& type) {
-        // The OVERWORLD's bosses: this pass only ever places there, so a maze
-        // ultra, or one a biome map's mythic band drifted into, must not
-        // count as the one the overworld is keeping -- the reference skips
-        // its maze mobs here for exactly that reason (enemySpawner.ts:1195).
-        // The section lookup below is the overworld's grid, too.
-        if (transform.realm != Realm::Overworld) return;
-        // A target dummy is a permanent fixture, not an event, and one parked
-        // in an ultra plot would suppress the world's real ultra.
-        if (content.mob(type.configIndex).neverAmbient) return;
-        if (type.rarity == Rarity::Ultra) {
-            ++ultras;
-        } else if (type.rarity == Rarity::Super) {
-            ++supers;
-            const int section = sectionAt(transform.position);
-            if (section >= 0) superSections[static_cast<std::size_t>(section)] = true;
-        } else if (type.rarity == Rarity::Unique) {
-            ++uniques;
-        }
-    });
-
-    // Exactly one ultra is kept alive, anywhere on the map, and it is never
-    // announced -- it is found rather than advertised.
-    if (ultras == 0) {
-        spawnSpecialMob(world, terrain, content, Rarity::Ultra, -1, nullptr, viewers, rng,
-                        nowMillis);
-    }
-
-    for (int section = 0; section < kSectionCount; ++section) {
-        if (superSections[static_cast<std::size_t>(section)]) continue;
-        const Entity boss = spawnSpecialMob(world, terrain, content, Rarity::Super, section,
-                                            &superSections, viewers, rng, nowMillis);
-        if (boss == NULL_ENTITY) continue;
-        ++supers;
-        // Three supers in four come out of an ultra rectangle, which is not
-        // section-bound, so the one that lands claims whatever section it fell
-        // in rather than the one being filled.
-        const Transform* transform = world.tryGet<Transform>(boss);
-        const MobType* type = world.tryGet<MobType>(boss);
-        if (transform == nullptr || type == nullptr) continue;
-        const int landed = sectionAt(transform->position);
-        if (landed >= 0) superSections[static_cast<std::size_t>(landed)] = true;
-        announceBoss(type->configIndex, type->rarity, transform->position);
-    }
-
-    // A unique only exists alongside a super, and only one pass in four even
-    // tries: it is the rarest thing the world produces on its own.
-    if (supers > 0 && uniques == 0 && rng.chance(kUniqueSpawnChance)) {
-        const Entity boss = spawnSpecialMob(world, terrain, content, Rarity::Unique, -1, nullptr,
-                                            viewers, rng, nowMillis);
-        if (boss == NULL_ENTITY) return;
-        const Transform* transform = world.tryGet<Transform>(boss);
-        const MobType* type = world.tryGet<MobType>(boss);
-        if (transform != nullptr && type != nullptr) {
-            announceBoss(type->configIndex, type->rarity, transform->position);
-        }
-    }
-}
-
-void SpawnSystem::announceBoss(std::uint16_t mobIndex, Rarity rarity, Vec2 position) {
+void SpawnSystem::announceIfNotable(const ContentRegistry& content, std::uint16_t mobIndex,
+                                    Rarity rarity, Vec2 position, Realm realm) {
+    if (rarityIndex(rarity) < rarityIndex(kAnnouncedRarity)) return;
+    // A permanent fixture is not an event. The DPS row is built out of bands
+    // that name the target dummy outright, up to unique, and announcing those
+    // would put a line in chat for a post nobody has to fight.
+    if (mobIndex >= content.mobCount() || content.mob(mobIndex).neverAmbient) return;
     // Oldest first, so a server that never drains this keeps the announcements
     // somebody might still care about instead of the ones from an hour ago.
     if (bossSpawns.size() >= kMaxPendingBossSpawns) bossSpawns.erase(bossSpawns.begin());
-    bossSpawns.push_back(BossSpawn{mobIndex, rarity, position});
-}
-
-Entity SpawnSystem::spawnSpecialMob(World& world, const Terrain& terrain,
-                                    const ContentRegistry& content, Rarity tier, int targetSection,
-                                    const std::array<bool, kSectionCount>* superSections,
-                                    const std::vector<Viewer>& viewers, Rng& rng,
-                                    double nowMillis) {
-    if (census_.mobs >= mobCap) return NULL_ENTITY;
-
-    // Where the tier lives on the map. Ultras and uniques are ultra-rectangle
-    // only; three supers in four join them and the fourth takes a mythic one,
-    // which is what spreads bosses beyond the map's nine ultra plots.
-    const Rarity zoneTier = tier == Rarity::Super && !rng.chance(kSuperInUltraZoneChance)
-                                ? Rarity::Mythic
-                                : Rarity::Ultra;
-
-    Vec2 at;
-    bool placed = false;
-    if (tier == Rarity::Super && targetSection >= 0) {
-        // Only the mythic branch is held to the section being filled: there is
-        // no ultra rectangle in every section, so an ultra-branch super is
-        // allowed to land wherever the map has one.
-        placed = zoneTier == Rarity::Mythic
-                     ? randomPointInZoneTypeInSection(Rarity::Mythic, targetSection, rng, at)
-                     : randomPointInZoneType(Rarity::Ultra, rng, at);
-        if (!placed) {
-            placed = zoneTier == Rarity::Mythic
-                         ? randomPointInZoneType(Rarity::Ultra, rng, at)
-                         : randomPointInZoneTypeInSection(Rarity::Mythic, targetSection, rng, at);
-        }
-    } else {
-        placed = randomPointInZoneType(zoneTier, rng, at);
-    }
-    if (!placed) return NULL_ENTITY;
-
-    // Rolled against the FIRST position's section, before the retries below
-    // may move the boss: the reference picks its species once and then only
-    // looks for somewhere to stand it.
-    const std::uint16_t type = chooseAmbientMobAt(content, Realm::Overworld, at, tier, rng);
-    if (type == kInvalidIndex) return NULL_ENTITY;
-    // A permanent fixture is not a boss. The dummy plots are ultra/super/
-    // unique bands like any other, so the point above can land in one, and a
-    // band that names its mob outright hands back the dummy -- which the
-    // boss census deliberately does not count, so the pass would stand a
-    // fresh dummy there every interval. The band fill builds those, one per
-    // tier per section; this pass never does.
-    if (content.mob(type).neverAmbient) return NULL_ENTITY;
-    const MobStats stats = content.mobStats(type, tier);
-
-    // A rectangle is allowed to hang over the border band. One retry, then the
-    // boss is given up on until the next pass. The overworld's extent, because
-    // this pass places on the overworld alone.
-    if (inBorderBand(at, overworldExtent_)) {
-        Vec2 retry;
-        if (!randomPointInZoneType(zoneTier, rng, retry) ||
-            inBorderBand(retry, overworldExtent_)) {
-            return NULL_ENTITY;
-        }
-        at = retry;
-    }
-
-    // Never in someone's lap: a boss materialising inside a player's petals is
-    // a free kill for whichever side gets the first tick.
-    if (nearAnyPlayer(viewers, Realm::Overworld, at, kMinSpawnDistance)) {
-        bool moved = false;
-        for (int attempt = 0; attempt < kBossPlacementAttempts; ++attempt) {
-            Vec2 retry;
-            if (!randomPointInZoneType(zoneTier, rng, retry)) continue;
-            if (nearAnyPlayer(viewers, Realm::Overworld, retry, kMinSpawnDistance)) continue;
-            at = retry;
-            moved = true;
-            break;
-        }
-        if (!moved) return NULL_ENTITY;
-    }
-
-    // The final test uses the boss's own body rather than the 20-unit stand-in,
-    // which matters: an ultra is several times the size of the mob it displaces.
-    if (crowdedAt(Realm::Overworld, at, stats.radius, 0.0)) return NULL_ENTITY;
-
-    // Last, because it is a veto on the FINAL position. Dropping an
-    // already-admitted boss instead would leave its entity in the world.
-    if (superSections != nullptr) {
-        const int landing = sectionAt(at);
-        if (landing < 0 || (*superSections)[static_cast<std::size_t>(landing)]) return NULL_ENTITY;
-    }
-
-    const Entity spawned = spawnMob(world, terrain, content, type, tier, at, Realm::Overworld, nowMillis, rng);
-    if (spawned == NULL_ENTITY) return NULL_ENTITY;
-    if (const Transform* transform = world.tryGet<Transform>(spawned)) {
-        const Body* body = world.tryGet<Body>(spawned);
-        mobPlacements_.push_back(MobPlacement{transform->position,
-                                              body != nullptr ? body->radius : 0.0,
-                                              Realm::Overworld});
-    }
-    return spawned;
-}
-
-bool SpawnSystem::randomPointInZoneType(Rarity tier, Rng& rng, Vec2& out) const {
-    // The boss pass places on the OVERWORLD, so only that map's plots are
-    // candidates. zones_ holds every staged map's bands, and two maps' bands
-    // sit at the same coordinates as often as not -- a second map's mythic
-    // block at small numbers would stand a super in the overworld's beginner
-    // ground.
-    const auto eligible = [&](const SpawnZone& zone) {
-        return zone.tier == tier && zone.realm == Realm::Overworld;
-    };
-    int matches = 0;
-    for (const SpawnZone& zone : zones_) {
-        if (eligible(zone)) ++matches;
-    }
-    if (matches == 0) return false;
-
-    // Walked to rather than indexed: nine ultra and forty-one mythic
-    // rectangles is a short list, and a second per-tier index would be one
-    // more thing to keep in step with the map.
-    const auto nth = [&](int skip) -> const SpawnZone& {
-        for (const SpawnZone& zone : zones_) {
-            if (!eligible(zone)) continue;
-            if (skip-- == 0) return zone;
-        }
-        return zones_.front();
-    };
-
-    const int picked = static_cast<int>(rng.below(static_cast<std::uint32_t>(matches)));
-    if (sampleZonePoint(nth(picked), rng, out)) return true;
-    // Exactly one retry, and in a DIFFERENT zone -- resampling the same one is
-    // how a zone drawn along the map edge starves the boss pass.
-    if (matches < 2) return false;
-    return sampleZonePoint(nth(picked == 0 ? 1 : 0), rng, out);
-}
-
-bool SpawnSystem::randomPointInZoneTypeInSection(Rarity tier, int section, Rng& rng,
-                                                 Vec2& out) const {
-    if (section < 0 || section >= kSectionCount) return false;
-    const Rect sectionRect{static_cast<double>(section % kSectionsPerAxis) * kSectionSize,
-                           static_cast<double>(section / kSectionsPerAxis) * kSectionSize,
-                           kSectionSize, kSectionSize};
-
-    // Overworld plots only: the section grid is the overworld's, and so is
-    // the boss this is placing. See randomPointInZoneType.
-    const auto eligible = [&](const SpawnZone& zone) {
-        return zone.tier == tier && zone.realm == Realm::Overworld &&
-               zone.bounds.intersects(sectionRect);
-    };
-    int matches = 0;
-    for (const SpawnZone& zone : zones_) {
-        if (eligible(zone)) ++matches;
-    }
-    if (matches == 0) return false;
-
-    const auto nth = [&](int skip) -> const SpawnZone& {
-        for (const SpawnZone& zone : zones_) {
-            if (!eligible(zone)) continue;
-            if (skip-- == 0) return zone;
-        }
-        return zones_.front();
-    };
-
-    for (int attempt = 0; attempt < kZoneSectionAttempts; ++attempt) {
-        const SpawnZone& zone =
-            nth(static_cast<int>(rng.below(static_cast<std::uint32_t>(matches))));
-        // The slice of the BOUNDING BOX that lies in this section: a zone may
-        // straddle two, and the super is being placed for one of them. The
-        // outline is then tested on the candidate, so the slice only has to be
-        // a superset of where the zone really is inside this section.
-        const double minX = std::max(zone.bounds.left(), sectionRect.left());
-        const double maxX = std::min(zone.bounds.right(), sectionRect.right());
-        const double minY = std::max(zone.bounds.top(), sectionRect.top());
-        const double maxY = std::min(zone.bounds.bottom(), sectionRect.bottom());
-        if (minX >= maxX || minY >= maxY) continue;
-
-        const Vec2 candidate =
-            samplePointInRect(Rect{minX, minY, maxX - minX, maxY - minY}, overworldExtent_, rng);
-        if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
-        if (inBorderBand(candidate, overworldExtent_)) continue;
-        out = candidate;
-        return true;
-    }
-    return false;
+    bossSpawns.push_back(BossSpawn{mobIndex, rarity, position, realm});
 }
 
 } // namespace flix

@@ -52,8 +52,8 @@ objects. An infinite or non-orthogonal map is refused for the same reason.
 `background`, `water`, `dirt`, `castle` mean nothing to the game, there is no
 layer that "is" the terrain, and nothing reads a layer by name. The one thing
 the game does read off a layer is a custom boolean, `has_collision`, and that
-boolean is the whole of collision — see below. Otherwise the layers are drawn
-bottom to top and that is all they do.
+boolean says whether the layer collides at all — see below. Otherwise the layers
+are drawn bottom to top and that is all they do.
 
 ### Flips
 
@@ -64,45 +64,98 @@ all four rotations of itself. The reader carries them through per cell
 in **Tiled's order: the anti-diagonal flip first (transpose), then horizontal,
 then vertical**. Any other order draws three of the four rotations wrong.
 
-Collision masks the bits off: a rotated wall is still a wall.
+Collision goes through **the same transform, from the same function**
+(`flix::tileOrientation`, in `cpp/shared/game/tiled_map.h`): a tile's collision
+shapes are turned and mirrored exactly as its art is, so a rotated edge blocks
+where the rotated picture draws. Deriving that transform twice is how collision
+and art drift apart, so there is only one of it.
 
-## Collision: the layer's `has_collision`
+## Collision: the layer says *whether*, the tile says *where*
 
-**Layers with collision enabled are walls; layers with it disabled are not.**
-A tile layer may carry one custom boolean in Tiled, under *Layer → Custom
-Properties*:
+Two things decide collision, and they answer different questions.
+
+**A layer's `has_collision` says whether this layer collides at all.** A tile
+layer may carry one custom boolean in Tiled, under *Layer → Custom Properties*:
 
 | property | meaning |
 | --- | --- |
-| `has_collision` | anything painted on this layer blocks movement |
+| `has_collision` | tiles painted on this layer block movement, in the shapes they draw |
 
-Per cell, over every layer of the map:
+**A tile's collision shapes say where inside its cell it blocks.** Those are the
+shapes you draw in Tiled's *Tile Collision Editor* (select the tile in the
+tileset, then *View → Tile Collision Editor*), and they are what the game
+actually collides against:
 
 ```
-blocked <- ANY layer with has_collision = true has a NON-EMPTY tile here
-kind    <- the TOPMOST blocking tile here is tagged `water` ? water : wall
-else       ground
+blocked(point) <- the point is inside a collision SHAPE of the tile painted
+                  on some layer with has_collision = true, placed at that
+                  cell, turned by the cell's flip bits and scaled from the
+                  tile's own image size onto the map's cell size
+kind           <- the TOPMOST shape containing the point belongs to a tile
+                  tagged `water` ? water : wall
+else              ground
 ```
+
+So a cell is **not** solid corner to corner just because something is painted on
+it. `castle_l` draws its wall body across the left 130.5 of its 256-unit tile
+and its collision rectangle is exactly that wide, so on a 300-unit cell the wall
+face lands 152.93 units in — and a flower walks right up to the edge of the
+drawn stone instead of stopping half a cell short of it. An edge tile has a
+walkable rim; a diagonal tile has a diagonal you can slide along.
+
+**A tile with no collision shapes blocks nothing, even on a colliding layer.**
+That is Tiled's own semantic, and it is what makes the rule above usable: the
+scenery tiles carry no shapes and so can sit on any layer at all. It also means
+a structural tile nobody drew a shape for is a hole in a wall, so the loader
+counts those cells and names the tiles on stderr at start-up. On `garden.tmj`
+that count is zero.
+
+Shape kinds Tiled can write are all read: a rectangle (with `rotation`), a
+polygon (concave included — the authored dirt edges are), and an ellipse, which
+is polygonised. A **polyline is an open shape and is not collision**: it is
+skipped, with a warning naming the tile.
 
 A layer with `has_collision` absent or false **never** blocks, whatever art it
-holds; a map that sets it nowhere has no walls at all. The art is not consulted
-about whether a cell blocks — the same grass tile is solid on a colliding layer
-and walkable on a layer below it.
+holds, and whatever shapes its tiles carry; a map that sets it nowhere has no
+walls at all.
 
-This is a layer property rather than a tile property because a layer is a thing
-the author can see, name and toggle in Tiled, and paints a whole region of
-wall in one go. Collision used to be a `solid` boolean on each tile in the
-tileset, and a Wang brush is exactly the thing that defeats that: a brush paints a
-family's centre, edge and corner tiles interchangeably, so one corner tile
-nobody remembered to tag was a hole in a wall that no amount of repainting
-would close, and finding it meant walking into it. A layer has one switch and
-the author has already decided which layer the walls go on.
+### The coarse grid, which is still per cell
 
-The cost is that **stacking no longer subtracts.** A bridge drawn over a pond
-does not make the cell walkable if the pond's layer collides: the pond cell is
-still non-empty and still blocks. To open a hole through a colliding layer you
-erase the cell on that layer — the brush's eraser, not a tile painted on top of
-it. Sequencing is a drawing question now and a collision question never.
+Beside the exact shapes the engine keeps the old one-value-per-cell grid, now
+meaning *"some shape in this cell blocks"*. It is what the minimap paints, what
+the bots' flow field walks, what spawn placement rejects conservatively, the
+fast reject before any shape test, and the only collision that goes over the
+wire. It over-states walls — a cell with a sliver of wall in it reads as solid —
+which is the safe direction for all four of those. Anything that asks about a
+POINT (`blocked`, `inWater`, the push-out, the segment tests, line of sight) goes
+to the shapes and is exact.
+
+A client whose data directory has no map for the realm it is in falls back to
+whole-cell collision from that wire grid. It believes in more wall than there
+is, never less, which is the harmless way to be wrong.
+
+**Why the split.** *Whether* is a layer property because a layer is a thing the
+author can see, name and toggle, and paints a whole region of wall in one go.
+Whether used to be a `solid` boolean on each tile, and a Wang brush is exactly
+the thing that defeats that: a brush paints a family's centre, edge and corner
+tiles interchangeably, so one corner tile nobody remembered to tag was a hole in
+a wall that no amount of repainting would close, and finding it meant walking
+into it. A layer has one switch and the author has already decided which layer
+the walls go on.
+
+*Where* is a tile property because it is a property of the drawing: the same
+`castle_l` blocks the same shape wherever it is painted, and the shape is
+already sitting in the tileset next to the picture it belongs to. The two
+questions do not fail the same way either — forgetting the layer switch makes a
+whole region walkable and is obvious the moment you walk it, while a missing
+tile shape is one tile's worth of hole, which is why the loader counts those and
+names them.
+
+The cost is that **stacking does not subtract.** A tile painted on top of a
+colliding cell adds its own shapes; it never takes the cell's existing ones
+away. To open a hole through a colliding layer you erase the cell on that layer
+— the brush's eraser, not a tile painted over it — or paint a tile whose
+collision shapes leave the gap you want.
 
 Only three tile values ever come out of the reader — ground, wall and water —
 and the engine's `Tile` enum, `tileBlocks()` and `tileIsWater()` are unchanged.
@@ -136,14 +189,40 @@ engine: `water` is a label on a decision the layer already made.
 | `water` | `ocean_c_0`…`ocean_c_3`, `water_c_0`, `water_l_0`, `water_tl_0`, `water_tri_0`, `sewage_c_0`, `sewage_l_0`, `sewage_tl_0`, `sewage_tri_0` — 12 |
 | `covers_everything` | the full-square centre tiles: `desert_c_0`…`desert_c_4`, `grass_c_0`…`grass_c_3`, `ocean_c_0`…`ocean_c_3`, `pvp_c_0`…`pvp_c_3`, `castle_c_0`, `dirt_c_0`, `dirt2_c_0`, `dirt2_c_1`, `water_c_0`, `sewage_c_0` — 23 |
 
-Everything else is untagged, which now costs nothing: an untagged tile on a
-colliding layer is a wall like any other.
+Everything else is untagged, which costs nothing: an untagged tile whose shapes
+block is a wall like any other. Note that `water` is asked about the tile whose
+SHAPE contains the point, so a bridge drawn over a pond reads as a bridge where
+its own shape covers.
 
-`garden.tmj` puts its four layers to work as `background` (no collision) under
-`water`, `dirt` and `castle` (all three colliding), which makes about **55% of
-the map solid**. That is deliberate: it is a castle and its grounds, not an
-open field. The one door sits in the open corner at the bottom left, where 42
-of the 56 cells it covers are ground.
+`garden.tmj` puts its five layers to work as `background` and `sand` (no
+collision) under `water`, `dirt` and `castle` (all three colliding). About 61%
+of its cells hold something that blocks — but because collision is the authored
+shapes rather than the cells, only about **49% of the map is actually solid**,
+and four cells in ten of the ones the coarse grid calls wall have walkable
+ground inside them. That difference is the edge tiles, and it is what a player
+feels as walking along a wall rather than along a staircase. Read the counts off
+your own start-up line rather than off this one, which is only what the map
+happened to say the day it was written:
+
+```
+[map] data/garden.tmj: collision from water, dirt, castle; scenery background,
+sand; 2204 wall, 290 water, 1602 ground cells; 86 shape sets over 2494 shaped
+cells
+```
+
+A second line appears when a collision shape reaches outside the tile it was
+drawn on — which the shipped tileset does, by 0.39 of a world unit, from one
+polygon vertex at x = −0.333 on `water_tl_0` and `sewage_tl_0`:
+
+```
+[map] data/garden.tmj: a collision shape reaches 0.391 world units outside its
+own tile; it still blocks, in every cell it reaches, but check it was meant
+```
+
+That is legal — a shape is filed in every cell it touches, so it collides there
+and the coarse grid marks those cells too — but it is nearly always a slip of
+the mouse in the Tile Collision Editor, and nothing in Tiled shows it, so it is
+reported.
 
 ### `covers_everything`
 
@@ -176,15 +255,18 @@ it carries decides which kind of object it is:
 
 | property | meaning |
 | --- | --- |
-| `spawnType` | the **tier**: `common` … `ultra`. Makes this a **band**. |
+| `difficulty` | **how dangerous** this ground is, a number from 0 up. Makes this a **band**. |
 | `mobs` | the **distribution**: what actually appears here |
 
-- A shape with `spawnType` is a **band**. It owns a population of its own,
+- A shape with `difficulty` is a **band**. It owns a population of its own,
   stocked to a density scaled by the outline's area, and the ambient fill stays
   out of it. This is where the map's difficulty progression lives.
 - A shape with only `mobs` is a **region**: it says what grows on this ground
-  and owns nothing. The ambient fill spawns inside it freely, at its own natural
-  tier spread, and asks the region only *what*.
+  and owns nothing. The ambient fill spawns inside it freely, at the difficulty
+  of the ground it stands on, and asks the region only *what*.
+
+A band with `difficulty: 0` is still a band — it owns its population and grows
+commons. It is the *presence* of the property that makes it one, not its value.
 
 The two have different shapes on purpose: danger runs in bands along a
 coastline, while "this is the desert" covers a quarter of the map.
@@ -197,6 +279,84 @@ viewport, is it worth looking at — and only three go to the outline: is this
 point inside, how large is it, where inside should this mob go. **The boundary
 is inside**, as it was when these were rectangles. A rectangle object still
 loads and stays a rectangle.
+
+#### `difficulty` — which number is which rarity
+
+One open-ended number, and it buys a *mixture* of two adjacent tiers rather than
+one tier outright. That is why it replaced a band naming a tier (`spawnType:
+rare`): a tier name can only ever say one of ten things, and it cannot say
+"mostly ultras with the odd super in them" at all.
+
+The number is read through four anchors — 0 is fully common, 100 is ultra with a
+two-per-cent chance of super, 200 is fully super, 300 is unique with a
+five-per-cent chance of apex — and it is linear between them. Past 300 it keeps
+the last segment's slope toward apex rather than capping, so a bigger number
+always means at least as dangerous.
+
+**Whole tiers.** These difficulties spawn one rarity and nothing else:
+
+| difficulty | rarity |
+| ---: | --- |
+| 0 | common |
+| 16.6 | uncommon |
+| 33.2 | rare |
+| 49.8 | epic |
+| 66.4 | legendary |
+| 83.1 | mythic |
+| 99.7 | ultra |
+| 200 | super |
+| 295.2 | unique |
+| 390.5 | apex |
+
+**Everything else is a blend**, including three of the four anchors themselves:
+
+| difficulty | spawns |
+| ---: | --- |
+| 10 | 40% common, 60% uncommon |
+| 25 | 50% uncommon, 50% rare |
+| 50 | 99% epic, 1% legendary |
+| 75 | 49% legendary, 51% mythic |
+| **100** | **98% ultra, 2% super** |
+| 150 | 49% ultra, 51% super |
+| **200** | **100% super** |
+| 250 | 47.5% super, 52.5% unique |
+| **300** | **95% unique, 5% apex** |
+| 350 | 42.5% unique, 57.5% apex |
+| 390.5 and up | 100% apex |
+
+The ladder is deliberately not evenly spaced: the first seven rarities fit in
+the first hundred points and the last three take the next three hundred. The
+early climb is short and the top of it is long, which is what the four anchors
+say.
+
+Luck is the only thing that moves a band off these numbers, and it only moves it
+up — every point of a player's luck above neutral adds a hundredth of a tier, so
+a clover buys a percentage point of the tier above wherever its owner is
+standing. There is no downward drift: a difficulty-0 band is fully common for
+everyone, always.
+
+The curve lives in exactly one place, `cpp/shared/game/difficulty.h`. Its anchor
+table is the design statement; move it and every number in this section moves
+with it, including the threshold that keeps a door off dangerous ground. That
+threshold is **tier 1 — difficulty 16.6**, the top of pure uncommon: the last
+difficulty whose blend cannot contain a rare at all. Not tier 2, which is where
+the ground is *entirely* rare and which would have called a band that rolls rare
+98.7% of the time (difficulty 33) safe for a level-one flower. Derived from the
+curve rather than written down twice.
+
+**What the shipped map says today.** `garden.tmj` carries sixteen bands, from
+0.5 on the ground the `garden` door stands on to 100 at the hardest of them —
+fully common where a fresh flower lands, ultra where it does not — with three
+of them naming their own distribution (`garden 10% bee 90%`, `garden 5% bee
+95%`, `garden 10% ladybug 90%`) and the rest taking the map's `garden`. It
+declares no `defaultDifficulty`, so every scrap of ground no band covers is common. The
+start-up line restates the range it read:
+
+```
+[map] garden: 64x64 tiles, biome "garden", mobs "garden", default difficulty 0
+(common), 16 bands difficulty 0.5 (common)..100 (ultra), 0 regions, 77 art
+files, 5 layers, doors: garden
+```
 
 ### `player_spawns` — doors
 
@@ -254,6 +414,7 @@ Set these in Tiled under *Map → Map Properties → Custom Properties*.
 | `displayName` | what the map is called in a message | the map's id |
 | `biome` | which tab of the spawn picker this map's doors file under | **the map's id** |
 | `defaultMobGroup` | the mob group a band with no `mobs` of its own spawns from | **`biome`** |
+| `defaultDifficulty` | how dangerous the ground no band covers is | `0`, i.e. fully common |
 
 Both defaults exist so that a one-biome map does not have to say its own name
 three times. `garden.tmj` declares none of them and is therefore the map
@@ -320,7 +481,15 @@ which layer it gets painted on.
 Art files are 256×256 drawn at the 300-unit grid size (`tilerendersize: grid`),
 but the size is for Tiled's benefit alone: `SvgDocument::renderFitted` maps a
 viewBox into whatever box it is handed, so the client fits every tile to its
-300-unit cell whatever the art's own dimensions say. A file the tileset names
+300-unit cell whatever the art's own dimensions say. **Collision** is fitted the
+same way and from the same number — each tile's shapes are read in **that tile's
+own image size** and scaled onto the cell — so a tile of any size may be added
+without touching anything that already exists. That matters because `tileset.tsj`
+is an image collection (`"columns": 0`), and for one of those Tiled rewrites the
+tileset-level `tilewidth`/`tileheight` to the size of the *largest* image in it:
+reading shapes in that space would silently rescale every shape in the game the
+first time a bigger tile arrived. The tileset's own size is used only for a
+spritesheet tileset, whose tiles have no image of their own. A file the tileset names
 but the directory lacks is one warning in the client, not a failure — the cell
 simply does not draw. Outside the map is black void.
 
@@ -358,35 +527,155 @@ reads it.
 `maps_old/` is the author's backup of the 47 generated maps this replaced. It is
 untracked, it is not staged, and nothing reads it. Leave it alone.
 
+**Zone rarities are gone**, and with them the machinery that hung off them: a
+band naming `spawnType: rare`, the per-section "natural" rarity spread the
+ambient fill used to roll, the one-tier drift that nudged every spawn up or down
+on a die roll, the one-in-a-hundred super an ultra band used to produce, and the
+boss pass — the pass that kept exactly one ultra alive in the world and one
+super per section and placed them by hand. That pass cannot coexist with a scale
+on which a difficulty-100 band is *full* of ultras, so on this scale bosses come
+from the ground they stand on. What survives is the announcement: a super,
+unique or apex spawning is still worth telling the server about.
+
 ## What guards this
 
-> **Provisional.** The reader, the renderer and their tests are being rewritten
-> in the same change as this document, and the layer collision rule landed after
-> the first pass at them. Treat the list below as what *should* guard the format
-> rather than as a roll call of tests that exist today; check it against
-> `cpp/tests/` before trusting a name in it.
+Every name below is a test in `cpp/tests` that exists and passes today, with
+what it pins written after it. The list was checked against the files rather
+than remembered, so a name that has drifted is a bug in one of the two.
 
-What should guard it, and where:
+**The collision rule — `cpp/tests/tiled_map_tests.cpp`** (the reader: which
+shapes a cell ends up with)
 
-- **`cpp/tests/tiled_map_tests.cpp`** — the reader: the per-cell collision rule
-  in each of its interesting cases (a colliding layer's tile over a
-  non-colliding one, art on a non-colliding layer blocking nothing, a `water`
-  tile on a colliding layer reading as water and the same tile on a
-  non-colliding layer reading as ground, a wall drawn over water staying wall,
-  an empty cell), a layer with `has_collision` absent defaulting to false, the
-  three flip bits composed in Tiled's order, overlapping-tileset and
-  wrong-tile-size refusals, a compressed layer refused by name, and the art
-  list and per-layer cells of the real `garden.tmj`.
-- **`cpp/tests/spawn_tests.cpp`** — the object layers on the shipped map: the
-  bands, the regions, the doors and their id fallbacks (name → label slug → map
-  id), and `biome`/`defaultMobGroup` defaulting with nothing authored.
-- **`cpp/tests/realm_tests.cpp`** — the manifest order fixing realms, and a
-  teleporter's cross-realm arrival.
-- **`cpp/tests/art_cache_tests.cpp`** — the tile art cache: a missing file
-  warns once and draws nothing.
-- The **content hash** over `maps.json` and every map's bytes, which is what
-  refuses a client holding a different map than the server.
+- `collision_is_the_layers_and_the_topmost_blocker_names_the_kind` — a
+  colliding layer's tile over a non-colliding one, and which of the stack names
+  wall or water.
+- `a_layer_that_does_not_collide_never_blocks_whatever_it_holds` — the same
+  castle-and-water painting on `has_collision: false` and on a layer with no
+  such property, blocking nothing either way, and still drawing.
+- `an_empty_cell_on_a_colliding_layer_is_still_ground`.
+- `a_tile_with_no_collision_shape_blocks_nothing_even_on_a_colliding_layer` —
+  and the authoring warning counts such a cell **once**, not once per layer.
+- `every_shape_kind_tiled_can_write_arrives_except_the_open_one` — rectangle,
+  rotated rectangle, polygon, ellipse and rotated ellipse all arrive; the
+  polyline is skipped with the tile named.
+- `a_shape_is_read_in_its_own_tiles_image_not_the_tilesets_display_grid` —
+  the image-collection case above: a 256 tile and a 512 tile in one tileset
+  both fill their cell, and a spritesheet tile with no image of its own falls
+  back to the tileset's size.
+- `a_tiles_shapes_are_scaled_from_the_tilesets_tile_size_onto_the_cell` — the
+  scale onto the 300-unit cell. (Its name predates the fix above and now says
+  the wrong space; what it checks is the scaling, and it is correct.)
+- `flip_bits_reach_the_art_and_turn_the_collision_shapes` and
+  `all_eight_orientations_put_a_shape_where_the_art_is` — the three bits
+  composed in Tiled's order, on the art and on the shapes, from the one
+  `tileOrientation`.
+- `the_shipped_map_loads` and
+  `the_shipped_map_collides_with_authored_shapes_everywhere` — the real
+  `garden.tmj`: its art list, its per-layer cells, and that every
+  cell it marks blocked got there from a shape.
+- `water_art_painted_only_where_it_cannot_block_is_reported`,
+  `the_derived_grid_reaches_a_client_through_terrain_and_the_wire`,
+  `a_map_with_no_object_layers_loads`, `the_object_layers_become_elements`.
+- `a_map_the_engine_cannot_read_is_refused_with_a_reason` — two tilesets
+  fighting over a gid, a compressed layer, a tile size that is not the game's,
+  a gid no tileset defines, and a layer of the wrong length.
+
+**The geometry — `cpp/tests/terrain_tests.cpp`** (what the shapes then do)
+
+- `a_rect_shape_blocks_inside_itself_and_leaves_the_rest_of_the_cell_walkable`
+  and `a_concave_shape_blocks_its_arms_and_not_its_notch` — the notch stays
+  open, which whole-cell collision could not express.
+- `an_unshaped_tile_on_a_colliding_layer_blocks_nothing_in_terrain` — the same
+  rule as the reader's, asked of `Terrain` rather than of the file.
+- `all_eight_orientations_block_where_the_art_is`.
+- `a_circle_stops_on_the_diagonal_edge_a_shape_draws_not_on_the_cell_boundary`
+  and `a_body_resting_against_a_wall_stops_at_the_flat_face` — the push-out
+  against a turned polygon and against a flat one.
+- `a_body_wedged_between_two_shapes_is_reported_unresolved_not_relocated` — the
+  four-pass contract: a centre the passes cannot untangle is reported, never
+  moved somewhere it did not earn.
+- `the_segment_tests_agree_with_the_point_tests_along_the_same_line`.
+- `water_is_the_shape_it_is_drawn_as_and_the_topmost_layer_names_the_kind`.
+- `a_shape_that_leaves_its_tile_blocks_and_is_reported_in_every_cell_it_reaches`
+  — the overhang line above: a shape is filed in every cell it touches and the
+  coarse grid marks those cells, so the coarse view stays conservative.
+- `the_shipped_garden_stops_a_body_where_its_art_does` — the real map, with
+  every expected number derived from the file rather than written down.
+- `a_realm_keeps_its_shapes_only_while_they_still_describe_its_grid` and
+  `writing_a_tile_by_hand_drops_the_realms_authored_shapes` — shapes and grid
+  never describe two different maps.
+
+**The client — `cpp/tests/client_collision_tests.cpp`**
+
+- `a_client_collides_against_the_same_shapes_the_server_enforces`.
+- `a_client_with_no_local_map_collides_with_whole_cells` — the conservative
+  fallback.
+- `a_realm_change_rebuilds_the_clients_collision_shapes`.
+
+**The object layers — `cpp/tests/spawn_tests.cpp`** (read off the shipped map,
+derived from the file rather than pinned, because the author is still drawing)
+
+- `the_shipped_map_loads_and_resolves_its_defaults`,
+  `the_shipped_door_is_named_by_its_label_and_is_pickable` (the name → label
+  slug → map id fallback), `the_shipped_door_stands_on_open_ground`.
+- `an_authored_band_and_region_still_parse`,
+  `a_zone_outline_excludes_what_its_bounding_box_includes`,
+  `a_zone_boundary_counts_as_inside`, `a_zone_area_is_the_outlines_not_the_boxs`,
+  `a_spawn_in_a_polygon_zone_lands_inside_it` — the polygon rules above.
+- `a_distribution_parses_the_authored_syntax`,
+  `a_distribution_accepts_the_shapes_an_author_will_type`,
+  `a_broken_distribution_is_reported_not_guessed_at`.
+- `every_pickable_door_stands_on_safe_open_ground`,
+  `a_door_that_is_not_pickable_is_joined_only_by_an_admin`,
+  `a_teleporter_carries_a_player_to_another_map`,
+  `a_spawn_choice_the_maps_do_not_define_falls_back`.
+
+**`difficulty` — `cpp/tests/spawning_tests.cpp`** (the curve, and what reads it)
+
+- `the_difficulty_curve_hits_the_four_authored_anchors` — 0, 100, 200 and 300
+  give exactly the four sentences at the head of this section.
+- `difficulty_clamps_below_zero_and_ramps_past_three_hundred` — below 0 is
+  common; above 300 keeps climbing and stops at apex.
+- `a_higher_difficulty_never_spawns_a_lower_tier` — the curve is monotonic all
+  the way up.
+- `luck_shifts_the_curve_upward_and_never_down`.
+- `safe_ground_is_ground_that_cannot_roll_a_rare` — the door threshold, pinned
+  from both sides.
+- `a_bands_difficulty_beats_the_maps_default` and
+  `the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares` —
+  `defaultDifficulty`, and the bands over it.
+- `the_region_under_a_spawn_decides_its_group` and
+  `the_shipped_map_stocks_its_default_group` — the band → region →
+  `defaultMobGroup` fallback, which `spawn_tests.cpp`'s
+  `the_shipped_map_falls_back_to_its_own_mob_group_wherever_nothing_says_otherwise`
+  checks again off the real map.
+- `a_hard_band_is_where_every_boss_in_the_world_comes_from`,
+  `a_soft_band_announces_nothing`,
+  `an_announced_boss_carries_the_map_it_spawned_on` — what replaced the boss
+  pass, and the announcement that outlived it.
+- `min_rarity_still_floors_a_named_mob_whatever_the_ground_says` and
+  `a_neverambient_mob_never_comes_from_a_group_roll_however_hard_the_ground` —
+  the two mob properties a zone's number does not override.
+
+**The handshake — `cpp/tests/config_tests.cpp`**
+
+- `the_content_hash_covers_the_staged_maps` — `maps.json`, every map's bytes
+  **and every tileset's**, which is where the shapes and the `water` tag live.
+  Drawing one shape on one tile changes the hash, so a client with a stale
+  tileset is refused rather than left predicting against different geometry.
+
+**Realms — `cpp/tests/realm_tests.cpp`** — `each_realm_draws_its_own_ground`
+and `a_respawn_into_another_realm_sends_the_client_that_realms_map`: a map is
+its own coordinate space and its own grid.
+
+Nothing today guards the client's *missing tile art* warning
+(`sprites.cpp`'s "tile …: unreadable, drawing nothing"); `art_cache_tests.cpp`
+covers the SVG cache itself and not that path.
 
 And the real thing, which is the check that matters: `flowrix_server` boots on
-the staged map with no `[map]`, `[spawn]` or `[tiled]` line on stderr, and the
-native client draws it.
+the staged map and prints its two `[map]` lines — the collision summary and the
+overhang note — with no other `[map]`, `[spawn]` or `[tiled]` line on stderr,
+and the native client draws it and stops where the art says it should. Measured
+on the map as it stands: the coarse grid calls 2494 of 4096 cells blocked, the
+shapes make 49.1% of the world's area solid, and 41% of the cells the coarse
+grid calls wall have ground you can stand on inside them.

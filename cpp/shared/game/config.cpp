@@ -873,6 +873,32 @@ void ContentRegistry::foldMapsIntoHash(const std::string& dataDir) {
         std::string mapText;
         readFile(joinPath(dataDir, file.c_str()), mapText);
         hash_ = net::contentHash(mapText, hash_);
+        // AND THE TILESETS THE MAP NAMES. A .tmj references its palette
+        // externally, and everything a body actually collides with -- every
+        // collision shape the Tile Collision Editor writes, and the `water` tag
+        // that says which of them are water -- lives in that file rather than
+        // in the map. Hashing the map alone let a server and a client hold
+        // DIFFERENT GEOMETRY and shake hands, which is precisely what the
+        // client's own collision leans on this hash to rule out: editing a
+        // wall's shape in Tiled touches the .tsj and nothing else.
+        //
+        // By BASENAME beside the manifest, because that is how both sides stage
+        // them (cpp/CMakeLists.txt reads the same references out of the maps).
+        // A tileset named by two maps is folded once per naming, on both sides
+        // alike, so the order is still a function of the manifest.
+        Json map;
+        std::string mapError;
+        if (!Json::parse(mapText, map, mapError)) continue;
+        for (const Json& tileset : map["tilesets"].items()) {
+            const std::string source = tileset["source"].asString();
+            if (source.empty()) continue;   // an embedded palette is in the map's own bytes
+            const std::size_t slash = source.find_last_of("/\\");
+            const std::string name =
+                slash == std::string::npos ? source : source.substr(slash + 1);
+            std::string tilesetText;
+            readFile(joinPath(dataDir, name.c_str()), tilesetText);
+            hash_ = net::contentHash(tilesetText, hash_);
+        }
     }
 }
 

@@ -303,8 +303,10 @@ void MapData::reset(Realm realm) {
     displayName_.clear();
     biome_.clear();
     defaultMobGroup_.clear();
+    defaultDifficulty_ = 0.0;
     artFiles_.clear();
     layers_.clear();
+    sourcePath_.clear();
     width_ = height_ = 0;
     realm_ = realm;
 }
@@ -314,6 +316,7 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
 
     TiledMap map;
     if (!map.load(path, errorOut)) return false;
+    sourcePath_ = path;
 
     // The id is the file stem unless a caller already named this map. It is
     // needed BEFORE the defaults below, because two of them fall back to it.
@@ -332,6 +335,10 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
     // and only a map that deliberately disagrees has to say so.
     defaultMobGroup_ = properties["defaultMobGroup"].asString();
     if (defaultMobGroup_.empty()) defaultMobGroup_ = biome_;
+    // And the difficulty of every square no band covers. Zero -- fully common
+    // -- unless the map says otherwise, which is what makes a map that is
+    // nothing but painted art safe to walk into.
+    defaultDifficulty_ = properties["defaultDifficulty"].asDouble(0.0);
 
     adopt(map.elements());
 
@@ -350,13 +357,41 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
         doors += point->spawnId;
         if (!point->pickable) doors += " (not pickable)";
     }
+    // The bands, said out loud. A difficulty band is invisible in the art -- it
+    // is a shape on an object layer with one number on it -- so an author who
+    // brushes danger onto a map otherwise has nothing but the mobs that turn up
+    // to tell them whether the engine read it. The range is printed with the
+    // tier each end resolves to, because "difficulty 15" only means something
+    // once you know it is uncommon ground.
+    int bands = 0;
+    int regions = 0;
+    double softest = 0.0;
+    double hardest = 0.0;
+    for (const MapElement& element : elements_) {
+        if (element.isMobRegion()) ++regions;
+        if (!element.isSpawnBand()) continue;
+        if (bands == 0) softest = hardest = element.difficulty;
+        softest = std::min(softest, element.difficulty);
+        hardest = std::max(hardest, element.difficulty);
+        ++bands;
+    }
+    char zones[160] = "no bands";
+    if (bands > 0) {
+        std::snprintf(zones, sizeof(zones), "%d band%s difficulty %g (%s)..%g (%s)", bands,
+                      bands == 1 ? "" : "s", softest,
+                      rarityName(dominantTierForDifficulty(softest)), hardest,
+                      rarityName(dominantTierForDifficulty(hardest)));
+    }
+
     // stdout, not stderr: this is what the map RESOLVED to, not something
     // wrong with it. stderr stays the channel that means a map needs fixing,
     // so "no [map] lines on stderr" is still a meaningful thing to check.
     std::fprintf(stdout,
-                 "[map] %s: %dx%d tiles, biome \"%s\", mobs \"%s\", %d art files, %d layers, "
-                 "doors: %s\n",
+                 "[map] %s: %dx%d tiles, biome \"%s\", mobs \"%s\", default difficulty %g (%s), "
+                 "%s, %d region%s, %d art files, %d layers, doors: %s\n",
                  id_.c_str(), width_, height_, biome_.c_str(), defaultMobGroup_.c_str(),
+                 defaultDifficulty_, rarityName(dominantTierForDifficulty(defaultDifficulty_)),
+                 zones, regions, regions == 1 ? "" : "s",
                  static_cast<int>(artFiles_.size()), static_cast<int>(layers_.size()),
                  doors.empty() ? "none" : doors.c_str());
     return true;
@@ -416,10 +451,25 @@ void MapData::adopt(const Json& array) {
 
         const Json& properties = value["properties"];
         if (properties.isObject()) {
-            const std::string tier = properties["spawnType"].asString();
-            if (!tier.empty()) {
-                element.spawnTier = parseRarity(tier);
-                element.hasSpawnTier = true;
+            // A `spawn` object with a `difficulty` is a BAND; one without is a
+            // mob region. Tested by presence, not by value, because zero is a
+            // real difficulty -- a band of commons.
+            //
+            // Tiled writes an int and a float property as the same JSON number,
+            // so both spellings land here. Anything else -- a difficulty typed
+            // as a string, most likely -- is reported rather than read as zero,
+            // which would silently turn an author's hard band into a common
+            // one.
+            if (properties.contains("difficulty")) {
+                const Json& authored = properties["difficulty"];
+                if (authored.isNumber()) {
+                    element.difficulty = authored.asDouble();
+                    element.hasDifficulty = true;
+                } else {
+                    std::fprintf(stderr,
+                                 "[map] a spawn object's `difficulty` is not a number; the band "
+                                 "was read as a mob region\n");
+                }
             }
             const std::string mobs = properties["mobs"].asString();
             if (!mobs.empty()) {
@@ -594,13 +644,14 @@ Vec2 MapData::defaultSpawn(Rng& rng, const Terrain& terrain,
         if (findOpenPoint(*point, rng, terrain, spawn, mobs)) return spawn;
     }
 
-    // No spawn rectangle would take anyone. A common mob band is the next best
-    // guess: it is ground the map calls beginner ground, even if nobody drew a
-    // door onto it.
+    // No spawn rectangle would take anyone. A BEGINNER band is the next best
+    // guess: ground the map calls safe -- a difficulty below the first one that
+    // can roll a mob a fresh flower cannot fight (kDangerousGroundDifficulty)
+    // -- even if nobody drew a door onto it.
     std::vector<const MapElement*> common;
     for (const MapElement& element : elements_) {
-        if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
-        if (element.spawnTier != Rarity::Common) continue;
+        if (!element.isSpawnBand()) continue;
+        if (element.difficulty >= kDangerousGroundDifficulty) continue;
         common.push_back(&element);
     }
     for (std::size_t i = common.size(); i > 1; --i) {

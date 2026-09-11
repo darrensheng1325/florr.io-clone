@@ -14,11 +14,6 @@ namespace {
 /// from the push-out arithmetic, not contact with a wall.
 constexpr double kContactEpsilon = 1e-6;
 
-/// Every blocking tile is grown by this much before the containment test, so
-/// a path that grazes the shared corner of a diagonal seam -- which it can do
-/// by a fraction of a pixel -- still counts as crossing it.
-constexpr double kCenterPathEpsilon = 0.5;
-
 /// Below this a step is not worth dividing by: a dt of zero (a paused server,
 /// a test stepping with 0) must not turn into a division.
 constexpr double kMinStepSeconds = 1e-9;
@@ -71,60 +66,27 @@ double substepLength(double sanitizedRadius) {
     return sanitizedRadius < kMaxSubstepLength ? sanitizedRadius : kMaxSubstepLength;
 }
 
-/// Liang-Barsky: does the segment a->b touch the axis-aligned rect?
-bool segmentTouchesRect(Vec2 a, Vec2 b, double left, double top, double right, double bottom) {
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    double t0 = 0.0;
-    double t1 = 1.0;
-    const auto clip = [&](double p, double q) {
-        if (p == 0.0) return q >= 0.0;      // parallel to this edge: inside iff q >= 0
-        const double r = q / p;
-        if (p < 0.0) {
-            if (r > t1) return false;
-            if (r > t0) t0 = r;
-        } else {
-            if (r < t0) return false;
-            if (r < t1) t1 = r;
-        }
-        return true;
-    };
-    return clip(-dx, a.x - left) && clip(dx, right - a.x)
-        && clip(-dy, a.y - top) && clip(dy, bottom - a.y)
-        && t0 <= t1;
-}
-
 /// True when the straight path between two body CENTRES touches solid.
 ///
-/// The push-out picks a face per tile and is free to choose the far one, so a
-/// centre pressed into a diagonal seam can be ejected into the open quadrant
-/// on the other side of the wall. Accepting that is a teleport through solid,
-/// which is why the caller refuses any ejection this reports.
+/// The push-out picks a face per shape and is free to choose the far one, so a
+/// centre pressed into a diagonal seam can be ejected into the open quadrant on
+/// the other side of the wall. Accepting that is a teleport through solid, which
+/// is why the caller refuses any ejection this reports.
 ///
-/// The raw tile rects of `realm`'s grid: this asks whether the path crossed
-/// the WALL. Edge masks are art only and never enter into it.
+/// Terrain's own test, against the AUTHORED SHAPES of `realm`. It used to walk
+/// the grid here and test whole 300-unit cell rectangles, which was the same
+/// question while a cell was all wall or all air -- and is a different, much
+/// stricter one now that a cell blocks only the triangle under its diagonal: a
+/// body standing legitimately inside the open half of a wall cell had every
+/// push-out refused, so it stopped a body-width short of an authored slope and
+/// could not slide along one at all. There is one answer to "did this path cross
+/// the wall" and it lives in Terrain.
 bool centerPathCrossesWall(const Terrain& terrain, Vec2 a, Vec2 b, Realm realm) {
-    const double eps = kCenterPathEpsilon;
-    // Clamped to the grid for the same reason the collision scan is: off-grid
-    // tiles read as wall, and an unclamped index is an unbounded loop.
-    const int minTx = std::max(0, Terrain::toTileCoord(std::min(a.x, b.x) - eps));
-    const int maxTx = std::min(terrain.tileCols(realm) - 1,
-                               Terrain::toTileCoord(std::max(a.x, b.x) + eps));
-    const int minTy = std::max(0, Terrain::toTileCoord(std::min(a.y, b.y) - eps));
-    const int maxTy = std::min(terrain.tileRows(realm) - 1,
-                               Terrain::toTileCoord(std::max(a.y, b.y) + eps));
-
-    for (int tileY = minTy; tileY <= maxTy; ++tileY) {
-        for (int tileX = minTx; tileX <= maxTx; ++tileX) {
-            if (!tileBlocks(terrain.atTile(tileX, tileY, realm))) continue;
-            if (segmentTouchesRect(a, b,
-                                   tileX * kTileSize - eps, tileY * kTileSize - eps,
-                                   (tileX + 1) * kTileSize + eps, (tileY + 1) * kTileSize + eps)) {
-                return true;
-            }
-        }
-    }
-    return false;
+    // Terrain::kCenterPathInflation is the margin: every blocking shape is
+    // grown by half a unit first, so a path that grazes the shared corner of a
+    // diagonal seam -- which it can do by a fraction of a pixel -- still counts
+    // as crossing it. Its default, rather than a second copy of the number.
+    return terrain.segmentTouchesBlockingTile(a, b, Terrain::kCenterPathInflation, realm);
 }
 
 /// Drains the pending positional offset written by combat.

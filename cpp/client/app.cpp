@@ -21,6 +21,7 @@
 #include "client/web/reload.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
+#include "shared/game/difficulty.h"
 #include "shared/game/terrain.h"
 #include "shared/game/tiled_map.h"
 
@@ -158,7 +159,6 @@ constexpr ChatCommand kChatCommands[] = {
     {"/admin list-sockets", "List connected sockets", true},
     {"/admin set_max_enemies", "Set max enemy count", true},
     {"/admin set_bot_count", "Set bot count (0-100, or \"default\")", true},
-    {"/admin spawn_special_mobs", "Spawn special mobs", true},
     {"/admin spawn", "Spawn a mob: /admin spawn <mob> <rarity> [x y] [amount] [stack]", true},
     {"/admin killall", "Kill all wild mobs (pets left intact)", true},
     {"/admin teleport", "Teleport a player", true},
@@ -738,14 +738,21 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // A pointer to a member that is filled a few lines down: the renderer
     // reads it per frame, never now.
     renderer_.setWorldMaps(&worldMaps_);
+    // The same maps the renderer draws from, for their collision shapes: the
+    // wire's grid is the coarse view, the file is the exact geometry. A realm
+    // with no map here falls back to whole-cell collision, which is
+    // conservative -- see NetClient::installLocalCollision.
+    net_.setWorldMaps(&worldMaps_);
     net_.contentHash = content().contentHash();
 
-    // The client reads the maps for what they MEAN and what they LOOK LIKE,
-    // never for what is solid: the tile grids arrive over the wire,
-    // authoritative, and a second copy off disk would be a second answer about
-    // where the walls are. Passing no Terrain is how that is said in one place
-    // rather than remembered in several. Maps it cannot read cost the picker
-    // its choices and the world its art, not the client its start.
+    // The client reads the maps for what they MEAN, what they LOOK LIKE, and
+    // the SHAPES their tiles collide with; what is solid is still the server's
+    // answer. The coarse grid arrives over the wire, authoritative, and a
+    // second copy off disk would be a second answer about which cells block --
+    // so no Terrain is passed here, and NetClient installs the shapes for the
+    // realm it is dropped into on top of the grid it was sent (net_.
+    // setWorldMaps below). Maps it cannot read cost the picker its choices, the
+    // world its art and the client its exact edges, not its start.
     std::string mapWarning;
     if (!worldMaps_.load(config.dataDir, nullptr, mapWarning)) {
         std::fprintf(stderr, "[map] %s; the spawn picker will offer the default only\n",
@@ -2734,7 +2741,6 @@ void App::drawSquadHud(Canvas& canvas) {
     const double barWidth = kHudBarWidth * kScale;
     const double barHeight = kHudBarHeight * kScale;
     const double barX = kFlowerCentreX + 12.0 * kScale;
-    const double textX = kFlowerCentreX + 35.0 * kScale;
     const double fontSize = 14.0 * kScale;
     const double flowerRadius = 25.0 * kScale;
     const double outlineRadius = 27.0 * kScale;
@@ -2948,11 +2954,12 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
     const MapData* annotations = worldMaps_.forRealm(net_.view().realm());
     if (rarityGlow && annotations != nullptr) {
         for (const MapElement& element : annotations->elements()) {
-            // Tier BANDS only. A spawn object with no tier is a mob region --
-            // a whole section, or a whole map, saying what lives there -- and
-            // painting it as a common band washes the entire minimap in the
-            // common colour with the real common bands lost in it. The world
-            // renderer's rarity glow makes the same distinction.
+            // Difficulty BANDS only. A spawn object with no difficulty is a
+            // mob region -- a whole section, or a whole map, saying what lives
+            // there -- and painting it as a difficulty-zero band washes the
+            // entire minimap in the common colour with the real common bands
+            // lost in it. The world renderer's rarity glow makes the same
+            // distinction.
             if (!element.isSpawnBand()) continue;
             const double left = (element.bounds.x - scrollX) * scale;
             const double top = (element.bounds.y - scrollY) * scale;
@@ -2961,7 +2968,11 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
             if (left + w <= 0 || left >= kMinimapSize || top + h <= 0 || top >= kMinimapSize) {
                 continue;
             }
-            const Rarity tier = element.spawnTier;
+            // The band's DIFFICULTY decides the colour, through the one curve
+            // the spawner rolls against: a band reads as the tier a player
+            // will actually meet in it, and a band between two tiers takes the
+            // one it mostly produces. See shared/game/difficulty.h.
+            const Rarity tier = dominantTierForDifficulty(element.difficulty);
             setFill(map, kMinimapSpawnColors[static_cast<std::size_t>(rarityIndex(tier))], 0.4);
             // The zone's outline, so the minimap shows the band the spawner
             // actually uses rather than the box around it. The bounding box
