@@ -1,0 +1,7683 @@
+{
+ "columns": 0,
+ "grid": {
+  "height": 300,
+  "orientation": "orthogonal",
+  "width": 300
+ },
+ "margin": 0,
+ "name": "terrain",
+ "spacing": 0,
+ "tilecount": 141,
+ "tiledversion": "1.10.2",
+ "tileheight": 300,
+ "tilewidth": 300,
+ "tiles": [
+  {
+   "id": 0,
+   "class": "air",
+   "image": "tiles/air.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 1,
+   "class": "wall",
+   "image": "tiles/wall.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "class": "water",
+   "image": "tiles/water.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "class": "bridge",
+   "image": "tiles/bridge.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#ff5500"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/bridge.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 3
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "class": "sewage",
+   "image": "tiles/sewage.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#000000"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/sewage.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 4
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "class": "block",
+   "image": "tiles/block.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00ff00"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 5
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "class": "wall_edge_n",
+   "image": "tiles/wall_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "class": "wall_edge_e",
+   "image": "tiles/wall_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "class": "wall_edge_ne",
+   "image": "tiles/wall_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "class": "wall_edge_s",
+   "image": "tiles/wall_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "class": "wall_edge_ns",
+   "image": "tiles/wall_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "class": "wall_edge_es",
+   "image": "tiles/wall_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 12,
+   "class": "wall_edge_nes",
+   "image": "tiles/wall_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 13,
+   "class": "wall_edge_w",
+   "image": "tiles/wall_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 14,
+   "class": "wall_edge_nw",
+   "image": "tiles/wall_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 15,
+   "class": "wall_edge_ew",
+   "image": "tiles/wall_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 16,
+   "class": "wall_edge_new",
+   "image": "tiles/wall_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 17,
+   "class": "wall_edge_sw",
+   "image": "tiles/wall_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 18,
+   "class": "wall_edge_nsw",
+   "image": "tiles/wall_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 19,
+   "class": "wall_edge_esw",
+   "image": "tiles/wall_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 20,
+   "class": "wall_edge_nesw",
+   "image": "tiles/wall_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#99550c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 21,
+   "class": "water_edge_n",
+   "image": "tiles/water_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 22,
+   "class": "water_edge_e",
+   "image": "tiles/water_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 23,
+   "class": "water_edge_ne",
+   "image": "tiles/water_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 24,
+   "class": "water_edge_s",
+   "image": "tiles/water_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 25,
+   "class": "water_edge_ns",
+   "image": "tiles/water_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 26,
+   "class": "water_edge_es",
+   "image": "tiles/water_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 27,
+   "class": "water_edge_nes",
+   "image": "tiles/water_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 28,
+   "class": "water_edge_w",
+   "image": "tiles/water_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 29,
+   "class": "water_edge_nw",
+   "image": "tiles/water_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 30,
+   "class": "water_edge_ew",
+   "image": "tiles/water_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 31,
+   "class": "water_edge_new",
+   "image": "tiles/water_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 32,
+   "class": "water_edge_sw",
+   "image": "tiles/water_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 33,
+   "class": "water_edge_nsw",
+   "image": "tiles/water_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 34,
+   "class": "water_edge_esw",
+   "image": "tiles/water_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 35,
+   "class": "water_edge_nesw",
+   "image": "tiles/water_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#2a4fa0"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#4169E1"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 36,
+   "class": "wall_sewers",
+   "image": "tiles/wall_sewers.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 37,
+   "class": "wall_sewers_edge_n",
+   "image": "tiles/wall_sewers_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 38,
+   "class": "wall_sewers_edge_e",
+   "image": "tiles/wall_sewers_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 39,
+   "class": "wall_sewers_edge_ne",
+   "image": "tiles/wall_sewers_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 40,
+   "class": "wall_sewers_edge_s",
+   "image": "tiles/wall_sewers_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 41,
+   "class": "wall_sewers_edge_ns",
+   "image": "tiles/wall_sewers_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 42,
+   "class": "wall_sewers_edge_es",
+   "image": "tiles/wall_sewers_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 43,
+   "class": "wall_sewers_edge_nes",
+   "image": "tiles/wall_sewers_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 44,
+   "class": "wall_sewers_edge_w",
+   "image": "tiles/wall_sewers_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 45,
+   "class": "wall_sewers_edge_nw",
+   "image": "tiles/wall_sewers_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 46,
+   "class": "wall_sewers_edge_ew",
+   "image": "tiles/wall_sewers_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 47,
+   "class": "wall_sewers_edge_new",
+   "image": "tiles/wall_sewers_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 48,
+   "class": "wall_sewers_edge_sw",
+   "image": "tiles/wall_sewers_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 49,
+   "class": "wall_sewers_edge_nsw",
+   "image": "tiles/wall_sewers_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 50,
+   "class": "wall_sewers_edge_esw",
+   "image": "tiles/wall_sewers_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 51,
+   "class": "wall_sewers_edge_nesw",
+   "image": "tiles/wall_sewers_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5a3b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_sewers_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 52,
+   "class": "water_sewers",
+   "image": "tiles/water_sewers.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 53,
+   "class": "water_sewers_edge_n",
+   "image": "tiles/water_sewers_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 54,
+   "class": "water_sewers_edge_e",
+   "image": "tiles/water_sewers_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 55,
+   "class": "water_sewers_edge_ne",
+   "image": "tiles/water_sewers_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 56,
+   "class": "water_sewers_edge_s",
+   "image": "tiles/water_sewers_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 57,
+   "class": "water_sewers_edge_ns",
+   "image": "tiles/water_sewers_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 58,
+   "class": "water_sewers_edge_es",
+   "image": "tiles/water_sewers_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 59,
+   "class": "water_sewers_edge_nes",
+   "image": "tiles/water_sewers_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 60,
+   "class": "water_sewers_edge_w",
+   "image": "tiles/water_sewers_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 61,
+   "class": "water_sewers_edge_nw",
+   "image": "tiles/water_sewers_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 62,
+   "class": "water_sewers_edge_ew",
+   "image": "tiles/water_sewers_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 63,
+   "class": "water_sewers_edge_new",
+   "image": "tiles/water_sewers_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 64,
+   "class": "water_sewers_edge_sw",
+   "image": "tiles/water_sewers_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 65,
+   "class": "water_sewers_edge_nsw",
+   "image": "tiles/water_sewers_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 66,
+   "class": "water_sewers_edge_esw",
+   "image": "tiles/water_sewers_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 67,
+   "class": "water_sewers_edge_nesw",
+   "image": "tiles/water_sewers_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a4518"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#5b6b2a"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_sewers_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 68,
+   "class": "floor_sewers_0",
+   "image": "tiles/floor_sewers_0.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_sewers_0.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 69,
+   "class": "floor_sewers_1",
+   "image": "tiles/floor_sewers_1.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_sewers_1.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 70,
+   "class": "floor_sewers_2",
+   "image": "tiles/floor_sewers_2.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "sewers"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_sewers_2.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 71,
+   "class": "wall_computer",
+   "image": "tiles/wall_computer.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 72,
+   "class": "wall_computer_edge_n",
+   "image": "tiles/wall_computer_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 73,
+   "class": "wall_computer_edge_e",
+   "image": "tiles/wall_computer_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 74,
+   "class": "wall_computer_edge_ne",
+   "image": "tiles/wall_computer_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 75,
+   "class": "wall_computer_edge_s",
+   "image": "tiles/wall_computer_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 76,
+   "class": "wall_computer_edge_ns",
+   "image": "tiles/wall_computer_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 77,
+   "class": "wall_computer_edge_es",
+   "image": "tiles/wall_computer_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 78,
+   "class": "wall_computer_edge_nes",
+   "image": "tiles/wall_computer_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 79,
+   "class": "wall_computer_edge_w",
+   "image": "tiles/wall_computer_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 80,
+   "class": "wall_computer_edge_nw",
+   "image": "tiles/wall_computer_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 81,
+   "class": "wall_computer_edge_ew",
+   "image": "tiles/wall_computer_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 82,
+   "class": "wall_computer_edge_new",
+   "image": "tiles/wall_computer_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 83,
+   "class": "wall_computer_edge_sw",
+   "image": "tiles/wall_computer_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 84,
+   "class": "wall_computer_edge_nsw",
+   "image": "tiles/wall_computer_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 85,
+   "class": "wall_computer_edge_esw",
+   "image": "tiles/wall_computer_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 86,
+   "class": "wall_computer_edge_nesw",
+   "image": "tiles/wall_computer_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#1f2a35"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_computer_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 87,
+   "class": "water_computer",
+   "image": "tiles/water_computer.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 88,
+   "class": "water_computer_edge_n",
+   "image": "tiles/water_computer_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 89,
+   "class": "water_computer_edge_e",
+   "image": "tiles/water_computer_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 90,
+   "class": "water_computer_edge_ne",
+   "image": "tiles/water_computer_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 91,
+   "class": "water_computer_edge_s",
+   "image": "tiles/water_computer_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 92,
+   "class": "water_computer_edge_ns",
+   "image": "tiles/water_computer_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 93,
+   "class": "water_computer_edge_es",
+   "image": "tiles/water_computer_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 94,
+   "class": "water_computer_edge_nes",
+   "image": "tiles/water_computer_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 95,
+   "class": "water_computer_edge_w",
+   "image": "tiles/water_computer_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 96,
+   "class": "water_computer_edge_nw",
+   "image": "tiles/water_computer_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 97,
+   "class": "water_computer_edge_ew",
+   "image": "tiles/water_computer_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 98,
+   "class": "water_computer_edge_new",
+   "image": "tiles/water_computer_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 99,
+   "class": "water_computer_edge_sw",
+   "image": "tiles/water_computer_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 100,
+   "class": "water_computer_edge_nsw",
+   "image": "tiles/water_computer_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 101,
+   "class": "water_computer_edge_esw",
+   "image": "tiles/water_computer_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 102,
+   "class": "water_computer_edge_nesw",
+   "image": "tiles/water_computer_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#0088aa"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00d0ff"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_computer_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 103,
+   "class": "floor_computer_0",
+   "image": "tiles/floor_computer_0.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_computer_0.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 104,
+   "class": "floor_computer_1",
+   "image": "tiles/floor_computer_1.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_computer_1.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 105,
+   "class": "floor_computer_2",
+   "image": "tiles/floor_computer_2.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "computer"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_computer_2.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 106,
+   "class": "wall_unknown",
+   "image": "tiles/wall_unknown.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 107,
+   "class": "wall_unknown_edge_n",
+   "image": "tiles/wall_unknown_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 108,
+   "class": "wall_unknown_edge_e",
+   "image": "tiles/wall_unknown_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 109,
+   "class": "wall_unknown_edge_ne",
+   "image": "tiles/wall_unknown_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 110,
+   "class": "wall_unknown_edge_s",
+   "image": "tiles/wall_unknown_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 111,
+   "class": "wall_unknown_edge_ns",
+   "image": "tiles/wall_unknown_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 112,
+   "class": "wall_unknown_edge_es",
+   "image": "tiles/wall_unknown_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 113,
+   "class": "wall_unknown_edge_nes",
+   "image": "tiles/wall_unknown_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 114,
+   "class": "wall_unknown_edge_w",
+   "image": "tiles/wall_unknown_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 115,
+   "class": "wall_unknown_edge_nw",
+   "image": "tiles/wall_unknown_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 116,
+   "class": "wall_unknown_edge_ew",
+   "image": "tiles/wall_unknown_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 117,
+   "class": "wall_unknown_edge_new",
+   "image": "tiles/wall_unknown_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 118,
+   "class": "wall_unknown_edge_sw",
+   "image": "tiles/wall_unknown_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 119,
+   "class": "wall_unknown_edge_nsw",
+   "image": "tiles/wall_unknown_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 120,
+   "class": "wall_unknown_edge_esw",
+   "image": "tiles/wall_unknown_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 121,
+   "class": "wall_unknown_edge_nesw",
+   "image": "tiles/wall_unknown_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#3a2a5c"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": true
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "wall"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/wall_unknown_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 122,
+   "class": "water_unknown",
+   "image": "tiles/water_unknown.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 123,
+   "class": "water_unknown_edge_n",
+   "image": "tiles/water_unknown_edge_n.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "n"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_n.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 124,
+   "class": "water_unknown_edge_e",
+   "image": "tiles/water_unknown_edge_e.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "e"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_e.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 125,
+   "class": "water_unknown_edge_ne",
+   "image": "tiles/water_unknown_edge_ne.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ne"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_ne.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 126,
+   "class": "water_unknown_edge_s",
+   "image": "tiles/water_unknown_edge_s.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "s"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_s.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 127,
+   "class": "water_unknown_edge_ns",
+   "image": "tiles/water_unknown_edge_ns.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ns"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_ns.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 128,
+   "class": "water_unknown_edge_es",
+   "image": "tiles/water_unknown_edge_es.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "es"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_es.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 129,
+   "class": "water_unknown_edge_nes",
+   "image": "tiles/water_unknown_edge_nes.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nes"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_nes.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 130,
+   "class": "water_unknown_edge_w",
+   "image": "tiles/water_unknown_edge_w.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "w"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_w.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 131,
+   "class": "water_unknown_edge_nw",
+   "image": "tiles/water_unknown_edge_nw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_nw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 132,
+   "class": "water_unknown_edge_ew",
+   "image": "tiles/water_unknown_edge_ew.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "ew"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_ew.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 133,
+   "class": "water_unknown_edge_new",
+   "image": "tiles/water_unknown_edge_new.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "new"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_new.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 134,
+   "class": "water_unknown_edge_sw",
+   "image": "tiles/water_unknown_edge_sw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "sw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_sw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 135,
+   "class": "water_unknown_edge_nsw",
+   "image": "tiles/water_unknown_edge_nsw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nsw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_nsw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 136,
+   "class": "water_unknown_edge_esw",
+   "image": "tiles/water_unknown_edge_esw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "esw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_esw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 137,
+   "class": "water_unknown_edge_nesw",
+   "image": "tiles/water_unknown_edge_nesw.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "borderColor",
+     "type": "string",
+     "value": "#3a2e5c"
+    },
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#0b0714"
+    },
+    {
+     "name": "edges",
+     "type": "string",
+     "value": "nesw"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "water"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/water_unknown_edge_nesw.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  },
+  {
+   "id": 138,
+   "class": "floor_unknown_0",
+   "image": "tiles/floor_unknown_0.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_unknown_0.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 139,
+   "class": "floor_unknown_1",
+   "image": "tiles/floor_unknown_1.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_unknown_1.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  },
+  {
+   "id": 140,
+   "class": "floor_unknown_2",
+   "image": "tiles/floor_unknown_2.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "builtin",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "color",
+     "type": "string",
+     "value": "#00000000"
+    },
+    {
+     "name": "skin",
+     "type": "string",
+     "value": "unknown"
+    },
+    {
+     "name": "solid",
+     "type": "bool",
+     "value": false
+    },
+    {
+     "name": "style",
+     "type": "string",
+     "value": "flat"
+    },
+    {
+     "name": "textureSvg",
+     "type": "string",
+     "value": "tiles/floor_unknown_2.svg"
+    },
+    {
+     "name": "tileId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "variant",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "water",
+     "type": "bool",
+     "value": false
+    }
+   ]
+  }
+ ],
+ "type": "tileset",
+ "version": "1.10"
+}

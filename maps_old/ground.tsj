@@ -1,0 +1,190 @@
+{
+ "columns": 0,
+ "grid": {
+  "height": 300,
+  "orientation": "orthogonal",
+  "width": 300
+ },
+ "margin": 0,
+ "name": "ground",
+ "spacing": 0,
+ "tilecount": 9,
+ "tiledversion": "1.10.2",
+ "tileheight": 300,
+ "tilewidth": 300,
+ "tiles": [
+  {
+   "id": 0,
+   "class": "garden",
+   "image": "ground/land.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 0
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "land.svg"
+    }
+   ]
+  },
+  {
+   "id": 1,
+   "class": "desert",
+   "image": "ground/desert.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 1
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "desert.svg"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "class": "hel",
+   "image": "ground/hel.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 2
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "hel.svg"
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "class": "ocean",
+   "image": "ground/ocean.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 3
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "ocean.svg"
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "class": "ant_hell",
+   "image": "ground/ant_hell.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 4
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "ant_hell.svg"
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "class": "jungle",
+   "image": "ground/jungle.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 5
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "jungle.svg"
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "class": "sewers",
+   "image": "ground/sewers.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 6
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "sewers.svg"
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "class": "computer",
+   "image": "ground/computer.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 7
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "#000000"
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "class": "unknown",
+   "image": "ground/unknown.svg",
+   "imagewidth": 300,
+   "imageheight": 300,
+   "properties": [
+    {
+     "name": "groundId",
+     "type": "int",
+     "value": 8
+    },
+    {
+     "name": "source",
+     "type": "string",
+     "value": "#000000"
+    }
+   ]
+  }
+ ],
+ "type": "tileset",
+ "version": "1.10"
+}
