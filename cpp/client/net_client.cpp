@@ -95,6 +95,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::GuildInviteReceived: return "guildInvite";
         case net::ServerMessage::DebugStats:          return "debugStats";
         case net::ServerMessage::MazeInfo:            return "mazeInfo";
+        case net::ServerMessage::RealmChange:         return "realmChange";
     }
     return "unknown";
 }
@@ -270,13 +271,13 @@ void NetClient::logout() {
     }
 }
 
-void NetClient::joinGame(int viewportWidth, int viewportHeight, const std::string& spawnBiome,
+void NetClient::joinGame(int viewportWidth, int viewportHeight, const std::string& spawnChoice,
                          const std::string& playerName) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::JoinGame);
     w.u16(static_cast<std::uint16_t>(viewportWidth));
     w.u16(static_cast<std::uint16_t>(viewportHeight));
-    w.str(spawnBiome);
+    w.str(spawnChoice);
     w.str(playerName);
     send(w);
 }
@@ -535,6 +536,7 @@ void NetClient::onMessage(net::Connection&, ByteReader& reader) {
         case net::ServerMessage::GuildInviteReceived: handleGuildInviteReceived(reader); break;
         case net::ServerMessage::DebugStats:    handleDebugStats(reader); break;
         case net::ServerMessage::MazeInfo:      handleMazeInfo(reader); break;
+        case net::ServerMessage::RealmChange:   handleRealmChange(reader); break;
         default:
             // An unknown id means the server is newer than this build. The
             // frame is already fully buffered, so skipping it is safe and
@@ -793,22 +795,21 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     const std::uint32_t selfNetId = reader.u32();
     const Vec2 spawn = reader.position();
     reader.u32();   // tick, informational
-    const Realm realm = realmFromByte(reader.u8());
     const std::int64_t mazeDay = reader.i64();
-    const std::uint16_t tileCount = reader.u16();
-    std::vector<std::uint8_t> tiles;
-    tiles.reserve(tileCount);
-    for (std::uint16_t i = 0; i < tileCount; ++i) tiles.push_back(reader.u8());
-    if (!reader.ok()) return;
 
-    (void)selfNetId;
-    (void)spawn;
-    if (!terrain_.setTiles(tiles)) {
+    // The map the body was put in: which realm it is, how big it is, and its
+    // grid. All three travel together because a client has no map file to read
+    // any of it out of, and maps are not all one size.
+    Realm realm = Realm::Overworld;
+    std::string mapError;
+    if (!readMapGrid(reader, terrain_, realm, mapError)) {
         status_ = Status::Failed;
-        lastError_ = "Server sent an invalid terrain grid";
+        lastError_ = "Server sent an invalid map: " + mapError;
         dialer_.disconnect();
         return;
     }
+
+    (void)selfNetId;
     status_ = Status::Playing;
     dead_ = false;
     view_.clear();
@@ -817,6 +818,35 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     // server's day number so the walls drawn are the walls collided with.
     view_.setRealm(realm);
     setActiveMazeDay(mazeDay);
+    // Where the body is until the first snapshot says so: the App pins the
+    // camera here rather than on the view's zeroed self. Not flagged as a
+    // realm change -- the join's own snap (App::startGame) covers the camera.
+    realmArrival_ = spawn;
+}
+
+void NetClient::handleRealmChange(ByteReader& reader) {
+    const Vec2 arrival = reader.position();
+    Realm realm = Realm::Overworld;
+    std::string mapError;
+    if (!readMapGrid(reader, terrain_, realm, mapError)) {
+        // A malformed grid is not worth dropping the connection over the way a
+        // join is: the flower is already in the world, and the next snapshot
+        // will still draw it. Keeping the old map would draw the WRONG walls,
+        // so the realm is left alone and the jump simply does not take here.
+        std::fprintf(stderr, "[net] realm change carried an invalid map: %s\n",
+                     mapError.c_str());
+        return;
+    }
+    // The view holds entities in the realm it was streaming; every one of them
+    // is in another coordinate space now and none of them will be restated.
+    view_.clear();
+    view_.setRealm(realm);
+    // The camera must not ease across two worlds. The App snaps it to the
+    // arrival on the frame it sees the realm change, which is what this flag
+    // is for -- the snapshot stream restates the body a moment later, and
+    // between the two there would otherwise be nothing to look at.
+    realmArrival_ = arrival;
+    realmChanged_ = true;
 }
 
 void NetClient::handleMazeInfo(ByteReader& reader) {

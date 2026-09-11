@@ -339,8 +339,10 @@ void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
         // Tested after the wall push, which is what normally pulls an escaping
         // drop back inside -- what reaches here is a drop the resolver could
         // not save.
+        // No terrain -- a harness driving the system on its own -- means no
+        // realm rectangle to be outside of, so the drop only ever times out.
         if (lifetime.remainingSeconds <= 0.0 ||
-            Terrain::outside(transform.position, transform.realm)) {
+            (terrain != nullptr && terrain->outside(transform.position, transform.realm))) {
             expired_.push_back(e);
         }
     });

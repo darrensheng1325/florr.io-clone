@@ -1249,7 +1249,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         // has no timed action at all to reach the gate further down.
         const PetalBehaviour behaviour = behaviourOf(config.id);
         if (behaviour.waitsForCollision && !instance->collisionFired &&
-            touchesMob(world, transform->position, stats.radius)) {
+            touchesMob(world, transform->realm, transform->position, stats.radius)) {
             // Armed BEFORE firing: the effect is allowed to destroy this very
             // petal, which moves the instance out from under the pointer.
             instance->collisionFired = true;
@@ -1264,7 +1264,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         // nothing it had already earned: zeroing its health hands the slot to
         // the ordinary break path and the 50-second reload with it.
         if (config.id == "flower" && !instance->collisionFired &&
-            touchesMob(world, transform->position, stats.radius)) {
+            touchesMob(world, transform->realm, transform->position, stats.radius)) {
             // Armed before the crack, which may summon and therefore may move
             // the instance out from under this pointer.
             instance->collisionFired = true;
@@ -1277,7 +1277,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         // Not gated on PvP, on extension or on any action window: the reference
         // runs this for every live instance, every tick.
         if (config.id == "yggdrasil" &&
-            revivePlayerNear(world, player, transform->position, nowMillis)) {
+            revivePlayerNear(world, player, transform->realm, transform->position, nowMillis)) {
             // Zeroed rather than destroyed, as the reference does it, so the
             // slot's ordinary break path pays the reload: a revive costs the
             // petal exactly what a mob killing it would.
@@ -1775,16 +1775,12 @@ void PetalSystem::reportLightning(World& world, Entity player, Vec2 at, double r
     // edge alone is in reach. Erring this way means every arm drawn belongs to
     // a mob that was certainly hit, and the one it can miss is a body already
     // wider than the flash.
-    collectMobsNear(world, at, radius, mobScratch_);
+    collectMobsNear(world, realm, at, radius, mobScratch_);
     lightningTargets_.clear();
     lightningTargets_.reserve(mobScratch_.size());
     for (const Entity mob : mobScratch_) {
         const Transform* transform = world.tryGet<Transform>(mob);
-        // The realm test is collectMobsNear's own blind spot, and it is not
-        // theoretical: the arena sits at (3000, 3000), which is an ordinary
-        // patch of overworld. Without it a strike out there draws arms to mobs
-        // in a duel nobody watching can see.
-        if (transform == nullptr || transform->realm != realm) continue;
+        if (transform == nullptr) continue;
         lightningTargets_.push_back(transform->position);
     }
     if (lightningTargets_.empty()) return;
@@ -1814,8 +1810,11 @@ void PetalSystem::explodePetal(World& world, Entity player, Vec2 at, double peta
 
     // Knockback is dealt here rather than left to the field, because a field
     // has no direction to push along. Collected first: writing the impulse adds
-    // a component, which moves the mob between archetypes.
-    collectMobsNear(world, at, radius, mobScratch_);
+    // a component, which moves the mob between archetypes. In the owner's
+    // realm, as the burst itself is.
+    const Transform* ownerAt = world.tryGet<Transform>(player);
+    collectMobsNear(world, ownerAt != nullptr ? ownerAt->realm : Realm::Overworld, at, radius,
+                    mobScratch_);
     for (const Entity mob : mobScratch_) {
         const Transform* transform = world.tryGet<Transform>(mob);
         if (transform == nullptr) continue;
@@ -1839,7 +1838,7 @@ void PetalSystem::healFromBehaviour(World& world, Entity player, double amount, 
     if (health->current < 1.0) health->current = 1.0;
 }
 
-bool PetalSystem::touchesMob(World& world, Vec2 at, double radius) {
+bool PetalSystem::touchesMob(World& world, Realm realm, Vec2 at, double radius) {
     bindTo(world);
     bool touching = false;
     // A linear sweep: the broadphase is rebuilt after this system runs, so what
@@ -1847,6 +1846,7 @@ bool PetalSystem::touchesMob(World& world, Vec2 at, double radius) {
     // contact ask, and only until their first one.
     mobs_->each([&](Entity, MobTag&, Transform& transform, Body& body) {
         if (touching) return;
+        if (transform.realm != realm) return;
         const double reach = radius + body.radius;
         const double gap = distanceSq(transform.position, at);
         // `> 0` as the reference has it: a mob exactly on the petal is a
@@ -1856,21 +1856,27 @@ bool PetalSystem::touchesMob(World& world, Vec2 at, double radius) {
     return touching;
 }
 
-void PetalSystem::collectMobsNear(World& world, Vec2 at, double radius, std::vector<Entity>& out) {
+void PetalSystem::collectMobsNear(World& world, Realm realm, Vec2 at, double radius,
+                                  std::vector<Entity>& out) {
     bindTo(world);
     out.clear();
     const double reachSq = radius * radius;
     mobs_->each([&](Entity e, MobTag&, Transform& transform, Body&) {
+        if (transform.realm != realm) return;
         if (distanceSq(transform.position, at) <= reachSq) out.push_back(e);
     });
 }
 
-bool PetalSystem::revivePlayerNear(World& world, Entity reviver, Vec2 at, double nowMillis) {
+bool PetalSystem::revivePlayerNear(World& world, Entity reviver, Realm realm, Vec2 at,
+                                   double nowMillis) {
     for (const Entity other : playerList_) {
         if (other == reviver || !world.isAlive(other)) continue;
         if (!playerIsDown(world, other)) continue;
         const Transform* transform = world.tryGet<Transform>(other);
         if (transform == nullptr) continue;
+        // A corpse at the same numbers on another map is not within reach of
+        // anything.
+        if (transform->realm != realm) continue;
         if (distanceSq(transform->position, at) >
             kYggdrasilRevivalRange * kYggdrasilRevivalRange) {
             continue;

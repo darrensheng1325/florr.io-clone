@@ -220,9 +220,10 @@ struct ClientSettings {
     /// the player has said either way, the answer is the device's.
     bool requestMobile = false;
     bool requestMobileChosen = false;
-    /// The biome the player last chose to start in. Empty is the beginner
-    /// ground. Remembered because it is a preference, not a game state.
-    std::string spawnBiome;
+    /// The spawn point the player last chose to start at -- one of the ids in
+    /// WorldMaps::spawnChoices(), or "pvp"/"maze". Empty is the server's
+    /// default. Remembered because it is a preference, not a game state.
+    std::string spawnChoice;
     /// Whether the eleven-step tutorial has been finished or skipped, and how
     /// far it had got. The browser keeps the same pair in localStorage as
     /// `tutorial_completed` and `tutorial_step`; they ride here so this client

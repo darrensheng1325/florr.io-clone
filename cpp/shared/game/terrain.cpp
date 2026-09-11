@@ -12,7 +12,6 @@
 #include <limits>
 #include <optional>
 #include <string>
-#include <unordered_map>
 
 #include "shared/game/tiled_map.h"
 
@@ -88,34 +87,18 @@ inline double ridge(double n) { return std::fabs(n - 0.5); }
 inline int wrapMod(int v, int m) { return ((v % m) + m) % m; }
 
 // ---------------------------------------------------------------------------
-// TypeScript wall-edge geometry
+// Tile collision geometry
 // ---------------------------------------------------------------------------
+//
+// A blocking tile is its plain 300-unit rectangle. The outline a wall or water
+// tile is drawn with is tileset artwork now (see edgeMaskAt) and lies INSIDE
+// the tile, so the rectangle is both the hitbox and the silhouette.
 
-constexpr double kJaggedMaxOffset = kJaggedMaxProtrusion;
 constexpr double kWallResolveEpsilon = 0.01;
 
-double maxJaggedOffset(const JaggedEdge& points, double minT, double maxT) {
-    double result = 0.0;
-    for (const JaggedEdgePoint& point : points) {
-        if (point.t >= minT && point.t <= maxT) result = std::max(result, point.offset);
-    }
-    for (std::size_t i = 0; i + 1 < points.size(); ++i) {
-        const JaggedEdgePoint& a = points[i];
-        const JaggedEdgePoint& b = points[i + 1];
-        if (b.t < minT || a.t > maxT) continue;
-        if (a.t < minT && b.t > minT) {
-            const double f = (minT - a.t) / (b.t - a.t);
-            result = std::max(result, a.offset + f * (b.offset - a.offset));
-        }
-        if (a.t < maxT && b.t > maxT) {
-            const double f = (maxT - a.t) / (b.t - a.t);
-            result = std::max(result, a.offset + f * (b.offset - a.offset));
-        }
-    }
-    return result;
-}
-
-struct JaggedCollision {
+/// One blocking tile the circle overlaps: its rectangle, and the offset from
+/// the circle's centre to the nearest point of it.
+struct TileCollision {
     double left = 0.0;
     double right = 0.0;
     double top = 0.0;
@@ -124,52 +107,28 @@ struct JaggedCollision {
     double nearDy = 0.0;
 };
 
-std::optional<JaggedCollision> findJaggedCollision(const Terrain& terrain,
-                                                   Vec2 position, double radius) {
-    const double reach = radius + kJaggedMaxOffset + kCollisionScanBuffer;
+/// The tile a push-out should act on this pass, if any. A flat-face hit (the
+/// centre is level with the tile on one axis) wins over a corner hit, so a
+/// body sliding along a wall is pushed straight off its face and never off
+/// the seam between two tiles of it.
+std::optional<TileCollision> findTileCollision(const Terrain& terrain, Vec2 position,
+                                               double radius, Realm realm) {
+    const double reach = radius + kCollisionScanBuffer;
     const int minX = std::max(0, Terrain::toTileCoord(position.x - reach));
-    const int maxX = std::min(kTilesPerAxis - 1, Terrain::toTileCoord(position.x + reach));
+    const int maxX = std::min(terrain.tileCols(realm) - 1, Terrain::toTileCoord(position.x + reach));
     const int minY = std::max(0, Terrain::toTileCoord(position.y - reach));
-    const int maxY = std::min(kTilesPerAxis - 1, Terrain::toTileCoord(position.y + reach));
-    const double entityLeft = position.x - radius;
-    const double entityRight = position.x + radius;
-    const double entityTop = position.y - radius;
-    const double entityBottom = position.y + radius;
-    std::optional<JaggedCollision> corner;
+    const int maxY = std::min(terrain.tileRows(realm) - 1, Terrain::toTileCoord(position.y + reach));
+    std::optional<TileCollision> corner;
 
     for (int tileY = minY; tileY <= maxY; ++tileY) {
         for (int tileX = minX; tileX <= maxX; ++tileX) {
-            const Tile tile = terrain.atTile(tileX, tileY);
-            if (!tileBlocks(tile)) continue;
+            if (!tileBlocks(terrain.atTile(tileX, tileY, realm))) continue;
 
-            JaggedCollision hit;
+            TileCollision hit;
             hit.left = tileX * kTileSize;
             hit.right = hit.left + kTileSize;
             hit.top = tileY * kTileSize;
             hit.bottom = hit.top + kTileSize;
-
-            if (tile == Tile::Wall || tile == Tile::Water) {
-                if (jaggedEdgeExposed(terrain, tileX, tileY, 0)) {
-                    const double lo = std::max(0.0, entityLeft - tileX * kTileSize);
-                    const double hi = std::min(kTileSize, entityRight - tileX * kTileSize);
-                    if (hi > lo) hit.top -= maxJaggedOffset(jaggedEdge(tileX, tileY, 0), lo, hi);
-                }
-                if (jaggedEdgeExposed(terrain, tileX, tileY, 1)) {
-                    const double lo = std::max(0.0, entityLeft - tileX * kTileSize);
-                    const double hi = std::min(kTileSize, entityRight - tileX * kTileSize);
-                    if (hi > lo) hit.bottom += maxJaggedOffset(jaggedEdge(tileX, tileY, 1), lo, hi);
-                }
-                if (jaggedEdgeExposed(terrain, tileX, tileY, 2)) {
-                    const double lo = std::max(0.0, entityTop - tileY * kTileSize);
-                    const double hi = std::min(kTileSize, entityBottom - tileY * kTileSize);
-                    if (hi > lo) hit.left -= maxJaggedOffset(jaggedEdge(tileX, tileY, 2), lo, hi);
-                }
-                if (jaggedEdgeExposed(terrain, tileX, tileY, 3)) {
-                    const double lo = std::max(0.0, entityTop - tileY * kTileSize);
-                    const double hi = std::min(kTileSize, entityBottom - tileY * kTileSize);
-                    if (hi > lo) hit.right += maxJaggedOffset(jaggedEdge(tileX, tileY, 3), lo, hi);
-                }
-            }
 
             const double nearX = clamp(position.x, hit.left, hit.right);
             const double nearY = clamp(position.y, hit.top, hit.bottom);
@@ -187,7 +146,11 @@ std::optional<JaggedCollision> findJaggedCollision(const Terrain& terrain,
     return corner;
 }
 
-Vec2 resolveJaggedCollision(Vec2 position, double radius, const JaggedCollision& hit) {
+/// Pushes the circle out of one tile: through the nearest face when the centre
+/// is inside the rectangle (least-penetration ejection), straight off the face
+/// when it is level with the tile on one axis, and radially off the corner
+/// otherwise.
+Vec2 resolveTileCollision(Vec2 position, double radius, const TileCollision& hit) {
     const double r = radius + kWallResolveEpsilon;
     const bool insideX = position.x > hit.left && position.x < hit.right;
     const bool insideY = position.y > hit.top && position.y < hit.bottom;
@@ -351,91 +314,75 @@ Tile classifyTile(int section, int tx, int ty, const NoiseSet& n) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// The shared jagged outline
-// ---------------------------------------------------------------------------
-
-bool jaggedEdgeExposed(const Terrain& terrain, int tileX, int tileY, int edge) {
-    int adjacentX = tileX;
-    int adjacentY = tileY;
-    if (edge == 0) --adjacentY;
-    else if (edge == 1) ++adjacentY;
-    else if (edge == 2) --adjacentX;
-    else ++adjacentX;
-
-    if (adjacentX < 0 || adjacentY < 0 ||
-        adjacentX >= kTilesPerAxis || adjacentY >= kTilesPerAxis) return true;
-    const Tile adjacent = terrain.atTile(adjacentX, adjacentY);
-    if (adjacent == Tile::Ground) return true;
-    const Tile current = terrain.atTile(tileX, tileY);
-    return current == Tile::Wall && adjacent == Tile::Water;
-}
-
-const JaggedEdge& jaggedEdge(int tileX, int tileY, int edge) {
-    // Depends on the coordinates and the edge alone -- never on which
-    // neighbours happen to be exposed -- so the cache stays valid while a map
-    // editor or a test changes tiles around it.
-    static std::unordered_map<std::uint64_t, JaggedEdge> cache;
-    const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tileY)) << 34) |
-                              (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tileX)) << 2) |
-                              static_cast<std::uint64_t>(edge & 3);
-    const auto found = cache.find(key);
-    if (found != cache.end()) return found->second;
-
-    // TypeScript's `seededRandom`, over an int64 seed. The JavaScript this
-    // mirrors does the additions below in doubles, where `baseSeed + i` cannot
-    // wrap; doing them in int32 would be signed overflow AND would hand back a
-    // different sequence for the handful of tiles whose mixed hash lands
-    // within a few thousand of INT_MAX.
-    const auto seededRandom = [](std::int64_t seed) {
-        const double x = std::sin(static_cast<double>(seed)) * 10000.0;
-        return x - std::floor(x);
-    };
-
-    JaggedEdge points{};
-    points.front() = {0.0, 0.0};
-    points.back() = {kTileSize, 0.0};
-    const double segmentLength = kTileSize / (kJaggedSegmentCount + 1.0);
-    // JavaScript's `^` converts both products to SIGNED 32-bit first. Multiply
-    // unsigned (which wraps exactly as ToInt32 does), xor, then widen with the
-    // sign it would have had over there.
-    const std::uint32_t mixed = static_cast<std::uint32_t>(tileX) * 73856093u ^
-                                static_cast<std::uint32_t>(tileY) * 19349669u;
-    const std::int64_t signedMixed = mixed <= 0x7fffffffu
-        ? static_cast<std::int64_t>(mixed)
-        : static_cast<std::int64_t>(mixed) - 4294967296ll;
-    const std::int64_t baseSeed = signedMixed + edge * 1000;
-    for (int i = 1; i <= kJaggedSegmentCount; ++i) {
-        const std::int64_t seed = baseSeed + i;
-        const double jitter = (seededRandom(seed) - 0.5) * segmentLength * 0.4;
-        points[static_cast<std::size_t>(i)] = {
-            clamp(i * segmentLength + jitter, 1.0, kTileSize - 1.0),
-            seededRandom(seed + 100) * kJaggedMaxProtrusion,
-        };
-    }
-    std::sort(points.begin(), points.end(),
-              [](const JaggedEdgePoint& a, const JaggedEdgePoint& b) { return a.t < b.t; });
-    return cache.emplace(key, points).first->second;
-}
-
-// ---------------------------------------------------------------------------
 // Construction and generation
 // ---------------------------------------------------------------------------
 
-Terrain::Terrain()
-    : tiles_(static_cast<std::size_t>(kTotalTiles), static_cast<std::uint8_t>(Tile::Ground)),
-      spawnTile_(index(kAxis / 2, kAxis / 2)) {}
-
-Vec2 Terrain::spawnPoint() const {
-    return tileCenter(spawnTile_ % kAxis, spawnTile_ / kAxis);
+Terrain::Terrain() {
+    // Only the overworld starts with a grid. Every other realm is empty until
+    // a map is staged into it, and an empty grid reads as solid everywhere --
+    // which is exactly what a realm nobody authored should be.
+    Grid& world = grid(Realm::Overworld);
+    world.cols = kAxis;
+    world.rows = kAxis;
+    world.tiles.assign(static_cast<std::size_t>(kTotalTiles), static_cast<std::uint8_t>(Tile::Ground));
+    world.spawnTile = index(world, kAxis / 2, kAxis / 2);
 }
 
-void Terrain::setTile(int tx, int ty, Tile t) {
-    if (tx < 0 || ty < 0 || tx >= kAxis || ty >= kAxis) return;
-    tiles_[static_cast<std::size_t>(index(tx, ty))] = static_cast<std::uint8_t>(t);
+bool Terrain::hasMap(Realm realm) const { return !grid(realm).tiles.empty(); }
+
+void Terrain::clearRealm(Realm realm) {
+    Grid& g = grid(realm);
+    g.cols = 0;
+    g.rows = 0;
+    g.tiles.clear();
+    g.styles.clear();
+    g.spawnTile = 0;
 }
 
-void Terrain::fill(Tile t) {
-    std::fill(tiles_.begin(), tiles_.end(), static_cast<std::uint8_t>(t));
+bool Terrain::install(Realm realm, std::vector<std::uint8_t> tiles, int cols, int rows,
+                      std::vector<std::uint8_t> styles) {
+    if (cols <= 0 || rows <= 0 || cols > kMaxTilesPerAxis || rows > kMaxTilesPerAxis) return false;
+    if (tiles.size() != static_cast<std::size_t>(cols) * static_cast<std::size_t>(rows)) return false;
+    for (const std::uint8_t tile : tiles) {
+        if (tile > static_cast<std::uint8_t>(Tile::Block)) return false;
+    }
+    // The style grid is optional but, when present, exactly parallel: a style
+    // grid of another size would be read against the wrong cells. Every byte
+    // value is a legal style (constants.h: a nibble of skin, a nibble of mask
+    // or variant), so there is no per-value check to make; a skin the client
+    // has no art for draws as the flat colour, never refuses the map.
+    if (!styles.empty() && styles.size() != tiles.size()) return false;
+    Grid& g = grid(realm);
+    g.cols = cols;
+    g.rows = rows;
+    g.tiles = std::move(tiles);
+    g.styles = std::move(styles);
+    g.spawnTile = clamp(g.spawnTile, 0, static_cast<int>(g.tiles.size()) - 1);
+    return true;
+}
+
+Vec2 Terrain::spawnPoint(Realm realm) const {
+    const Grid& g = grid(realm);
+    if (g.cols <= 0 || g.rows <= 0) return {0.0, 0.0};
+    return tileCenter(g.spawnTile % g.cols, g.spawnTile / g.cols);
+}
+
+void Terrain::setTile(int tx, int ty, Tile t, Realm realm) {
+    Grid& g = grid(realm);
+    if (tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) return;
+    const std::size_t i = static_cast<std::size_t>(index(g, tx, ty));
+    g.tiles[i] = static_cast<std::uint8_t>(t);
+    // The authored style described the tile that was here. It is not
+    // recomputed -- that is the authoring script's job, not the engine's --
+    // so the cell simply loses its edges and skin rather than wearing the old
+    // ones.
+    if (!g.styles.empty()) g.styles[i] = 0;
+}
+
+void Terrain::fill(Tile t, Realm realm) {
+    Grid& g = grid(realm);
+    std::fill(g.tiles.begin(), g.tiles.end(), static_cast<std::uint8_t>(t));
+    g.styles.clear();
 }
 
 void Terrain::generate(std::uint64_t seed) {
@@ -453,23 +400,189 @@ void Terrain::generate(std::uint64_t seed) {
     // The centre section is the Ant Hell, which generates solid and is dug out
     // into a tunnel network -- an interesting place to raid and a hostile place
     // to be dropped into with a single Basic petal. The Garden is where the
-    // starter mobs live (bee and ladybug both list section 0 in mobs.json), so
-    // that is where a new flower belongs.
-    spawnTile_ = chooseGardenSpawn();
+    // starter mobs live (the `garden` group in mobs.json), so that is where a
+    // new flower belongs.
+    grid(Realm::Overworld).spawnTile = chooseGardenSpawn();
     connectAll();
     assert(isConnected());
 }
 
-bool Terrain::loadWorldMap(const std::string& path, std::string& errorOut) {
-    return isTiledMapPath(path) ? loadTiledMap(path, errorOut) : loadMapBundle(path, errorOut);
+std::vector<std::uint8_t> encodeTileRle(const std::vector<std::uint8_t>& tiles) {
+    std::vector<std::uint8_t> out;
+    std::size_t at = 0;
+    while (at < tiles.size()) {
+        const std::uint8_t tile = tiles[at];
+        std::size_t run = 1;
+        while (at + run < tiles.size() && tiles[at + run] == tile) ++run;
+        at += run;
+        // Long runs are split at the widest a single header can carry, which
+        // is 127 + 65535. A grid of one tile encodes in five bytes per chunk.
+        while (run > 0) {
+            const std::size_t chunk = std::min<std::size_t>(run, 127 + 0xFFFF);
+            run -= chunk;
+            if (chunk <= 127) {
+                out.push_back(static_cast<std::uint8_t>(chunk << 1));
+            } else {
+                const std::size_t extra = chunk - 127;
+                out.push_back(static_cast<std::uint8_t>((127u << 1) | 1u));
+                out.push_back(static_cast<std::uint8_t>((extra >> 8) & 0xFFu));
+                out.push_back(static_cast<std::uint8_t>(extra & 0xFFu));
+            }
+            out.push_back(tile);
+        }
+    }
+    return out;
 }
 
-bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut) {
+bool decodeTileRle(const std::uint8_t* data, std::size_t size, std::size_t expected,
+                   std::vector<std::uint8_t>& out, std::string& errorOut,
+                   std::uint8_t maxValue) {
+    out.clear();
+    out.reserve(expected);
+    std::size_t at = 0;
+    while (at < size) {
+        const std::uint8_t header = data[at++];
+        std::size_t count = header >> 1;
+        if (header & 1u) {
+            if (at + 2 > size) {
+                errorOut = "the tile stream has a truncated extended run";
+                return false;
+            }
+            count += (static_cast<std::size_t>(data[at]) << 8) | static_cast<std::size_t>(data[at + 1]);
+            at += 2;
+        }
+        if (at >= size || count == 0 || out.size() + count > expected) {
+            errorOut = "the tile stream contains an invalid run";
+            return false;
+        }
+        const std::uint8_t tile = data[at++];
+        if (tile > maxValue) {
+            errorOut = "the tile stream contains a value past " + std::to_string(maxValue);
+            return false;
+        }
+        out.insert(out.end(), count, tile);
+    }
+    if (out.size() != expected) {
+        errorOut = "the tile stream decoded to " + std::to_string(out.size()) + " tiles; expected " +
+                   std::to_string(expected);
+        return false;
+    }
+    return true;
+}
+
+void writeMapGrid(ByteWriter& out, const Terrain& terrain, Realm realm) {
+    // A generated realm -- the arena, the maze -- has no grid to send, and
+    // says so with an empty one rather than by being a different message.
+    const std::vector<std::uint8_t> tiles(terrain.tiles(realm),
+                                          terrain.tiles(realm) + terrain.tileCount(realm));
+    const std::vector<std::uint8_t> packed = encodeTileRle(tiles);
+    out.u8(static_cast<std::uint8_t>(realm));
+    out.u16(static_cast<std::uint16_t>(terrain.tileCols(realm)));
+    out.u16(static_cast<std::uint16_t>(terrain.tileRows(realm)));
+    out.u32(static_cast<std::uint32_t>(packed.size()));
+    out.raw(packed.data(), packed.size());
+
+    // The style bytes, in a second stream of the same encoding. A map with no
+    // styles sends a grid of zeros -- a few bytes once encoded -- rather than
+    // an empty stream, so the reader has one shape to check.
+    const std::vector<std::uint8_t>& authored = terrain.styles(realm);
+    const std::vector<std::uint8_t> styles =
+        authored.empty() ? std::vector<std::uint8_t>(tiles.size(), 0) : authored;
+    const std::vector<std::uint8_t> packedStyles = encodeTileRle(styles);
+    out.u32(static_cast<std::uint32_t>(packedStyles.size()));
+    out.raw(packedStyles.data(), packedStyles.size());
+}
+
+bool readMapGrid(ByteReader& in, Terrain& terrain, Realm& realmOut, std::string& errorOut) {
+    const Realm realm = realmFromByte(in.u8());
+    const int cols = in.u16();
+    const int rows = in.u16();
+    const std::uint32_t byteCount = in.u32();
+    if (!in.ok()) {
+        errorOut = "the map grid header is truncated";
+        return false;
+    }
+    // The arena and the maze have no grid: they are generated, and the client
+    // builds them from the same constants and day number the server did. The
+    // payload for one is an empty grid, and there is nothing to install.
+    if (!isWorldRealm(realm)) {
+        const std::uint32_t styleByteCount = byteCount == 0 ? in.u32() : 0;
+        if (cols != 0 || rows != 0 || byteCount != 0 || styleByteCount != 0 || !in.ok()) {
+            errorOut = "a generated realm arrived with a tile grid";
+            return false;
+        }
+        realmOut = realm;
+        return true;
+    }
+    // Bounded before anything is allocated: these numbers came off a socket,
+    // and a corrupt header must cost a refused message rather than a gigabyte.
+    if (cols <= 0 || rows <= 0 || cols > kMaxTilesPerAxis || rows > kMaxTilesPerAxis) {
+        errorOut = "the map grid is " + std::to_string(cols) + "x" + std::to_string(rows) +
+                   ", which is not a size a map can be";
+        return false;
+    }
+    const std::size_t expected = static_cast<std::size_t>(cols) * static_cast<std::size_t>(rows);
+
+    // Both streams have the same shape, so one reader serves both.
+    const auto readStream = [&](std::uint32_t count, const char* what,
+                                std::vector<std::uint8_t>& packed) {
+        if (count > expected * 4 + 16) {
+            errorOut = std::string("the map grid claims more encoded ") + what +
+                       " bytes than a grid that size can hold";
+            return false;
+        }
+        packed.clear();
+        packed.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i) packed.push_back(in.u8());
+        if (!in.ok()) {
+            errorOut = std::string("the map grid's ") + what + " stream is truncated";
+            return false;
+        }
+        return true;
+    };
+
+    std::vector<std::uint8_t> packed;
+    if (!readStream(byteCount, "tile", packed)) return false;
+    std::vector<std::uint8_t> tiles;
+    if (!decodeTileRle(packed.data(), packed.size(), expected, tiles, errorOut)) return false;
+
+    const std::uint32_t styleByteCount = in.u32();
+    if (!in.ok()) {
+        errorOut = "the map grid's style header is truncated";
+        return false;
+    }
+    if (!readStream(styleByteCount, "style", packed)) return false;
+    std::vector<std::uint8_t> styles;
+    // Every byte is a legal style, so the only thing the decoder can refuse
+    // here is a stream of the wrong length.
+    if (!decodeTileRle(packed.data(), packed.size(), expected, styles, errorOut, 255)) {
+        return false;
+    }
+    if (!terrain.setTiles(tiles, cols, rows, realm, styles)) {
+        errorOut = "the map grid could not be installed";
+        return false;
+    }
+    realmOut = realm;
+    return true;
+}
+
+bool Terrain::loadWorldMap(const std::string& path, std::string& errorOut, Realm realm) {
+    return isTiledMapPath(path) ? loadTiledMap(path, errorOut, realm)
+                                : loadMapBundle(path, errorOut, realm);
+}
+
+bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm realm) {
     TiledMap map;
     if (!map.load(path, errorOut)) return false;
-    if (map.width() != kTilesPerAxis || map.height() != kTilesPerAxis) {
+    // Dimensions come from the FILE. What is still refused is a map bigger
+    // than the engine will hold -- see kMaxTilesPerAxis -- because past that
+    // the grid stops fitting on the wire and the DDA's step bound stops being
+    // long enough to cross it.
+    if (map.width() <= 0 || map.height() <= 0 ||
+        map.width() > kMaxTilesPerAxis || map.height() > kMaxTilesPerAxis) {
         errorOut = path + " is " + std::to_string(map.width()) + "x" + std::to_string(map.height()) +
-                   " tiles; the world is " + std::to_string(kTilesPerAxis) + " square";
+                   " tiles; a map must be between 1 and " + std::to_string(kMaxTilesPerAxis) +
+                   " tiles on each axis";
         return false;
     }
     for (const std::uint8_t tile : map.tiles()) {
@@ -486,7 +599,10 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut) {
         std::fprintf(stderr, "[map] tile \"%s\" in %s declares solid/water flags the engine "
                              "disagrees with; the engine's win\n", name.c_str(), path.c_str());
     }
-    if (!setTiles(map.tiles())) {
+    // The styles come with the tiles: a variant gid resolved to its base tile
+    // id AND the skin and sides (or floor variant) it shows, and the renderer
+    // wants the second half.
+    if (!setTiles(map.tiles(), map.width(), map.height(), realm, map.styles())) {
         errorOut = "could not install the tile grid from " + path;
         return false;
     }
@@ -494,7 +610,7 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut) {
     return true;
 }
 
-bool Terrain::loadMapBundle(const std::string& path, std::string& errorOut) {
+bool Terrain::loadMapBundle(const std::string& path, std::string& errorOut, Realm realm) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         errorOut = "could not open TypeScript map bundle: " + path;
@@ -522,38 +638,17 @@ bool Terrain::loadMapBundle(const std::string& path, std::string& errorOut) {
     }
 
     std::vector<std::uint8_t> decoded;
-    decoded.reserve(kTotalTiles);
-    std::size_t at = 0;
-    while (at < compressed.size()) {
-        const std::uint8_t header = compressed[at++];
-        std::size_t count = header >> 1;
-        if (header & 1u) {
-            if (at + 2 > compressed.size()) {
-                errorOut = "MAP_TILE_RLE has a truncated extended run";
-                return false;
-            }
-            count += (static_cast<std::size_t>(compressed[at]) << 8) |
-                     static_cast<std::size_t>(compressed[at + 1]);
-            at += 2;
-        }
-        if (at >= compressed.size() || count == 0 ||
-            decoded.size() + count > static_cast<std::size_t>(kTotalTiles)) {
-            errorOut = "MAP_TILE_RLE contains an invalid run";
-            return false;
-        }
-        const std::uint8_t tile = compressed[at++];
-        if (tile > static_cast<std::uint8_t>(Tile::Block)) {
-            errorOut = "MAP_TILE_RLE contains an unsupported tile id";
-            return false;
-        }
-        decoded.insert(decoded.end(), count, tile);
-    }
-    if (decoded.size() != static_cast<std::size_t>(kTotalTiles)) {
-        errorOut = "MAP_TILE_RLE decoded to " + std::to_string(decoded.size()) +
-                   " tiles; expected " + std::to_string(kTotalTiles);
+    std::string rleError;
+    if (!decodeTileRle(compressed.data(), compressed.size(),
+                       static_cast<std::size_t>(kTotalTiles), decoded, rleError)) {
+        errorOut = "MAP_TILE_RLE in " + path + ": " + rleError;
         return false;
     }
-    if (!setTiles(decoded)) {
+    // The bundle format carries no dimensions at all, so it is only ever the
+    // historical square; that is why the decode above checks against it. It
+    // carries no styles either -- encodeMap.js folds every variant back to
+    // its base tile -- so a bundle-loaded map draws plain walls.
+    if (!setTiles(decoded, kAxis, kAxis, realm)) {
         errorOut = "could not install decoded TypeScript wall grid";
         return false;
     }
@@ -561,22 +656,40 @@ bool Terrain::loadMapBundle(const std::string& path, std::string& errorOut) {
     return true;
 }
 
-bool Terrain::setTiles(const std::vector<std::uint8_t>& tiles) {
-    if (tiles.size() != static_cast<std::size_t>(kTotalTiles)) return false;
-    for (const std::uint8_t tile : tiles) {
-        if (tile > static_cast<std::uint8_t>(Tile::Block)) return false;
+bool Terrain::setTiles(const std::vector<std::uint8_t>& tiles, int cols, int rows, Realm realm,
+                       const std::vector<std::uint8_t>& styles) {
+    if (!install(realm, tiles, cols, rows, styles)) return false;
+    Grid& g = grid(realm);
+    // The connectivity root is only meaningful for the overworld, which is the
+    // one grid generate() and chooseGardenSpawn() know how to reason about. On
+    // any other map the nearest open tile to the middle is the honest answer,
+    // and it is only ever a fallback for a caller with nowhere better to go.
+    g.spawnTile = realm == Realm::Overworld && cols == kAxis && rows == kAxis
+                      ? chooseGardenSpawn()
+                      : index(g, cols / 2, rows / 2);
+    if (!tileBlocks(atTile(g.spawnTile % g.cols, g.spawnTile / g.cols, realm))) return true;
+    // A map whose middle is solid is perfectly legal -- a cave level starts
+    // inside rock. Take the nearest open tile instead of refusing the map.
+    int tx = 0;
+    int ty = 0;
+    if (realm != Realm::Overworld &&
+        nearestOpenTile(tileCenter(g.cols / 2, g.rows / 2), tx, ty, realm)) {
+        g.spawnTile = index(g, tx, ty);
+        return true;
     }
-    tiles_ = tiles;
-    spawnTile_ = chooseGardenSpawn();
-    return !tileBlocks(atTile(spawnTile_ % kAxis, spawnTile_ / kAxis));
+    return false;
 }
 
 void Terrain::generateSections(Rng& rng) {
+    // The procedural map is the OVERWORLD's, and only ever was: it is built
+    // out of the nine sections, which are a property of the default world's
+    // dimensions. Every other realm is authored.
+    Grid& g = grid(Realm::Overworld);
     const NoiseSet noise(rng);
-    for (int ty = 0; ty < kAxis; ++ty) {
-        for (int tx = 0; tx < kAxis; ++tx) {
+    for (int ty = 0; ty < g.rows; ++ty) {
+        for (int tx = 0; tx < g.cols; ++tx) {
             const int section = flix::sectionAt(tileCenter(tx, ty));
-            tiles_[static_cast<std::size_t>(index(tx, ty))] =
+            g.tiles[static_cast<std::size_t>(index(g, tx, ty))] =
                 static_cast<std::uint8_t>(classifyTile(section, tx, ty, noise));
         }
     }
@@ -586,7 +699,8 @@ void Terrain::generateSections(Rng& rng) {
 /// result is the closest walkable spot to the section's centre rather than the
 /// first one in scan order.
 int Terrain::chooseGardenSpawn() const {
-    const int perSection = kAxis / kSectionsPerAxis;
+    const Grid& g = grid(Realm::Overworld);
+    const int perSection = g.cols / kSectionsPerAxis;
     const int centreTx = perSection / 2;
     const int centreTy = perSection / 2;
 
@@ -598,20 +712,21 @@ int Terrain::chooseGardenSpawn() const {
                 const int tx = centreTx + dx;
                 const int ty = centreTy + dy;
                 if (tx < 0 || ty < 0 || tx >= perSection || ty >= perSection) continue;
-                if (atTile(tx, ty) == Tile::Ground) return index(tx, ty);
+                if (atTile(tx, ty) == Tile::Ground) return index(g, tx, ty);
             }
         }
     }
     // The Garden is noise-generated and always has ground, but if it somehow
     // did not, the centre is still a defined tile and connectAll() will open it.
-    return index(centreTx, centreTy);
+    return index(g, centreTx, centreTy);
 }
 
 void Terrain::carveDisc(Vec2 center, double radius, Tile t) {
-    const int x0 = clamp(toTileCoord(center.x - radius), 0, kAxis - 1);
-    const int x1 = clamp(toTileCoord(center.x + radius), 0, kAxis - 1);
-    const int y0 = clamp(toTileCoord(center.y - radius), 0, kAxis - 1);
-    const int y1 = clamp(toTileCoord(center.y + radius), 0, kAxis - 1);
+    const Grid& g = grid(Realm::Overworld);
+    const int x0 = clamp(toTileCoord(center.x - radius), 0, g.cols - 1);
+    const int x1 = clamp(toTileCoord(center.x + radius), 0, g.cols - 1);
+    const int y0 = clamp(toTileCoord(center.y - radius), 0, g.rows - 1);
+    const int y1 = clamp(toTileCoord(center.y + radius), 0, g.rows - 1);
     const double r2 = radius * radius;
     for (int ty = y0; ty <= y1; ++ty) {
         for (int tx = x0; tx <= x1; ++tx) {
@@ -672,8 +787,9 @@ void Terrain::carveAntHell(Rng& rng) {
 void Terrain::placeCircuitChips(Rng& rng) {
     // Chips sit strictly inside a lattice cell, so the trace lanes stay clear
     // and the section is connected without any repair.
-    for (int cellY = 0; cellY + 9 <= kAxis; cellY += 9) {
-        for (int cellX = 0; cellX + 9 <= kAxis; cellX += 9) {
+    const Grid& g = grid(Realm::Overworld);
+    for (int cellY = 0; cellY + 9 <= g.rows; cellY += 9) {
+        for (int cellX = 0; cellX + 9 <= g.cols; cellX += 9) {
             if (flix::sectionAt(tileCenter(cellX + 4, cellY + 4)) != 7) continue;
             if (!rng.chance(0.55)) continue;
             const int size = rng.rangeInt(3, 5);
@@ -690,36 +806,40 @@ void Terrain::placeCircuitChips(Rng& rng) {
 // Connectivity
 // ---------------------------------------------------------------------------
 
-int Terrain::openTileCount() const {
+int Terrain::openTileCount(Realm realm) const {
+    const Grid& g = grid(realm);
     int n = 0;
-    for (int i = 0; i < kTotalTiles; ++i) {
-        if (passableIndex(i)) ++n;
+    for (std::size_t i = 0; i < g.tiles.size(); ++i) {
+        if (passableIndex(g, static_cast<int>(i))) ++n;
     }
     return n;
 }
 
-bool Terrain::isConnected() const {
-    const int open = openTileCount();
-    if (!passableIndex(spawnTile_)) return open == 0;
+bool Terrain::isConnected(Realm realm) const {
+    const Grid& g = grid(realm);
+    if (g.tiles.empty()) return true;
+    const int total = static_cast<int>(g.tiles.size());
+    const int open = openTileCount(realm);
+    if (!passableIndex(g, g.spawnTile)) return open == 0;
 
-    std::vector<std::uint8_t> seen(static_cast<std::size_t>(kTotalTiles), 0);
+    std::vector<std::uint8_t> seen(static_cast<std::size_t>(total), 0);
     std::vector<int> stack;
     stack.reserve(256);
-    stack.push_back(spawnTile_);
-    seen[static_cast<std::size_t>(spawnTile_)] = 1;
+    stack.push_back(g.spawnTile);
+    seen[static_cast<std::size_t>(g.spawnTile)] = 1;
     int reached = 0;
     while (!stack.empty()) {
         const int cur = stack.back();
         stack.pop_back();
         ++reached;
-        const int cx = cur % kAxis;
-        const int cy = cur / kAxis;
+        const int cx = cur % g.cols;
+        const int cy = cur / g.cols;
         for (int d = 0; d < 4; ++d) {
             const int nx = cx + kNeighborDx[d];
             const int ny = cy + kNeighborDy[d];
-            if (nx < 0 || ny < 0 || nx >= kAxis || ny >= kAxis) continue;
-            const int ni = index(nx, ny);
-            if (seen[static_cast<std::size_t>(ni)] || !passableIndex(ni)) continue;
+            if (nx < 0 || ny < 0 || nx >= g.cols || ny >= g.rows) continue;
+            const int ni = index(g, nx, ny);
+            if (seen[static_cast<std::size_t>(ni)] || !passableIndex(g, ni)) continue;
             seen[static_cast<std::size_t>(ni)] = 1;
             stack.push_back(ni);
         }
@@ -732,28 +852,32 @@ void Terrain::connectAll() {
     // costs nothing, stepping into a wall costs one. dist == 0 therefore means
     // "reachable without digging", and the parent chain of any other tile is
     // the cheapest route to dig for it.
+    //
+    // The generated map is the overworld's, so this repairs that grid alone.
+    Grid& g = grid(Realm::Overworld);
+    const std::int32_t total = static_cast<std::int32_t>(g.tiles.size());
     constexpr std::int32_t kUnreached = std::numeric_limits<std::int32_t>::max();
-    std::vector<std::int32_t> dist(static_cast<std::size_t>(kTotalTiles), kUnreached);
-    std::vector<std::int32_t> parent(static_cast<std::size_t>(kTotalTiles), -1);
-    std::vector<std::uint8_t> settled(static_cast<std::size_t>(kTotalTiles), 0);
+    std::vector<std::int32_t> dist(static_cast<std::size_t>(total), kUnreached);
+    std::vector<std::int32_t> parent(static_cast<std::size_t>(total), -1);
+    std::vector<std::uint8_t> settled(static_cast<std::size_t>(total), 0);
 
     std::deque<std::int32_t> queue;
-    dist[static_cast<std::size_t>(spawnTile_)] = 0;
-    queue.push_back(spawnTile_);
+    dist[static_cast<std::size_t>(g.spawnTile)] = 0;
+    queue.push_back(g.spawnTile);
     while (!queue.empty()) {
         const std::int32_t cur = queue.front();
         queue.pop_front();
         if (settled[static_cast<std::size_t>(cur)]) continue;
         settled[static_cast<std::size_t>(cur)] = 1;
-        const int cx = cur % kAxis;
-        const int cy = cur / kAxis;
+        const int cx = cur % g.cols;
+        const int cy = cur / g.cols;
         for (int d = 0; d < 4; ++d) {
             const int nx = cx + kNeighborDx[d];
             const int ny = cy + kNeighborDy[d];
-            if (nx < 0 || ny < 0 || nx >= kAxis || ny >= kAxis) continue;
-            const std::int32_t ni = index(nx, ny);
+            if (nx < 0 || ny < 0 || nx >= g.cols || ny >= g.rows) continue;
+            const std::int32_t ni = index(g, nx, ny);
             if (settled[static_cast<std::size_t>(ni)]) continue;
-            const std::int32_t cost = passableIndex(ni) ? 0 : 1;
+            const std::int32_t cost = passableIndex(g, ni) ? 0 : 1;
             const std::int32_t candidate = dist[static_cast<std::size_t>(cur)] + cost;
             if (candidate < dist[static_cast<std::size_t>(ni)]) {
                 dist[static_cast<std::size_t>(ni)] = candidate;
@@ -766,12 +890,14 @@ void Terrain::connectAll() {
 
     std::vector<std::int32_t> stack;
     stack.reserve(256);
-    for (std::int32_t t = 0; t < kTotalTiles; ++t) {
-        if (!passableIndex(t) || dist[static_cast<std::size_t>(t)] == 0) continue;
+    for (std::int32_t t = 0; t < total; ++t) {
+        if (!passableIndex(g, t) || dist[static_cast<std::size_t>(t)] == 0) continue;
 
         for (std::int32_t cur = t; cur >= 0 && dist[static_cast<std::size_t>(cur)] != 0;
              cur = parent[static_cast<std::size_t>(cur)]) {
-            if (!passableIndex(cur)) tiles_[static_cast<std::size_t>(cur)] = static_cast<std::uint8_t>(Tile::Ground);
+            if (!passableIndex(g, cur)) {
+                g.tiles[static_cast<std::size_t>(cur)] = static_cast<std::uint8_t>(Tile::Ground);
+            }
         }
 
         // The corridor joined t's whole region to the spawn's, so flood the
@@ -783,14 +909,14 @@ void Terrain::connectAll() {
         while (!stack.empty()) {
             const std::int32_t cur = stack.back();
             stack.pop_back();
-            const int cx = cur % kAxis;
-            const int cy = cur / kAxis;
+            const int cx = cur % g.cols;
+            const int cy = cur / g.cols;
             for (int d = 0; d < 4; ++d) {
                 const int nx = cx + kNeighborDx[d];
                 const int ny = cy + kNeighborDy[d];
-                if (nx < 0 || ny < 0 || nx >= kAxis || ny >= kAxis) continue;
-                const std::int32_t ni = index(nx, ny);
-                if (dist[static_cast<std::size_t>(ni)] == 0 || !passableIndex(ni)) continue;
+                if (nx < 0 || ny < 0 || nx >= g.cols || ny >= g.rows) continue;
+                const std::int32_t ni = index(g, nx, ny);
+                if (dist[static_cast<std::size_t>(ni)] == 0 || !passableIndex(g, ni)) continue;
                 dist[static_cast<std::size_t>(ni)] = 0;
                 stack.push_back(ni);
             }
@@ -802,7 +928,7 @@ void Terrain::connectAll() {
 // Collision
 // ---------------------------------------------------------------------------
 
-bool Terrain::nearestOpenTile(Vec2 p, int& outTx, int& outTy) const {
+bool Terrain::nearestOpenTile(Vec2 p, int& outTx, int& outTy, Realm realm) const {
     const int px = toTileCoord(p.x);
     const int py = toTileCoord(p.y);
     for (int ring = 0; ring <= kNearestOpenSearchTiles; ++ring) {
@@ -814,7 +940,7 @@ bool Terrain::nearestOpenTile(Vec2 p, int& outTx, int& outTy) const {
                 if (std::abs(dx) != ring && std::abs(dy) != ring) continue;
                 const int tx = px + dx;
                 const int ty = py + dy;
-                if (tileBlocks(atTile(tx, ty))) continue;
+                if (tileBlocks(atTile(tx, ty, realm))) continue;
                 const double d2 = distanceSq(tileCenter(tx, ty), p);
                 if (!found || d2 < best) {
                     found = true;
@@ -835,9 +961,9 @@ Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius, Realm
     // Garbage in must not become an unbounded loop or a NaN out. A teleport
     // bug upstream costs the body a shove, never the tick.
     if (!std::isfinite(position.x) || !std::isfinite(position.y)) {
-        position = realm == Realm::Overworld ? spawnPoint()
-                 : realm == Realm::Arena     ? kArenaSpawn
-                                             : activeMaze().spawn();
+        position = realm == Realm::Arena ? kArenaSpawn
+                 : realm == Realm::Maze  ? activeMaze().spawn()
+                                         : spawnPoint(realm);
     }
     if (!std::isfinite(radius) || radius < 0.0) radius = 0.0;
     radius = std::min(radius, kMaxResolveRadius);
@@ -864,23 +990,24 @@ Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius, Realm
     }
 
     // Bound the scan before any tile arithmetic: a coordinate of 1e30 makes
-    // the tile loop below run for the rest of the universe.
-    position.x = clamp(position.x, -kTileSize, kWorldSize + kTileSize);
-    position.y = clamp(position.y, -kTileSize, kWorldSize + kTileSize);
+    // the tile loop below run for the rest of the universe. The bound is this
+    // realm's own rectangle, so a small map's scan stays small.
+    const Vec2 extent = realmExtent(realm);
+    position.x = clamp(position.x, -kTileSize, extent.x + kTileSize);
+    position.y = clamp(position.y, -kTileSize, extent.y + kTileSize);
 
     // This is the same four-pass collision solver used by
-    // resolveEntityWallCollisions() in constants.ts. In particular, wall and
-    // water faces use the deterministic jagged outline players see; treating
-    // them as plain 300px rectangles changes both the contact point and the
-    // slide direction.
+    // resolveEntityWallCollisions() in constants.ts, against each blocking
+    // tile's plain rectangle: the edge a wall or water tile is drawn with lies
+    // inside the tile, so the rectangle is where a body actually stops.
     bool cleared = true;
     for (int pass = 0; pass < kResolvePasses; ++pass) {
-        const std::optional<JaggedCollision> hit = findJaggedCollision(*this, position, radius);
+        const std::optional<TileCollision> hit = findTileCollision(*this, position, radius, realm);
         if (!hit) {
             cleared = true;
             break;
         }
-        position = resolveJaggedCollision(position, radius, *hit);
+        position = resolveTileCollision(position, radius, *hit);
         result.collided = true;
         cleared = false;
     }
@@ -889,7 +1016,7 @@ Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius, Realm
     // extra check -- reached only on deep multi-tile overlap, never on
     // ordinary wall contact -- is what decides whether the body actually came
     // out clear, and it is the only thing `unresolved` says.
-    if (!cleared) cleared = !findJaggedCollision(*this, position, radius);
+    if (!cleared) cleared = !findTileCollision(*this, position, radius, realm);
 
     result.position = position;
     result.unresolved = !cleared;
@@ -905,7 +1032,7 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
     // The maze and the arena answer for themselves, rescue and closure
     // included; everything below is tile arithmetic.
     if (realm == Realm::Maze && wall.unresolved) return activeMaze().nearestFloor(position);
-    if (realm != Realm::Overworld) return position;
+    if (!isWorldRealm(realm)) return position;
 
     // Spawners and admin teleports can place a centre deep inside several
     // blocking tiles. TypeScript's per-movement caller refuses an unresolved
@@ -915,7 +1042,7 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
     if (wall.unresolved) {
         int tx = 0;
         int ty = 0;
-        if (!nearestOpenTile(position, tx, ty)) position = spawnPoint();
+        if (!nearestOpenTile(position, tx, ty, realm)) position = spawnPoint(realm);
         else {
             const Rect open = tileRect(tx, ty);
             const double inset = std::min(radius + kWallResolveEpsilon, kTileSize * 0.49);
@@ -923,39 +1050,46 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
             position.y = clamp(position.y, open.top() + inset, open.bottom() - inset);
         }
         for (int pass = 0; pass < kResolvePasses; ++pass) {
-            const std::optional<JaggedCollision> hit = findJaggedCollision(*this, position, radius);
+            const std::optional<TileCollision> hit =
+                findTileCollision(*this, position, radius, realm);
             if (!hit) break;
-            position = resolveJaggedCollision(position, radius, *hit);
+            position = resolveTileCollision(position, radius, *hit);
         }
     }
 
     // Last-resort closure. The out-of-bounds-is-wall rule already keeps a body
     // inside; this makes it true even when the push-out could not converge.
-    const double margin = std::min(radius, kWorldHalf * 0.5);
-    position.x = clamp(position.x, margin, kWorldSize - margin);
-    position.y = clamp(position.y, margin, kWorldSize - margin);
+    const Vec2 span = realmExtent(realm);
+    position.x = clamp(position.x, std::min(radius, span.x * 0.25), span.x - std::min(radius, span.x * 0.25));
+    position.y = clamp(position.y, std::min(radius, span.y * 0.25), span.y - std::min(radius, span.y * 0.25));
     return position;
 }
 
 bool Terrain::blocked(Vec2 p, Realm realm) const {
-    switch (realm) {
-        case Realm::Maze:  return activeMaze().blocksPoint(p);
-        case Realm::Arena: return !insideArena(p);
-        case Realm::Overworld: break;
-    }
-    return tileBlocks(at(p));
+    if (realm == Realm::Maze) return activeMaze().blocksPoint(p);
+    if (realm == Realm::Arena) return !insideArena(p);
+    return tileBlocks(at(p, realm));
 }
 
-double Terrain::realmSize(Realm realm) {
-    switch (realm) {
-        case Realm::Maze:  return activeMaze().worldSize();
-        case Realm::Arena: return kArenaWorldSize;
-        case Realm::Overworld: break;
+Vec2 Terrain::realmExtent(Realm realm) const {
+    if (realm == Realm::Maze) {
+        const double side = activeMaze().worldSize();
+        return {side, side};
     }
-    return kWorldSize;
+    if (realm == Realm::Arena) return {kArenaWorldSize, kArenaWorldSize};
+    const Grid& g = grid(realm);
+    // A realm with no map staged still has to answer with something finite --
+    // a clamp against zero would collapse every coordinate onto the origin.
+    if (g.cols <= 0 || g.rows <= 0) return {kWorldSize, kWorldSize};
+    return {g.cols * kTileSize, g.rows * kTileSize};
 }
 
-Vec2 Terrain::clampInside(Vec2 p, double radius, Realm realm) {
+double Terrain::realmSize(Realm realm) const {
+    const Vec2 extent = realmExtent(realm);
+    return std::max(extent.x, extent.y);
+}
+
+Vec2 Terrain::clampInside(Vec2 p, double radius, Realm realm) const {
     if (!std::isfinite(radius) || radius < 0.0) radius = 0.0;
     if (realm == Realm::Arena) {
         // Radially, onto the ring's inside face: the reference's PVP clamp
@@ -969,15 +1103,19 @@ Vec2 Terrain::clampInside(Vec2 p, double radius, Realm realm) {
         const double dist = std::sqrt(distSq);
         return kArenaCentre + offset * (maxR / dist);
     }
-    const double size = realmSize(realm);
-    const double margin = std::min(radius, size * 0.25);
-    return {clamp(p.x, margin, size - margin), clamp(p.y, margin, size - margin)};
+    // Per axis, because a map need not be square: clamping both axes against
+    // the longer one would let a body walk off the short end of a corridor
+    // level and stand in the void beside it.
+    const Vec2 extent = realmExtent(realm);
+    const double marginX = std::min(radius, extent.x * 0.25);
+    const double marginY = std::min(radius, extent.y * 0.25);
+    return {clamp(p.x, marginX, extent.x - marginX), clamp(p.y, marginY, extent.y - marginY)};
 }
 
-bool Terrain::outside(Vec2 p, Realm realm) {
+bool Terrain::outside(Vec2 p, Realm realm) const {
     if (realm == Realm::Arena) return !insideArena(p);
-    const double size = realmSize(realm);
-    return p.x < 0.0 || p.x >= size || p.y < 0.0 || p.y >= size;
+    const Vec2 extent = realmExtent(realm);
+    return p.x < 0.0 || p.x >= extent.x || p.y < 0.0 || p.y >= extent.y;
 }
 
 bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
@@ -989,7 +1127,7 @@ bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
 
     int tx = toTileCoord(a.x);
     int ty = toTileCoord(a.y);
-    if (tileBlocks(atTile(tx, ty))) return true;
+    if (tileBlocks(atTile(tx, ty, realm))) return true;
 
     const int endTx = toTileCoord(b.x);
     const int endTy = toTileCoord(b.y);
@@ -1026,7 +1164,7 @@ bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
             ty += stepY;
             tMaxY += tDeltaY;
         }
-        if (tileBlocks(atTile(tx, ty))) return true;
+        if (tileBlocks(atTile(tx, ty, realm))) return true;
         if (tx == endTx && ty == endTy) return false;
     }
     // Longer than twice the map: nonsense input, and unseeable is the safe
@@ -1034,7 +1172,7 @@ bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
     return true;
 }
 
-bool Terrain::segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps) const {
+bool Terrain::segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps, Realm realm) const {
     // Nonsense endpoints clip to an empty tile range in the reference, which
     // reports no crossing. Refusing a step on garbage input would be worse
     // than letting it through: the guard exists to stop a body moving where it
@@ -1047,13 +1185,13 @@ bool Terrain::segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps) const {
     // Clamped to the grid, as the reference clamps its scan: tiles outside it
     // are air, so skipping them changes nothing and keeps the loop small.
     const int minTx = std::max(0, toTileCoord(std::min(a.x, b.x) - eps));
-    const int maxTx = std::min(kTilesPerAxis - 1, toTileCoord(std::max(a.x, b.x) + eps));
+    const int maxTx = std::min(tileCols(realm) - 1, toTileCoord(std::max(a.x, b.x) + eps));
     const int minTy = std::max(0, toTileCoord(std::min(a.y, b.y) - eps));
-    const int maxTy = std::min(kTilesPerAxis - 1, toTileCoord(std::max(a.y, b.y) + eps));
+    const int maxTy = std::min(tileRows(realm) - 1, toTileCoord(std::max(a.y, b.y) + eps));
 
     for (int ty = minTy; ty <= maxTy; ++ty) {
         for (int tx = minTx; tx <= maxTx; ++tx) {
-            if (!tileBlocks(atTile(tx, ty))) continue;
+            if (!tileBlocks(atTile(tx, ty, realm))) continue;
             if (segmentTouchesRect(a, b, tx * kTileSize - eps, ty * kTileSize - eps,
                                    (tx + 1) * kTileSize + eps, (ty + 1) * kTileSize + eps)) {
                 return true;
@@ -1083,8 +1221,8 @@ bool Terrain::hasLineOfSight(Vec2 a, Vec2 b, Realm realm, int sampleCount) const
         const int ty = toTileCoord(a.y + dy * t);
         // Outside the grid is AIR, not wall -- the reference's grid has no
         // entry out there, so leaving the map does not by itself break sight.
-        if (tx < 0 || ty < 0 || tx >= kTilesPerAxis || ty >= kTilesPerAxis) continue;
-        if (tileBlocks(atTile(tx, ty))) return false;
+        if (tx < 0 || ty < 0 || tx >= tileCols(realm) || ty >= tileRows(realm)) continue;
+        if (tileBlocks(atTile(tx, ty, realm))) return false;
     }
     return true;
 }
@@ -1110,12 +1248,12 @@ Vec2 Terrain::findOpenSpawn(Rng& rng, Vec2 around, double radius, Realm realm) c
         return maze.isFloor(pushed) ? pushed : maze.spawn();
     }
 
-    if (!std::isfinite(around.x) || !std::isfinite(around.y)) around = spawnPoint();
-    radius = std::isfinite(radius) ? clamp(radius, 0.0, kWorldSize) : 0.0;
+    if (!std::isfinite(around.x) || !std::isfinite(around.y)) around = spawnPoint(realm);
+    radius = std::isfinite(radius) ? clamp(radius, 0.0, realmSize(realm)) : 0.0;
 
     for (int attempt = 0; attempt < 24; ++attempt) {
         const Vec2 p = around + rng.insideCircle(radius);
-        const Tile t = at(p);
+        const Tile t = at(p, realm);
         if (tileBlocks(t) || tileIsWater(t)) continue;
         // Reject pockets a body would immediately be squeezed out of: landing
         // in a one-tile gap between boulders reads as spawning inside a wall.
@@ -1123,14 +1261,14 @@ Vec2 Terrain::findOpenSpawn(Rng& rng, Vec2 around, double radius, Realm realm) c
     }
 
     int tx = 0, ty = 0;
-    if (nearestOpenTile(around, tx, ty)) {
+    if (nearestOpenTile(around, tx, ty, realm)) {
         // Jitter inside the tile so repeated fallbacks do not stack every mob
         // on one point.
         const Vec2 c = tileCenter(tx, ty);
         const double j = kTileSize * 0.25;
         return {c.x + rng.range(-j, j), c.y + rng.range(-j, j)};
     }
-    return spawnPoint();
+    return spawnPoint(realm);
 }
 
 // ---------------------------------------------------------------------------

@@ -299,15 +299,19 @@ private:
     /// the reference multiplies the script's literal by sqrt(3) per rarity and
     /// by a flat 3 on top of the Healing talent.
     void healFromBehaviour(World& world, Entity player, double amount, Rarity rarity);
-    /// True once the petal's body overlaps any live wild mob, which is what
-    /// arms a behaviour that parks until it hits something.
-    bool touchesMob(World& world, Vec2 at, double radius);
-    /// Wild mobs whose CENTRE is inside `radius`, which is the test both the
-    /// strike and the explosion use.
-    void collectMobsNear(World& world, Vec2 at, double radius, std::vector<Entity>& out);
-    /// Raise the first corpse within reach of a yggdrasil. Returns whether one
-    /// was raised, which is what spends the petal.
-    bool revivePlayerNear(World& world, Entity reviver, Vec2 at, double nowMillis);
+    /// True once the petal's body overlaps any live wild mob IN ITS REALM,
+    /// which is what arms a behaviour that parks until it hits something.
+    /// Every one of these three sweeps the world linearly rather than through
+    /// the broadphase, so the realm test is theirs to make: two maps'
+    /// coordinates overlap numerically.
+    bool touchesMob(World& world, Realm realm, Vec2 at, double radius);
+    /// Wild mobs in `realm` whose CENTRE is inside `radius`, which is the
+    /// test both the strike and the explosion use.
+    void collectMobsNear(World& world, Realm realm, Vec2 at, double radius,
+                         std::vector<Entity>& out);
+    /// Raise the first corpse in `realm` within reach of a yggdrasil. Returns
+    /// whether one was raised, which is what spends the petal.
+    bool revivePlayerNear(World& world, Entity reviver, Realm realm, Vec2 at, double nowMillis);
     void emitGroundEffect(World& world, Entity player, Vec2 at, GroundEffectKind kind,
                           double radius, double damagePerSecond, double slowFactor,
                           Rarity rarity, double lifetimeSeconds,

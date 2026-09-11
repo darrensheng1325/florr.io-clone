@@ -179,8 +179,9 @@ constexpr double kLoadoutSecondaryMargin = 10.0;
 constexpr double kLoadoutBottomPad = 34.0;
 
 /// The title screen hands the bar a fixed box below centre rather than the
-/// whole window, so it sits under the biome buttons instead of on the bottom
-/// edge. In game it owns the viewport at three-quarter scale.
+/// whole window, so it sits under the spawn picker's two rows (tabs, then
+/// doors) instead of on the bottom edge. In game it owns the viewport at
+/// three-quarter scale.
 constexpr double kTitleLoadoutWidth = 900.0;
 constexpr double kTitleLoadoutHeight = 210.0;
 constexpr double kTitleLoadoutDrop = 50.0;
@@ -434,7 +435,11 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "zoom") zoom = clamp(std::atof(value.c_str()), kMinZoom, kMaxZoom);
         else if (key == "interp") interpolation = clamp(std::atof(value.c_str()), 0.05, 0.5);
         else if (key == "renderScale") renderScale = clamp(std::atof(value.c_str()), 0.25, 1.0);
-        else if (key == "biome") spawnBiome = (value == "-" ? std::string() : value);
+        else if (key == "spawn") spawnChoice = (value == "-" ? std::string() : value);
+        // `biome` is what this line was called before spawn points replaced the
+        // biome picker. Still read, so an existing settings file keeps whatever
+        // the player had chosen; only ever written under the new name.
+        else if (key == "biome") spawnChoice = (value == "-" ? std::string() : value);
         else if (key == "mouseControls") useMouseControls = number != 0;
         // The key being on disk at all is the choice: an absent one leaves the
         // device to answer, which is what touchControlsWanted does with it.
@@ -479,7 +484,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "renderScale " << renderScale << '\n'
          // A dash rather than an empty field: the reader splits on whitespace,
          // and an empty value would swallow the next key as its own.
-         << "biome " << (spawnBiome.empty() ? std::string("-") : spawnBiome) << '\n'
+         << "spawn " << (spawnChoice.empty() ? std::string("-") : spawnChoice) << '\n'
          << "mouseControls " << (useMouseControls ? 1 : 0) << '\n'
          << "tutorialDone " << (tutorialCompleted ? 1 : 0) << '\n'
          << "tutorialStep " << tutorialStep << '\n';

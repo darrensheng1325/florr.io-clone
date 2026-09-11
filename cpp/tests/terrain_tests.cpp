@@ -655,68 +655,308 @@ TEST(spatial_grid_does_not_allocate_once_warm) {
 }
 
 // ---------------------------------------------------------------------------
-// The jagged wall outline
+// Edge masks
 // ---------------------------------------------------------------------------
+//
+// A wall or water tile's edges are tileset artwork chosen by the authoring
+// script and carried as a mask beside the tile id. The engine's whole job with
+// them is to keep them attached to the right cell -- through a map load, over
+// the wire, and NOT into collision.
 
-TEST(the_jagged_outline_is_well_formed_on_every_edge_of_every_tile) {
-    // A wall's silhouette and its hitbox are the same curve. These are the
-    // properties both the renderer's trace and the collision scan assume, and
-    // neither would notice if they stopped holding for some corner of the map.
-    for (int tileY = 0; tileY < kTilesPerAxis; tileY += 37) {
-        for (int tileX = 0; tileX < kTilesPerAxis; tileX += 29) {
-            for (int edge = 0; edge < 4; ++edge) {
-                const JaggedEdge& points = jaggedEdge(tileX, tileY, edge);
+namespace {
 
-                // Pinned flat at both ends, so the protrusion closes onto the
-                // tile edge instead of leaving a step at the seam.
-                CHECK_NEAR(points.front().t, 0.0, 1e-12);
-                CHECK_NEAR(points.front().offset, 0.0, 1e-12);
-                CHECK_NEAR(points.back().t, kTileSize, 1e-12);
-                CHECK_NEAR(points.back().offset, 0.0, 1e-12);
+constexpr std::uint8_t G = static_cast<std::uint8_t>(Tile::Ground);
+constexpr std::uint8_t W = static_cast<std::uint8_t>(Tile::Wall);
+constexpr std::uint8_t A = static_cast<std::uint8_t>(Tile::Water);
+constexpr std::uint8_t S = static_cast<std::uint8_t>(Tile::Sand);
 
-                for (std::size_t i = 0; i < points.size(); ++i) {
-                    // Sorted by t: the renderer traces the polyline in order,
-                    // and maxJaggedOffset's boundary interpolation walks pairs.
-                    if (i > 0) CHECK(points[i].t >= points[i - 1].t);
-                    // Never bulges further than the collision scan reaches for
-                    // it, or a body could rest inside the drawn outline.
-                    CHECK(points[i].offset >= 0.0);
-                    CHECK(points[i].offset <= kJaggedMaxProtrusion);
-                }
-            }
+/// A 4x3 map with one of everything: a wall blob, a pond beside it, a bridge.
+const std::vector<std::uint8_t> kSmallTiles = {
+    W, W, W, G,
+    W, A, G, G,
+    G, G, S, G,
+};
+/// The masks scripts/edgeTiles.js would author for it, by the contract's
+/// exposure rule (off-map and air expose; a wall is exposed against water).
+const std::vector<std::uint8_t> kSmallEdges = {
+    kEdgeNorth | kEdgeWest,                 kEdgeNorth | kEdgeSouth,   kEdgeNorth | kEdgeEast | kEdgeSouth, 0,
+    kEdgeEast | kEdgeSouth | kEdgeWest,     kEdgeEast | kEdgeSouth,    0,                                   0,
+    0,                                      0,                         0,                                   0,
+};
+/// The same map skinned: the walls and the pond as the unknown family (skin
+/// 3), two air cells wearing sewers floor decorations (skin 1, variants 2 and
+/// 1), the rest plain. Every value here is a style byte, and several are
+/// above 15 -- which is what the wire has to carry now.
+const std::uint8_t kUnknown = 3;
+const std::uint8_t kSewers = 1;
+const std::vector<std::uint8_t> kSmallStyles = {
+    makeStyle(kUnknown, kEdgeNorth | kEdgeWest),             makeStyle(kUnknown, kEdgeNorth | kEdgeSouth), makeStyle(kUnknown, kEdgeNorth | kEdgeEast | kEdgeSouth), makeStyle(kSewers, 2),
+    makeStyle(kUnknown, kEdgeEast | kEdgeSouth | kEdgeWest), makeStyle(kUnknown, kEdgeEast | kEdgeSouth),  0,                                                    0,
+    0,                                                   makeStyle(kSewers, 1),                    0,                                                    0,
+};
+
+/// Serialises one realm's grid and reads it back into a fresh Terrain.
+bool roundTrip(const Terrain& from, Realm realm, Terrain& to, Realm& realmOut, std::string& error) {
+    ByteWriter w;
+    writeMapGrid(w, from, realm);
+    ByteReader r(w.data(), w.size());
+    return readMapGrid(r, to, realmOut, error);
+}
+
+} // namespace
+
+TEST(edge_masks_travel_with_the_grid_over_the_wire) {
+    // The client has no map file to read the masks out of, so they have to
+    // arrive beside the tiles -- for any realm, at that realm's own size.
+    Terrain server;
+    const Realm realm = worldRealm(1);
+    CHECK(server.setTiles(kSmallTiles, 4, 3, realm, kSmallEdges));
+    // A plain mask grid reads as skin 0 everywhere, and an air cell carries
+    // no edge and no decoration.
+    CHECK_EQ(int(server.skinAt(0, 0, realm)), 0);
+    CHECK_EQ(int(server.floorVariantAt(3, 0, realm)), 0);
+    CHECK_EQ(int(server.edgeMaskAt(3, 0, realm)), 0);
+
+    Terrain client;
+    Realm got = Realm::Overworld;
+    std::string error;
+    CHECK(roundTrip(server, realm, client, got, error));
+    CHECK(error.empty());
+    CHECK(got == realm);
+    CHECK_EQ(client.tileCols(realm), 4);
+    CHECK_EQ(client.tileRows(realm), 3);
+    for (int ty = 0; ty < 3; ++ty) {
+        for (int tx = 0; tx < 4; ++tx) {
+            CHECK(client.atTile(tx, ty, realm) == server.atTile(tx, ty, realm));
+            CHECK_EQ(int(client.edgeMaskAt(tx, ty, realm)),
+                     int(kSmallEdges[static_cast<std::size_t>(ty * 4 + tx)]));
         }
+    }
+    // Off the grid there is no edge to draw, whatever the tile reads as.
+    CHECK_EQ(int(client.edgeMaskAt(-1, 0, realm)), 0);
+    CHECK_EQ(int(client.edgeMaskAt(4, 0, realm)), 0);
+    CHECK_EQ(int(client.edgeMaskAt(0, 3, realm)), 0);
+    // And another realm's grid is untouched by it.
+    CHECK_EQ(int(client.edgeMaskAt(0, 0, Realm::Overworld)), 0);
+}
+
+TEST(the_whole_style_byte_travels_over_the_wire) {
+    // The second stream used to be a 0..15 edge mask; it is the style byte
+    // now, with the skin in the high nibble. A skinned wall, a skinned pond
+    // and a decorated floor all have to come out of the wire exactly as they
+    // went in, and the per-cell reads have to split the byte the same way
+    // on both sides.
+    Terrain server;
+    const Realm realm = worldRealm(2);
+    CHECK(server.setTiles(kSmallTiles, 4, 3, realm, kSmallStyles));
+
+    Terrain client;
+    Realm got = Realm::Overworld;
+    std::string error;
+    CHECK(roundTrip(server, realm, client, got, error));
+    CHECK(error.empty());
+    CHECK(got == realm);
+    CHECK(client.styles(realm) == kSmallStyles);
+    for (int ty = 0; ty < 3; ++ty) {
+        for (int tx = 0; tx < 4; ++tx) {
+            const std::uint8_t style = kSmallStyles[static_cast<std::size_t>(ty * 4 + tx)];
+            CHECK_EQ(int(client.styleAt(tx, ty, realm)), int(style));
+            CHECK_EQ(int(client.skinAt(tx, ty, realm)), int(styleSkin(style)));
+            const bool air = client.atTile(tx, ty, realm) == Tile::Ground;
+            // The low nibble is an edge mask on a wall or pond and a floor
+            // variant on air -- never both.
+            CHECK_EQ(int(client.edgeMaskAt(tx, ty, realm)), air ? 0 : int(styleEdgeMask(style)));
+            CHECK_EQ(int(client.floorVariantAt(tx, ty, realm)), air ? int(styleFloorVariant(style)) : 0);
+        }
+    }
+    // Spot checks against the table, so a bug that swapped the nibbles on
+    // both sides at once cannot pass.
+    CHECK_EQ(int(client.skinAt(1, 1, realm)), int(kUnknown));
+    CHECK_EQ(int(client.edgeMaskAt(1, 1, realm)), int(kEdgeEast | kEdgeSouth));
+    CHECK_EQ(int(client.skinAt(3, 0, realm)), int(kSewers));
+    CHECK_EQ(int(client.floorVariantAt(3, 0, realm)), 2);
+    CHECK_EQ(int(client.floorVariantAt(1, 2, realm)), 1);
+    CHECK_EQ(int(client.skinAt(2, 1, realm)), 0);
+    // Off the grid: nothing.
+    CHECK_EQ(int(client.styleAt(4, 0, realm)), 0);
+    CHECK_EQ(int(client.skinAt(-1, 0, realm)), 0);
+    CHECK_EQ(int(client.floorVariantAt(0, 3, realm)), 0);
+
+    // Every byte value is a style: skin 15, mask 15 is the largest, and a
+    // grid of them goes over the wire and back untouched.
+    Terrain loud;
+    const std::vector<std::uint8_t> all255(kSmallTiles.size(), 255);
+    CHECK(loud.setTiles(kSmallTiles, 4, 3, realm, all255));
+    Terrain loudClient;
+    CHECK(roundTrip(loud, realm, loudClient, got, error));
+    CHECK(loudClient.styles(realm) == all255);
+    CHECK_EQ(int(loudClient.skinAt(0, 0, realm)), 15);
+    CHECK_EQ(int(loudClient.edgeMaskAt(0, 0, realm)), int(kEdgeMaskMax));
+
+    // And the largest style the shipped tileset can actually produce: the
+    // last skin the engine knows (unknown, 3) with every edge -- 0x3F --
+    // which is above the old 0..15 mask range and below the nibble ceiling.
+    CHECK_EQ(int(makeStyle(kTileSkinCount - 1, kEdgeMaskMax)), 0x3F);
+    Terrain top;
+    std::vector<std::uint8_t> topStyles(kSmallTiles.size(), 0);
+    topStyles[0] = 0x3F;
+    CHECK(top.setTiles(kSmallTiles, 4, 3, realm, topStyles));
+    Terrain topClient;
+    CHECK(roundTrip(top, realm, topClient, got, error));
+    CHECK(topClient.styles(realm) == topStyles);
+    CHECK_EQ(int(topClient.styleAt(0, 0, realm)), 0x3F);
+    CHECK_EQ(int(topClient.skinAt(0, 0, realm)), 3);
+    CHECK_EQ(int(topClient.edgeMaskAt(0, 0, realm)), int(kEdgeMaskMax));
+    CHECK_EQ(int(topClient.styleAt(1, 0, realm)), 0);
+}
+
+TEST(a_grid_without_edge_masks_still_round_trips) {
+    // The generated map, the TypeScript bundle and a map never run through
+    // the authoring script all carry no masks. They must go over the wire as
+    // an all-zero mask grid, and it must cost next to nothing to send.
+    const Terrain& map = sharedMap();
+    CHECK(map.styles().empty());
+
+    ByteWriter w;
+    writeMapGrid(w, map, Realm::Overworld);
+    // The mask stream is one run: a header, a two-byte extension, one value,
+    // per 65662-cell chunk. Forty thousand zeros cost four bytes plus their
+    // u32 length on top of the nine-byte header and the tiles.
+    const std::vector<std::uint8_t> tiles(map.tiles(), map.tiles() + map.tileCount());
+    const std::vector<std::uint8_t> packed = encodeTileRle(tiles);
+    CHECK_EQ(w.size(), packed.size() + 9 + 4 + 4);
+
+    Terrain client;
+    Realm got = Realm::Arena;
+    std::string error;
+    ByteReader r(w.data(), w.size());
+    CHECK(readMapGrid(r, client, got, error));
+    CHECK(got == Realm::Overworld);
+    CHECK_EQ(client.tileCount(), map.tileCount());
+    for (int ty = 0; ty < kTilesPerAxis; ty += 7) {
+        for (int tx = 0; tx < kTilesPerAxis; tx += 11) {
+            CHECK(client.atTile(tx, ty) == map.atTile(tx, ty));
+            CHECK_EQ(int(client.edgeMaskAt(tx, ty)), 0);
+        }
+    }
+
+    // A generated realm sends an empty grid and both streams empty.
+    Terrain arenaClient;
+    CHECK(roundTrip(map, Realm::Arena, arenaClient, got, error));
+    CHECK(got == Realm::Arena);
+    CHECK(!arenaClient.hasMap(Realm::Arena));
+}
+
+TEST(a_style_grid_that_does_not_fit_its_tiles_is_refused) {
+    Terrain t;
+    const Realm realm = worldRealm(2);
+    // Wrong length: a style grid read against the wrong cells.
+    std::vector<std::uint8_t> wrongSize(kSmallStyles.begin(), kSmallStyles.end() - 1);
+    CHECK(!t.setTiles(kSmallTiles, 4, 3, realm, wrongSize));
+    CHECK(!t.hasMap(realm));
+    // Empty is the spelling of "no styles", and every cell reads zero.
+    CHECK(t.setTiles(kSmallTiles, 4, 3, realm));
+    CHECK(t.styles(realm).empty());
+    CHECK_EQ(int(t.edgeMaskAt(0, 0, realm)), 0);
+    CHECK_EQ(int(t.skinAt(0, 0, realm)), 0);
+
+    // A direct write loses the authored style rather than keeping one that
+    // described a tile that is no longer there; the engine never recomputes.
+    CHECK(t.setTiles(kSmallTiles, 4, 3, realm, kSmallStyles));
+    CHECK_EQ(int(t.edgeMaskAt(1, 0, realm)), int(kEdgeNorth | kEdgeSouth));
+    CHECK_EQ(int(t.skinAt(1, 0, realm)), int(kUnknown));
+    t.setTile(1, 0, Tile::Ground, realm);
+    CHECK_EQ(int(t.styleAt(1, 0, realm)), 0);
+    CHECK_EQ(int(t.edgeMaskAt(0, 0, realm)), int(kEdgeNorth | kEdgeWest));
+    CHECK_EQ(int(t.skinAt(0, 0, realm)), int(kUnknown));
+
+    // A style stream of the wrong length off the wire is refused whole.
+    const auto frame = [&](const std::vector<std::uint8_t>& styles) {
+        ByteWriter w;
+        w.u8(static_cast<std::uint8_t>(realm));
+        w.u16(4);
+        w.u16(3);
+        const std::vector<std::uint8_t> packedTiles = encodeTileRle(kSmallTiles);
+        w.u32(static_cast<std::uint32_t>(packedTiles.size()));
+        w.raw(packedTiles.data(), packedTiles.size());
+        const std::vector<std::uint8_t> packedStyles = encodeTileRle(styles);
+        w.u32(static_cast<std::uint32_t>(packedStyles.size()));
+        w.raw(packedStyles.data(), packedStyles.size());
+        return w;
+    };
+    {
+        const ByteWriter w = frame(wrongSize);
+        Terrain client;
+        Realm got = Realm::Overworld;
+        std::string error;
+        ByteReader r(w.data(), w.size());
+        CHECK(!readMapGrid(r, client, got, error));
+        CHECK(!error.empty());
+        CHECK(!client.hasMap(realm));
+    }
+    // While a value that used to be "a mask with a bit above kEdgeWest" is a
+    // skin now, and is accepted.
+    {
+        std::vector<std::uint8_t> skinned = kSmallEdges;
+        skinned[1] = kEdgeMaskMax + 1;   // skin 1, no edges
+        const ByteWriter w = frame(skinned);
+        Terrain client;
+        Realm got = Realm::Overworld;
+        std::string error;
+        ByteReader r(w.data(), w.size());
+        CHECK(readMapGrid(r, client, got, error));
+        CHECK_EQ(int(client.skinAt(1, 0, realm)), 1);
+        CHECK_EQ(int(client.edgeMaskAt(1, 0, realm)), 0);
     }
 }
 
-TEST(the_jagged_outline_is_deterministic_and_edge_specific) {
-    // Deterministic in the tile coordinates alone: the client draws this
-    // outline and the server collides with it, in different processes.
-    const JaggedEdge& first = jaggedEdge(11, 23, 0);
-    const JaggedEdge copy = first;
-    // Force the cache to churn past this entry, then ask again.
-    for (int i = 0; i < 200; ++i) jaggedEdge(i, i + 7, i & 3);
-    const JaggedEdge& again = jaggedEdge(11, 23, 0);
-    for (std::size_t i = 0; i < again.size(); ++i) {
-        CHECK_NEAR(again[i].t, copy[i].t, 1e-12);
-        CHECK_NEAR(again[i].offset, copy[i].offset, 1e-12);
-    }
+TEST(a_body_resting_against_a_wall_stops_at_the_flat_face) {
+    // A tile collides as its plain rectangle: the drawn edge lies inside it,
+    // so a body pressed into a wall comes to rest exactly one radius (plus
+    // the resolver's epsilon) off the tile's geometric face, on every side.
+    Terrain t;
+    for (int ty = 0; ty < kTilesPerAxis; ++ty) t.setTile(10, ty, Tile::Wall);   // x in [3000, 3300)
+    const double radius = 20.0;
 
-    // The four sides of one tile must not share a sequence, or every wall
-    // would wear the same silhouette on all four faces.
-    const JaggedEdge& top = jaggedEdge(11, 23, 0);
-    const JaggedEdge& left = jaggedEdge(11, 23, 2);
-    bool differs = false;
-    for (std::size_t i = 0; i < top.size(); ++i) {
-        if (std::fabs(top[i].offset - left[i].offset) > 1e-9) differs = true;
+    const Vec2 fromWest = t.resolveCircle({3000.0 - 15.0, 5000.0}, radius, Realm::Overworld);
+    CHECK_NEAR(fromWest.x, 3000.0 - radius, 0.02);
+    CHECK_NEAR(fromWest.y, 5000.0, 1e-9);
+    const Vec2 fromEast = t.resolveCircle({3300.0 + 15.0, 5000.0}, radius, Realm::Overworld);
+    CHECK_NEAR(fromEast.x, 3300.0 + radius, 0.02);
+    CHECK_NEAR(fromEast.y, 5000.0, 1e-9);
+    // Already clear by a hair: left exactly where it is.
+    const Vec2 clear = t.resolveCircle({3000.0 - radius - 0.5, 5000.0}, radius, Realm::Overworld);
+    CHECK_NEAR(clear.x, 3000.0 - radius - 0.5, 1e-12);
+
+    // The styles are a renderer's question. The same map with every wall
+    // wearing every edge, in a biome skin, resolves to the very same point.
+    std::vector<std::uint8_t> tiles(t.tiles(), t.tiles() + t.tileCount());
+    std::vector<std::uint8_t> styles(tiles.size(), 0);
+    for (std::size_t i = 0; i < tiles.size(); ++i) {
+        if (tiles[i] == static_cast<std::uint8_t>(Tile::Wall)) styles[i] = makeStyle(kUnknown, kEdgeMaskMax);
     }
-    CHECK(differs);
+    Terrain edged;
+    CHECK(edged.setTiles(tiles, kTilesPerAxis, kTilesPerAxis, Realm::Overworld, styles));
+    CHECK_EQ(int(edged.edgeMaskAt(10, 16)), int(kEdgeMaskMax));
+    CHECK_EQ(int(edged.skinAt(10, 16)), int(kUnknown));
+    const Vec2 withEdges = edged.resolveCircle({3000.0 - 15.0, 5000.0}, radius, Realm::Overworld);
+    CHECK_NEAR(withEdges.x, fromWest.x, 1e-12);
+    CHECK_NEAR(withEdges.y, fromWest.y, 1e-12);
+    const Terrain::WallResolution wall = edged.resolveWall({3000.0 - 15.0, 5000.0}, radius, Realm::Overworld);
+    CHECK(wall.collided);
+    CHECK(!wall.unresolved);
+    CHECK_NEAR(wall.position.x, fromWest.x, 1e-12);
 }
 
 TEST(a_substep_cannot_carry_a_centre_past_a_tiles_effective_midline) {
-    // Detection inflates a tile by the jagged protrusion and the scan buffer,
-    // so the midline that flips least-penetration ejection to the FAR face --
-    // a teleport through the wall -- sits that much inside the geometric one.
-    // This is TypeScript's MAX_STEP_HARD, and the reason it is not tileSize/2.
-    CHECK(kMaxSubstepLength <= kTileSize * 0.5 - kJaggedMaxProtrusion - kCollisionScanBuffer);
+    // The resolver ejects an embedded centre through the tile's NEAREST face,
+    // so a substep that crosses a tile's midline flips it to the FAR face -- a
+    // teleport through the wall. Detection reaches the scan buffer past the
+    // rectangle, so the midline that matters sits that much inside the
+    // geometric one. This is TypeScript's MAX_STEP_HARD less the drawn
+    // outline's protrusion it used to subtract, now that a tile collides as
+    // its flat rectangle.
+    CHECK_NEAR(kMaxSubstepLength, kTileSize * 0.5 - kCollisionScanBuffer, 1e-12);
     CHECK(kMaxSubstepLength > 0.0);
+    CHECK(kMaxSubstepLength < kTileSize * 0.5);
 }

@@ -205,18 +205,18 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
 
     rng_.reseed(config.worldSeed);
     terrain_ = std::make_unique<Terrain>();
-    // The Tiled map the game is authored in, or the TypeScript bundle built
-    // from it -- whichever this data directory was staged with.
-    const std::string mapPath = worldMapPath(config.dataDir);
-    if (!terrain_->loadWorldMap(mapPath, errorOut)) return false;
-    // The annotation layer is optional: without it every spawn falls back to
-    // the middle of the map, which is survivable for a server operator to see
-    // in a warning but not worth refusing to start over.
-    std::string mapWarning;
-    if (!mapData_.loadWorldMap(mapPath, mapWarning)) {
-        std::fprintf(stderr, "[map] %s; spawns will fall back to the map centre\n",
-                     mapWarning.c_str());
+    // Every map the data directory stages, in manifest order: each one gets a
+    // realm, a tile grid inside `terrain_` and an annotation layer inside
+    // `worldMaps_`. A map that will not load IS fatal -- a teleporter aimed at
+    // a missing map would drop players into a realm of solid wall -- while an
+    // annotation layer that will not load is only reported.
+    if (!worldMaps_.load(config.dataDir, terrain_.get(), errorOut)) return false;
+    for (const std::string& warning : worldMaps_.warnings()) {
+        std::fprintf(stderr, "[map] %s\n", warning.c_str());
     }
+    // The broadphase was built before the maps were: its layers are sized to
+    // the default world until it is told what shape each realm really is.
+    grid_.sizeToRealms(*terrain_);
 
     movement_ = std::make_unique<MovementSystem>();
     // The AI caches queries against one world and wanders from its own
@@ -248,8 +248,19 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // back to behaviour with no map at all, which is what every unit test gets.
     // In production that would silently cost the spawn rectangles, the biome
     // tiers and every teleporter on the map, so it is wired here, once.
-    spawning_->mapData = &mapData_;
-    movement_->mapData = &mapData_;
+    spawning_->worldMaps = &worldMaps_;
+    movement_->worldMaps = &worldMaps_;
+    // A pad leads to another map, which is a realm change: a new tile grid on
+    // the wire and a cleared view on the client. Only the connection layer can
+    // do that, so the movement pass reports the jump and this carries it out.
+    movement_->onTeleport = [this](Entity entity, Realm realm, Vec2 position) {
+        moveEntityToRealm(entity, realm, position);
+    };
+    // Bots exist to populate the OVERWORLD, and their controller is written
+    // against it: its flow field, its ray casts and its broadphase queries
+    // all read that one map. A bot carried through a pad would steer around
+    // walls it is not standing among, so pads simply do not take bots.
+    movement_->takesTeleporters = [this](Entity entity) { return botForEntity(entity) == nullptr; };
     loot_->terrain = terrain_.get();
 
     // A revived flower has to be un-announced to its own client, and only the
@@ -581,9 +592,13 @@ void GameServer::announceBossSpawns() {
             net::Connection* connection = listener_.find(session.connection);
             if (connection == nullptr) continue;
             // Personalised: a player standing in the boss's own section is told
-            // it spawned, everyone else that it spawned "somewhere".
+            // it spawned, everyone else that it spawned "somewhere". The boss
+            // pass places on the overworld alone, and a section is that map's
+            // grid: a flower in another realm is never "here", whatever its
+            // numbers say.
             const Transform* transform = world_.tryGet<Transform>(session.entity);
-            const bool here = transform != nullptr && sectionAt(transform->position) == section;
+            const bool here = transform != nullptr && transform->realm == Realm::Overworld &&
+                              sectionAt(transform->position) == section;
             sendChatTo(*connection, net::ChatChannel::System, "",
                        std::string("<b style=\"color: ") + colorAttribute + ";\">A " + tier +
                            " " + name + " has spawned" + (here ? "" : " somewhere") + "!</b>");
@@ -1186,7 +1201,7 @@ void GameServer::broadcastChat(net::ChatChannel channel, const std::string& auth
 void GameServer::handleJoin(Session& session, net::Connection& connection, ByteReader& reader) {
     const double width = reader.u16();
     const double height = reader.u16();
-    const std::string biome = reader.str();
+    const std::string where = reader.str();
     const std::string name = reader.str();
     if (!reader.ok()) return;
     if (!session.authenticated()) return;
@@ -1196,23 +1211,34 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     // the name the player typed rather than reverting to their login.
     session.displayName = sanitizePlayerName(name);
 
-    // Remembered on the session so a respawn returns to the biome the player
-    // chose, rather than quietly sending them back to the beginner ground.
-    // A biome the map has no safe area for is dropped here, once, with a
+    // Remembered on the session so a respawn returns to the spawn point the
+    // player chose, rather than quietly sending them back to the beginner
+    // ground. A choice no staged map defines is dropped here, once, with a
     // notice -- rather than silently every time they die.
-    session.spawnBiome.clear();
-    if (biome == kArenaSpawnChoice || biome == kMazeSpawnChoice) {
-        // The two destinations that are not on the map at all: each is a realm
-        // of its own (realm.h), and the biome lookup has nothing to say about
-        // either.
-        session.spawnBiome = biome;
-    } else if (!biome.empty() && biome != "default") {
-        Vec2 probe;
-        if (mapData_.spawnInBiome(biome, rng_, *terrain_, probe)) {
-            session.spawnBiome = biome;
+    session.spawnChoice.clear();
+    if (where == kArenaSpawnChoice || where == kMazeSpawnChoice) {
+        // The two destinations that are not on any map at all: each is a realm
+        // of its own (realm.h), generated rather than authored, so there is no
+        // spawn rectangle to look up.
+        session.spawnChoice = where;
+    } else if (!where.empty() && where != "default") {
+        if (worldMaps_.choice(where) != nullptr) {
+            session.spawnChoice = where;
+        } else if (worldMaps_.door(where) != nullptr) {
+            // A door that exists but is not offered: a biome sublevel's,
+            // reached through a pad from the biome's main area. An admin may
+            // still name it -- that is how a screenshot rig reaches
+            // garden_3 -- but anyone else starts where the picker would have
+            // let them.
+            if (session.admin) {
+                session.spawnChoice = where;
+            } else {
+                sendNotice(connection, net::NoticeSeverity::Warning,
+                           "That door is reached from its biome; starting at the default.");
+            }
         } else {
             sendNotice(connection, net::NoticeSeverity::Warning,
-                       "No safe ground in that biome; starting in the garden.");
+                       "That spawn point is not on this server; starting at the default.");
         }
     }
 
@@ -1238,14 +1264,13 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     w.u32(world_.get<NetId>(entity).value);
     w.position(world_.get<Transform>(entity).position);
     w.u32(tick_);
-    // Which space the body is in, and which maze the server is playing: the
-    // client builds the same walls from the day number alone.
-    w.u8(static_cast<std::uint8_t>(world_.get<Transform>(entity).realm));
+    // Which maze the server is playing: the client builds the same walls from
+    // the day number alone.
     w.i64(activeMaze().day());
-    // This is the exact decoded TypeScript wall grid. Forty kilobytes once per
-    // join is comfortably below the frame cap and cannot drift from collision.
-    w.u16(static_cast<std::uint16_t>(terrain_->tileCount()));
-    w.raw(terrain_->tiles(), terrain_->tileCount());
+    // The map the body was put in: which realm, how big it is, and its exact
+    // grid. Encoded, so a large map does not sit on the socket's backpressure
+    // ceiling; it is the same grid collision runs on and cannot drift from it.
+    writeMapGrid(w, *terrain_, world_.get<Transform>(entity).realm);
     connection.send(w);
     // The client's profile is the account's, and a body in the ring plays on
     // the arena kit instead; the maze body is on its own track. Restated here
@@ -3043,12 +3068,33 @@ void GameServer::handleRespawn(Session& session) {
     // death means the grantee keeps it while they are looking at the death
     // card, which is where the reference leaves it too.
     revokeTempAdmin(session.connection);
+    // The map the client is still drawing. A corpse keeps its realm until it
+    // is replaced, so this is what the client last heard; a session with no
+    // body has told its client nothing since the join, and is restated
+    // regardless.
+    bool corpseRealmKnown = false;
+    Realm corpseRealm = Realm::Overworld;
     if (session.playing() && world_.isAlive(session.entity)) {
         Health* health = world_.tryGet<Health>(session.entity);
         if (health && health->alive()) return;   // not actually dead
+        if (const Transform* corpse = world_.tryGet<Transform>(session.entity)) {
+            corpseRealmKnown = true;
+            corpseRealm = corpse->realm;
+        }
         despawnPlayer(session, false);
     }
-    spawnPlayer(session);
+    const Entity reborn = spawnPlayer(session);
+    // A flower that died in a map it teleported into comes back where its
+    // spawn choice says -- usually another map. The snapshot stream restates
+    // the body but never the realm, so the client would keep drawing the map
+    // it died on under a body standing somewhere else: the same message a
+    // pad sends, for the same reason.
+    if (reborn != NULL_ENTITY) {
+        const Transform* transform = world_.tryGet<Transform>(reborn);
+        if (transform != nullptr && (!corpseRealmKnown || transform->realm != corpseRealm)) {
+            sendRealmChange(session, transform->position);
+        }
+    }
     // A fresh arena run has a fresh kit; the same restatement the join makes.
     if (net::Connection* connection = listener_.find(session.connection)) {
         sendProfile(session, *connection);
@@ -3091,10 +3137,11 @@ void GameServer::handlePing(net::Connection& connection, ByteReader& reader) {
 // Player lifecycle
 // ---------------------------------------------------------------------------
 
-void GameServer::collectSpawnBlockers(std::vector<MobDisc>& out) const {
+void GameServer::collectSpawnBlockers(Realm realm, std::vector<MobDisc>& out) const {
     out.clear();
     Query<MobTag, Transform, Body> mobs{const_cast<World&>(world_)};
     mobs.each([&](Entity, MobTag&, Transform& transform, Body& body) {
+        if (transform.realm != realm) return;
         out.push_back({transform.position, body.radius});
     });
 }
@@ -3135,10 +3182,20 @@ Entity GameServer::spawnPlayer(Session& session) {
         spawn = terrain_->findOpenSpawn(rng_, activeMaze().spawn(), kMazeCellSize * 0.3, realm);
     } else {
         std::vector<MobDisc> blockers;
-        collectSpawnBlockers(blockers);
-        if (session.spawnBiome.empty() ||
-            !mapData_.spawnInBiome(session.spawnBiome, rng_, *terrain_, spawn, &blockers)) {
-            spawn = mapData_.defaultSpawn(rng_, *terrain_, &blockers);
+        collectSpawnBlockers(realm, blockers);
+        const SpawnChoice* choice = chosenDoor(session);
+        const MapData* map = worldMaps_.forRealm(realm);
+        // The chosen rectangle first; its own map's default when the rectangle
+        // is walled over or crowded; the overworld's default when the player
+        // chose nothing at all.
+        if (choice == nullptr || map == nullptr ||
+            !map->spawnAt(worldMaps_.maps()[static_cast<std::size_t>(worldMapSlot(realm))]
+                              .elements()[static_cast<std::size_t>(choice->element)]
+                              .spawnId,
+                          rng_, *terrain_, spawn, &blockers)) {
+            const MapData* fallback = map != nullptr ? map : worldMaps_.forRealm(Realm::Overworld);
+            spawn = fallback != nullptr ? fallback->defaultSpawn(rng_, *terrain_, &blockers)
+                                        : terrain_->spawnPoint(realm);
         }
     }
 
@@ -3312,10 +3369,95 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
 // Realms: the arena run and the maze track
 // ---------------------------------------------------------------------------
 
+void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
+    if (!world_.isAlive(entity)) return;
+    Transform* transform = world_.tryGet<Transform>(entity);
+    if (transform == nullptr) return;
+    if (transform->realm == realm && distanceSq(transform->position, position) < 1.0) return;
+
+    const Realm from = transform->realm;
+    const bool sameRealm = from == realm;
+    transform->realm = realm;
+    transform->position = position;
+    // Velocity and knockback describe where the body WAS going, in a space it
+    // is no longer in. A flower that arrives still carrying the impulse that
+    // pushed it onto the pad arrives sliding.
+    if (Motion* motion = world_.tryGet<Motion>(entity)) motion->velocity = {0, 0};
+    if (Knockback* knockback = world_.tryGet<Knockback>(entity)) knockback->impulse = {0, 0};
+    // A pad the flower is standing on at the far end must not grab it back on
+    // the very next tick, and its charge-up belongs to the map it was on.
+    if (TeleporterState* pads = world_.tryGet<TeleporterState>(entity)) {
+        pads->pad = -1;
+        pads->enteredAtMillis = 0;
+        pads->cooldownUntilMillis = clockMillis_ + kTeleporterCooldownMillis;
+    }
+
+    // A pad that leads somewhere on the SAME map is a jump, not a move
+    // between worlds: the grid under the body has not changed, so there is
+    // nothing to send and nothing to clear. The kit is re-placed around the
+    // ring by its own system, and the client's snap-distance rule cuts the
+    // interpolation on its own, exactly as it does for teleportEntity().
+    if (sameRealm) return;
+
+    // The kit comes too. A petal or a pet left behind in the old realm is not
+    // merely invisible: it is in another coordinate space, so it never reaches
+    // its owner's ring again, it is streamed to nobody, and it goes on
+    // colliding with whatever it was left standing next to.
+    //
+    // One pass over the world rather than a per-owner index, because this runs
+    // when somebody takes a teleporter and not per tick.
+    Query<Transform> everything{world_};
+    everything.each([&](Entity other, Transform& at) {
+        if (other == entity) return;
+        if (at.realm != from) return;
+        Entity owner = NULL_ENTITY;
+        if (const PetalInstance* petal = world_.tryGet<PetalInstance>(other)) owner = petal->owner;
+        else if (const Pet* pet = world_.tryGet<Pet>(other)) owner = pet->owner;
+        else if (const Projectile* shot = world_.tryGet<Projectile>(other)) owner = shot->creditTo;
+        if (owner != entity) return;
+        at.realm = realm;
+        // Petals are re-placed around the ring by their own system on the next
+        // tick; putting them on the flower now keeps them out of whatever the
+        // destination has at their old coordinates in the meantime.
+        at.position = position;
+    });
+
+    // The client has no map file: it has to be SENT the destination's grid, or
+    // it draws the map it arrived from underneath a body standing somewhere
+    // else entirely.
+    Session* session = sessionForEntity(entity);
+    if (session == nullptr) return;   // a bot: nothing to tell
+    session->realm = realm;
+    sendRealmChange(*session, position);
+}
+
+void GameServer::sendRealmChange(Session& session, Vec2 position) {
+    views_[session.connection].reset();
+    net::Connection* connection = listener_.find(session.connection);
+    if (connection == nullptr) return;
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::RealmChange));
+    w.position(position);
+    writeMapGrid(w, *terrain_, session.realm);
+    connection->send(w);
+}
+
+const SpawnChoice* GameServer::chosenDoor(const Session& session) const {
+    const SpawnChoice* door = worldMaps_.door(session.spawnChoice);
+    if (door == nullptr) return nullptr;
+    // Checked on every body, not only at the join: a lent console is lent
+    // for one life, and a sublevel door named on it is not kept past it.
+    if (!door->pickable && !session.admin) return nullptr;
+    return door;
+}
+
 Realm GameServer::spawnRealmFor(const Session& session) const {
-    if (session.spawnBiome == kArenaSpawnChoice) return Realm::Arena;
-    if (session.spawnBiome == kMazeSpawnChoice) return Realm::Maze;
-    return Realm::Overworld;
+    if (session.spawnChoice == kArenaSpawnChoice) return Realm::Arena;
+    if (session.spawnChoice == kMazeSpawnChoice) return Realm::Maze;
+    // A spawn point carries the map it is on, so choosing one is how a player
+    // joins straight into a map other than the overworld.
+    const SpawnChoice* choice = chosenDoor(session);
+    return choice != nullptr ? choice->realm : Realm::Overworld;
 }
 
 PlayerRecord& GameServer::liveRecord(Session& session) {

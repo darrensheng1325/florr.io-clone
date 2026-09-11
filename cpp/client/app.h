@@ -147,15 +147,32 @@ private:
 
     void drawLogin(Canvas&, double time);
     void drawLobby(Canvas&, double time);
-    /// The lobby's name field, Ready button and spawn-biome row, laid out once
-    /// so the interaction pass and the draw pass cannot disagree about where
-    /// they are.
+    /// The lobby's name field, Ready button and the two-row spawn picker,
+    /// laid out once so the interaction pass and the draw pass cannot
+    /// disagree about where they are. `tabs` is one rectangle per entry of
+    /// pickerTabs(); `doors` is one per door of the SELECTED tab, in the
+    /// order that tab's `choices` lists them.
     struct LobbyLayout {
         Rect name;
         Rect ready;
-        std::vector<Rect> biomes;
+        std::vector<Rect> tabs;
+        std::vector<Rect> doors;
     };
     LobbyLayout lobbyLayout(int viewWidth, int viewHeight) const;
+    /// One button of the picker's first row: a biome, or one of the three
+    /// synthetic choices that stand alone. `choices` indexes spawnChoices_.
+    struct PickerTab {
+        std::string id;
+        std::string label;
+        std::uint32_t color = 0xCCCCCCu;
+        std::vector<std::size_t> choices;
+    };
+    /// The first row, in order: Default, every distinct biome the doors are
+    /// filed under (in spawnChoices_ order), then the PVP arena and the maze.
+    std::vector<PickerTab> pickerTabs() const;
+    /// The tab a spawn choice id is filed under -- "default" for the empty
+    /// choice and for any id no staged map defines.
+    std::string pickerTabOf(const std::string& choiceId) const;
     /// The title screen's chat line, bottom-left, under the icon column.
     static Rect titleChatBox(int viewWidth, int viewHeight);
     void drawTitleChat(Canvas&, double time);
@@ -172,7 +189,7 @@ private:
     /// without a settings file.
     bool statsVisible() const;
     /// Every biome the player may start in, "default" first.
-    const std::vector<std::string>& spawnChoices() const { return spawnChoices_; }
+    const std::vector<SpawnChoice>& spawnChoices() const { return spawnChoices_; }
     /// Draws the scrolling title texture behind all non-game screens.
     void drawTitleBackground(Canvas&, double time);
     /// Steps and draws the petals drifting over that texture.
@@ -341,12 +358,26 @@ private:
     /// picker changes which one tiles behind the menu, exactly as choosing a
     /// biome does in the browser build.
     std::unordered_map<std::string, std::shared_ptr<SvgDocument>> titleBackgrounds_;
-    const SvgDocument* titleBackground(const std::string& biomeName);
+    const SvgDocument* titleBackground(const std::string& backdrop);
     WorldRenderer renderer_;
     /// The map's annotation layer. The client reads the same bundle the server
     /// does, and needs only one thing from it: which biomes exist to be picked.
-    MapData mapData_;
-    std::vector<std::string> spawnChoices_;
+    /// Every staged map's ANNOTATION layer -- no tile grids, which arrive over
+    /// the wire. Two things come out of it: the spawn picker's row, and the
+    /// minimap's bands and teleporter dots for whichever map the flower is
+    /// standing on.
+    WorldMaps worldMaps_;
+    /// Every place the picker can name, in load order. `default`, `pvp` and
+    /// `maze` are synthesised at the front -- the first is "wherever the
+    /// server puts me" and the other two are realms with no map file to draw
+    /// a rectangle on -- and everything after them is a player spawn
+    /// rectangle somebody drew. The picker files them under tabs by biome;
+    /// see pickerTabs().
+    std::vector<SpawnChoice> spawnChoices_;
+    /// Which tab of the picker is open. Not persisted: it is derived from the
+    /// saved spawn choice when the client starts and only changes by clicking,
+    /// so the settings file keeps naming a door and never a row.
+    std::string pickerTab_ = "default";
 
     Screen screen_ = Screen::Connecting;
     double timeSeconds_ = 0;
@@ -475,6 +506,10 @@ private:
     /// scan is four and a half thousand cells and does not belong in a frame.
     std::unique_ptr<Canvas> minimapStatic_;
     int minimapSection_ = -1;
+    /// The realm that section index counts in: every world map has its own
+    /// section grid, and section 0 of the sewers is not section 0 of the
+    /// overworld.
+    Realm minimapRealm_ = Realm::Overworld;
     /// Whether the cached bake has the ALT spawn bands in it.
     bool minimapGlow_ = false;
     /// The canvas pixels per design unit the bake was rasterised at. Part of

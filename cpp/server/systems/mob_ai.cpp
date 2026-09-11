@@ -351,7 +351,8 @@ Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 f
     return NULL_ENTITY;
 }
 
-Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, double radius) const {
+Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, Realm realm,
+                                    double radius) const {
     // Bounty is the ledger combat already keeps of who hurt this mob, so
     // working out who to turn on is a walk over a handful of entries rather
     // than another broadphase query -- which is what lets retaliation happen on
@@ -366,6 +367,7 @@ Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, double
         if (!entityUsable(world, share.player)) continue;
         const Transform* transform = world.tryGet<Transform>(share.player);
         if (transform == nullptr) continue;
+        if (transform->realm != realm) continue;
         const double gapSq = distanceSq(from, transform->position);
         // Nearest rather than biggest contributor: the ledger accumulates over
         // the mob's entire life, so the heaviest hitter is often someone who
@@ -429,7 +431,7 @@ void MobAiSystem::collectChain(World& world, Entity self, std::vector<Entity>& o
     }
 }
 
-Entity MobAiSystem::freshProvoker(World& world, Entity self, Vec2 from) {
+Entity MobAiSystem::freshProvoker(World& world, Entity self, Vec2 from, Realm realm) {
     collectChain(world, self, chainScratch_);
 
     double total = 0.0;
@@ -458,7 +460,7 @@ Entity MobAiSystem::freshProvoker(World& world, Entity self, Vec2 from) {
     Entity best = NULL_ENTITY;
     double bestSq = kMobTargetRetainRadius * kMobTargetRetainRadius;
     for (const Entity part : chainScratch_) {
-        const Entity found = nearestAttacker(world, part, from, kMobTargetRetainRadius);
+        const Entity found = nearestAttacker(world, part, from, realm, kMobTargetRetainRadius);
         if (found == NULL_ENTITY) continue;
         const Transform* at = world.tryGet<Transform>(found);
         if (at == nullptr) continue;
@@ -842,7 +844,7 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
     // own targets, inside its own range -- so sniping one from beyond that
     // range leaves it wandering rather than charging the horizon.
     if (ai.kind == AiKind::Neutral && ai.target == NULL_ENTITY) {
-        ai.target = freshProvoker(world, self, transform.position);
+        ai.target = freshProvoker(world, self, transform.position, transform.realm);
     }
 
     // Both halves run every tick. Keeping a target is a pointer chase, a

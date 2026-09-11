@@ -26,23 +26,25 @@ void ModeSpawner::resolvePools(const ContentRegistry& content) {
     const MazeBiome biome = activeMaze().biome();
     if (!mazePoolReady_ || mazePoolBiome_ != biome) {
         mazePool_.clear();
-        // The maze borrows the roster of the overworld section its biome is
-        // drawn from: a garden maze is full of garden mobs.
-        const int section = kMazeBiomeSections[static_cast<std::size_t>(biome)];
-        const std::uint16_t bit = static_cast<std::uint16_t>(1u << section);
-        for (std::uint16_t i = 0; i < content.mobCount(); ++i) {
-            const MobConfig& config = content.mob(i);
-            if ((config.sectionMask & bit) == 0) continue;
+        // The maze borrows the mob GROUP its biome is drawn from: a garden
+        // maze is full of garden mobs, and it says so by name rather than by
+        // an index into a 3x3 grid the maze has nothing to do with.
+        const std::uint16_t group = content.mobGroupIndex(
+            kMazeBiomeGroups[static_cast<std::size_t>(biome)]);
+        for (const MobGroupMember& member : content.mobGroup(group).members) {
+            const MobConfig& config = content.mob(member.mob);
             bool excluded = false;
             for (const char* id : kMazeExcludedMobs) {
                 if (config.id == id) excluded = true;
             }
             // A body segment is only ever laid out behind its head.
             for (std::uint16_t h = 0; h < content.mobCount() && !excluded; ++h) {
-                if (content.mob(h).segmentBodyIndex == i) excluded = true;
+                if (content.mob(h).segmentBodyIndex == member.mob) excluded = true;
             }
             if (excluded) continue;
-            mazePool_.push_back({i, config.spawnWeight > 0.0 ? config.spawnWeight : 1.0});
+            // The group's own weight, so a mob that is rare in the garden is
+            // rare in a garden maze too.
+            mazePool_.push_back({member.mob, member.weight > 0.0 ? member.weight : 1.0});
         }
         mazePoolBiome_ = biome;
         mazePoolReady_ = true;

@@ -241,7 +241,10 @@ TEST(every_shipped_entry_parses_into_something_usable) {
         CHECK(m.health >= 0.0);
         CHECK(m.size >= 0.0);
         CHECK(m.speed >= 0.0);
-        CHECK(m.sectionMask < (1u << kSectionCount));
+        for (const MobGroupMember& member : m.groups) {
+            CHECK(member.group < r.mobGroupCount());
+            CHECK_EQ(member.mob, i);
+        }
         CHECK_EQ(r.mobIndex(m.id), i);
     }
     for (std::uint16_t i = 0; i < r.petalCount(); ++i) {
@@ -433,16 +436,17 @@ TEST(min_rarity_makes_a_mob_unspawnable_below_its_tier) {
     const std::uint16_t centipede = r.mobIndex("evil_centipede");
     CHECK(centipede != kInvalidIndex);
     CHECK_EQ(rarityIndex(r.mob(centipede).minRarity), rarityIndex(Rarity::Rare));
-    CHECK(r.mob(centipede).sectionMask != 0);   // it does belong to a section
+    CHECK(!r.mob(centipede).groups.empty());   // it does belong to a group
 
     CHECK(!r.mobStats(centipede, Rarity::Common).spawnable());
     CHECK(!r.mobStats(centipede, Rarity::Uncommon).spawnable());
     CHECK(r.mobStats(centipede, Rarity::Rare).spawnable());
     CHECK(r.mobStats(centipede, Rarity::Apex).spawnable());
-    CHECK_EQ(r.mobStats(centipede, Rarity::Common).sectionMask, std::uint16_t(0));
-    CHECK_EQ(r.mobStats(centipede, Rarity::Rare).sectionMask, r.mob(centipede).sectionMask);
+    CHECK(!r.mobStats(centipede, Rarity::Common).ambient);
+    CHECK(r.mobStats(centipede, Rarity::Rare).ambient);
 
-    // An empty `section` list is its own kind of unspawnable and is unaffected.
+    // A mob in no group at all is its own kind of unspawnable and is
+    // unaffected.
     const std::uint16_t spawner = r.mobIndex("item_spawner");
     CHECK(!r.mobStats(spawner, Rarity::Apex).spawnable());
 }
@@ -651,7 +655,7 @@ TEST(synthetic_dirty_values_are_sanitised) {
         "name": "Wreck", "description": "d", "color": "#112233", "image": "<svg/>",
         "damage": -25, "health": -50, "size": -3, "speed": -7, "cooldown": 99999999,
         "range": -100, "visual_scale": 0, "ai_type": "telepathic",
-        "section": [0, 99, "two"], "spawn_weight": -1,
+        "groups": {"garden": 1, "": 2, "swamp": -1}, "spawn_weight": -1,
         "poison": -1, "poisonDuration": -5,
         "initial_spawns": ["ghost", "wreck"],
         "spawn_waves": [["wreck"], "not a wave"],
@@ -661,7 +665,7 @@ TEST(synthetic_dirty_values_are_sanitised) {
       "huge": {
         "name": "Huge", "description": "d", "color": "not a colour", "image": "<svg/>",
         "damage": 1e400, "health": 1e400, "size": 1e400, "speed": 1e400,
-        "cooldown": 1e400, "range": 1e400, "ai_type": "hostile", "section": [1],
+        "cooldown": 1e400, "range": 1e400, "ai_type": "hostile", "groups": ["desert"],
         "random_size": [4, 1]
       },
       "not_an_object": 7
@@ -703,10 +707,12 @@ TEST(synthetic_dirty_values_are_sanitised) {
     CHECK(wreck.cooldownMillis <= 600000.0);
     CHECK_NEAR(wreck.range, 0.0, 1e-12);
     CHECK(wreck.ai == AiKind::Neutral);           // an unknown behaviour
-    CHECK_EQ(wreck.sectionMask, std::uint16_t(1));// 99 and "two" dropped, 0 kept
+    // The nameless group is dropped and the negative weight repaired, so the
+    // mob keeps the two groups it legitimately named.
+    CHECK_EQ(wreck.groups.size(), std::size_t(2));
     CHECK_NEAR(wreck.poisonPerSecond, 0.0, 1e-12);
     CHECK(warned(r, "ai_type 'telepathic'"));
-    CHECK(warned(r, "section 99"));
+    CHECK(warned(r, "group with no name"));
 
     // Dangling references are dropped rather than kept as a bad index.
     CHECK_EQ(wreck.initialSpawns.size(), std::size_t(1));
@@ -823,7 +829,7 @@ TEST(malformed_or_empty_content_fails_cleanly) {
     Synthetic badXp;
     badXp.mobs = R"JSON({"a": {"name": "A", "health": 3, "damage": 1, "size": 1,
         "speed": 1, "cooldown": 1, "range": 1, "description": "", "color": "#fff",
-        "image": "<svg/>", "ai_type": "passive", "section": [0]}})JSON";
+        "image": "<svg/>", "ai_type": "passive", "groups": ["garden"]}})JSON";
     badXp.petals = R"JSON({"p": {"name": "P", "health": 3, "damage": 1, "size": 1,
         "cooldown": 1, "count": 1, "description": "", "color": "#fff", "image": "<svg/>"}})JSON";
     badXp.xp = "{ not json";
@@ -883,4 +889,49 @@ TEST(global_content_registry_loads_from_one_directory) {
     // A trailing slash names the same directory.
     CHECK(loadContent(dir + "/", error));
     CHECK_EQ(content().mobCount(), std::size_t(51));
+}
+
+TEST(the_content_hash_covers_the_staged_maps) {
+    // The handshake compares one number, and the client now draws pads, bands
+    // and its spawn picker from its OWN staged maps: a map that differs from
+    // the server's has to be refused there, so the maps are part of the hash.
+    const std::string dir = tempDir() + "/maps_hash";
+    mkdir(dir.c_str(), 0755);
+    std::string mobs, petals, xp;
+    CHECK(readText(mobsPath(), mobs));
+    CHECK(readText(petalsPath(), petals));
+    CHECK(readText(xpPath(), xp));
+    CHECK(writeText(dir + "/mobs.json", mobs));
+    CHECK(writeText(dir + "/petals.json", petals));
+    CHECK(writeText(dir + "/mob_xp.json", xp));
+    std::remove((dir + "/maps.json").c_str());
+
+    std::string error;
+    ContentRegistry plain;
+    CHECK(plain.load(dir, error));
+
+    // A manifest and the map it names change the hash; the same bytes again
+    // give the same hash; one byte in the map changes it once more.
+    const std::string tiny = R"({"type":"map","width":1,"height":1,"tilewidth":300,"tileheight":300,"tilesets":[],"layers":[]})";
+    CHECK(writeText(dir + "/maps.json", R"({"maps": [{"file": "tiny.tmj"}]})"));
+    CHECK(writeText(dir + "/tiny.tmj", tiny));
+    ContentRegistry withMaps;
+    CHECK(withMaps.load(dir, error));
+    CHECK(withMaps.contentHash() != plain.contentHash());
+    CHECK_EQ(withMaps.mobCount(), plain.mobCount());
+    ContentRegistry again;
+    CHECK(again.load(dir, error));
+    CHECK_EQ(again.contentHash(), withMaps.contentHash());
+
+    CHECK(writeText(dir + "/tiny.tmj", tiny + "\n"));
+    ContentRegistry edited;
+    CHECK(edited.load(dir, error));
+    CHECK(edited.contentHash() != withMaps.contentHash());
+
+    // Three explicit files, no directory: nothing to fold, as before.
+    ContentRegistry files;
+    CHECK(files.loadFiles(dir + "/mobs.json", dir + "/petals.json", dir + "/mob_xp.json", error));
+    CHECK_EQ(files.contentHash(), plain.contentHash());
+    std::remove((dir + "/maps.json").c_str());
+    std::remove((dir + "/tiny.tmj").c_str());
 }

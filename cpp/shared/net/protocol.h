@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 17;
+inline constexpr std::uint16_t kProtocolVersion = 20;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -109,10 +109,8 @@ enum class ServerMessage : std::uint8_t {
     AuthResult,         ///< u8 status(AuthStatus), str token, str username, str reason
     Profile,            ///< full account state: xp, level, stars, inventory, loadout,
                         ///< skins, the talent tree and the mob-kill ledger
-    JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, u8 realm, i64 mazeDay,
-                        ///< u16 tileCount, u8 tiles[]. `realm` is the coordinate
-                        ///< space the body was put in (realm.h) and decides what
-                        ///< the client draws under it; `mazeDay` is the maze the
+    JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, i64 mazeDay,
+                        ///< MapGrid (see below). `mazeDay` is the maze the
                         ///< server is playing, so the client builds the same
                         ///< walls without any of them going over the wire.
     Snapshot,           ///< see below
@@ -170,7 +168,43 @@ enum class ServerMessage : std::uint8_t {
                         ///< Sent when it rotates; JoinAccepted carries the same
                         ///< number for a client that has just arrived. The
                         ///< browser's `mazeInfo {day}`.
+    RealmChange,        ///< f32 x, f32 y, MapGrid. The body moved to another
+                        ///< REALM -- through a teleporter, which now leads to
+                        ///< another map. The client clears its view, adopts the
+                        ///< grid and snaps its camera; nothing else about the
+                        ///< body changed, so the snapshot stream carries on.
 };
+
+// ---------------------------------------------------------------------------
+// MapGrid
+// ---------------------------------------------------------------------------
+//
+// One realm's tile grid, as JoinAccepted and RealmChange both carry it:
+//
+//   u8  realm          which coordinate space these tiles are (realm.h)
+//   u16 cols
+//   u16 rows           the map's own dimensions -- maps are not all one size
+//   u32 byteCount
+//   u8  bytes[]        the tile ids, run-length encoded (terrain.h)
+//   u32 styleByteCount
+//   u8  styleBytes[]   the STYLE bytes, one per cell in the same order and the
+//                      same encoding; any value 0..255 (constants.h: the skin
+//                      in the high nibble, the edge mask -- or, for an air
+//                      cell, the floor-decoration variant -- in the low)
+//
+// The dimensions travel WITH the tiles because the client has no map file to
+// read them out of, and a grid interpreted at the wrong width is a world
+// sheared diagonally. The encoding is there because a raw grid of the shipped
+// world is forty kilobytes -- already close to the socket's backpressure
+// ceiling, and a larger map would sail past it.
+//
+// The styles are a second stream rather than bits packed into the tile byte
+// so the tile stream stays the one map_bundle.ts is encoded in. They travel
+// at all because the client draws them and has no map file to read them out
+// of either; a map authored without variants sends a stream of zeros, which
+// the encoding folds to a few bytes. A generated realm (the arena, the maze)
+// sends 0x0 with both streams empty. (Version 20: the second stream widened
+// from a 0..15 edge mask to the full style byte.)
 
 /// What a notification announces. The stripe down a card's left edge is the
 /// only thing that distinguishes them, and the browser sends the same five as

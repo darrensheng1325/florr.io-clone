@@ -88,7 +88,7 @@ struct Fixture {
 
     /// A full-height wall at tile column `tx`, i.e. x in [tx*300, tx*300+300).
     void wallColumn(int tx) {
-        for (int ty = 0; ty < Terrain::tilesPerAxis(); ++ty) terrain.setTile(tx, ty, Tile::Wall);
+        for (int ty = 0; ty < terrain.tileRows(); ++ty) terrain.setTile(tx, ty, Tile::Wall);
     }
 };
 
@@ -186,7 +186,7 @@ TEST(an_unset_or_corrupt_speed_modifier_means_unmodified) {
 
 TEST(water_blocks_a_player_like_a_wall) {
     Fixture fx;
-    for (int ty = 0; ty < Terrain::tilesPerAxis(); ++ty) {
+    for (int ty = 0; ty < fx.terrain.tileRows(); ++ty) {
         fx.terrain.setTile(10, ty, Tile::Water);
     }
     const Entity player = fx.spawnPlayer({2000, 5000});
@@ -315,9 +315,10 @@ TEST(a_player_driven_at_a_wall_stops_against_it) {
 
     const Vec2 at = fx.positionOf(player);
     CHECK(!fx.terrain.blocked(at, Realm::Overworld));
-    // Resting against the same deterministic jagged face TypeScript draws.
+    // Resting against the tile's flat face: the edge a wall is drawn with
+    // lies inside the tile, so the rectangle is where the body stops.
     CHECK(at.x <= 3000.0 - kPlayerBaseRadius + 1e-6);
-    CHECK(at.x >= 3000.0 - kPlayerBaseRadius - 20.1);
+    CHECK(at.x >= 3000.0 - kPlayerBaseRadius - 0.1);
     CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 1.0);
 }
 
@@ -461,7 +462,7 @@ TEST(a_mob_moves_at_the_velocity_the_ai_gave_it) {
 
 TEST(water_blocks_a_mob_like_a_wall) {
     Fixture fx;
-    for (int ty = 0; ty < Terrain::tilesPerAxis(); ++ty) {
+    for (int ty = 0; ty < fx.terrain.tileRows(); ++ty) {
         fx.terrain.setTile(10, ty, Tile::Water);
     }
     const Entity mob = fx.spawnMob({2000, 5000});
@@ -746,7 +747,7 @@ TEST(a_zero_dt_tick_changes_nothing_but_still_resolves_geometry) {
 
 TEST(step_collide_is_usable_without_a_world) {
     Terrain terrain;
-    for (int ty = 0; ty < Terrain::tilesPerAxis(); ++ty) terrain.setTile(10, ty, Tile::Wall);
+    for (int ty = 0; ty < terrain.tileRows(); ++ty) terrain.setTile(10, ty, Tile::Wall);
 
     Vec2 position{2900, 5000};
     const StepOutcome open = stepCollide(terrain, Realm::Overworld, position, {100, 0}, 20.0, 0.04);
@@ -765,4 +766,59 @@ TEST(step_collide_is_usable_without_a_world) {
     CHECK_NEAR(sanitizeMovementVelocity({kNan, 1.0}).length(), 0.0, 1e-12);
     CHECK_NEAR(sanitizeMovementVelocity({1e9, 0}).length(), kMaxMovementSpeed, 1e-9);
     CHECK_NEAR(sanitizeMovementVelocity({3, 4}).length(), 5.0, 1e-12);
+}
+
+TEST(the_containment_guard_holds_on_every_authored_map) {
+    // The flower containment guard is a tile question, and every world realm
+    // has a tile grid of its own: the same geometry loaded as the overworld
+    // and as a second map must give the same physics, guard included. It
+    // used to be asked of realm 0 alone, so the same wall seam pinned a
+    // flower on world.tmj and let it through on every other map.
+    const Realm other = worldRealm(1);
+    Terrain terrain;
+    std::vector<std::uint8_t> tiles(static_cast<std::size_t>(kTilesPerAxis) * kTilesPerAxis,
+                                    static_cast<std::uint8_t>(Tile::Ground));
+    const auto wall = [&](int tx, int ty) {
+        tiles[static_cast<std::size_t>(ty) * kTilesPerAxis + tx] = static_cast<std::uint8_t>(Tile::Wall);
+    };
+    // A staircase of tiles touching at their corners -- the diagonal seams the
+    // guard exists for -- plus a solid column beside it.
+    for (int i = 0; i < 12; ++i) wall(20 + i, 20 + i);
+    for (int i = 0; i < 12; ++i) wall(20 + i, 33 - i);
+    for (int ty = 15; ty < 40; ++ty) wall(40, ty);
+    CHECK(terrain.setTiles(tiles, kTilesPerAxis, kTilesPerAxis, Realm::Overworld));
+    CHECK(terrain.setTiles(tiles, kTilesPerAxis, kTilesPerAxis, other));
+    CHECK(terrain.blocked(Terrain::tileCenter(25, 25), other));
+
+    Rng rng{0x5EED5u};
+    int guarded = 0;
+    int compared = 0;
+    for (int n = 0; n < 6000; ++n) {
+        // Near the staircase, at a radius that can wedge into a seam, with a
+        // fast random velocity so the substeps meet the geometry.
+        const Vec2 start{rng.range(19.0 * kTileSize, 33.0 * kTileSize),
+                         rng.range(19.0 * kTileSize, 35.0 * kTileSize)};
+        const double radius = rng.range(15.0, 75.0);
+        const Vec2 velocity = Vec2::fromAngle(rng.angle(), rng.range(200.0, 1500.0));
+        if (terrain.blocked(start, Realm::Overworld)) continue;
+
+        Vec2 onOverworld = start;
+        Vec2 onOther = start;
+        const StepOutcome a = stepCollide(terrain, Realm::Overworld, onOverworld, velocity,
+                                          radius, net::kTickSeconds, true, true);
+        const StepOutcome b = stepCollide(terrain, other, onOther, velocity, radius,
+                                          net::kTickSeconds, true, true);
+        ++compared;
+        CHECK_NEAR(onOverworld.x, onOther.x, 1e-9);
+        CHECK_NEAR(onOverworld.y, onOther.y, 1e-9);
+        CHECK_EQ(a.blocked, b.blocked);
+
+        // And the guard is what is being compared: on the second map it has
+        // to change SOME outcome relative to the unguarded resolver.
+        Vec2 unguarded = start;
+        stepCollide(terrain, other, unguarded, velocity, radius, net::kTickSeconds, true, false);
+        if (distanceSq(unguarded, onOther) > 1e-12) ++guarded;
+    }
+    CHECK(compared > 1000);
+    CHECK(guarded > 0);
 }

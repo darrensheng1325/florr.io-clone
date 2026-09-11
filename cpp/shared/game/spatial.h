@@ -34,6 +34,8 @@
 
 namespace flix {
 
+class Terrain;
+
 class SpatialGrid {
 public:
     /// A petal ring is about 200 units across and a mob's aggro range 400 to
@@ -42,11 +44,23 @@ public:
     /// count, and the whole grid is walked on wrap-around.
     static constexpr double kDefaultCellSize = 600.0;
 
-    /// Each realm's layer covers that realm's square from (0, 0) -- see
-    /// Terrain::realmSize. A position outside it is clamped into the border
-    /// cells rather than dropped, so nothing is ever lost to the grid; it is
-    /// only found by more queries than it needs to be.
+    /// Each realm's layer covers that realm's square from (0, 0). A position
+    /// outside it is clamped into the border cells rather than dropped, so
+    /// nothing is ever lost to the grid; it is only found by more queries than
+    /// it needs to be.
+    ///
+    /// Every layer is born the default world's size, because the maps are not
+    /// loaded yet when a World is built. sizeToRealms() below is what fits
+    /// them to the maps that were actually staged; skipping it costs a query
+    /// on a small map some empty cells, never a missed candidate.
     explicit SpatialGrid(double cellSize = kDefaultCellSize);
+
+    /// Re-sizes every layer to the realm it holds, once the maps are loaded.
+    ///
+    /// Cheap and idempotent: a layer whose cell count did not change keeps its
+    /// bucket vectors, and with them the capacity that makes the steady-state
+    /// rebuild allocation-free.
+    void sizeToRealms(const Terrain& terrain);
 
     /// Retires every bucket in O(1) by bumping an epoch. The bucket vectors
     /// keep their capacity, which is what makes the steady-state rebuild
@@ -115,7 +129,7 @@ private:
 
     double cellSize_ = kDefaultCellSize;
     double invCellSize_ = 1.0 / kDefaultCellSize;
-    std::array<Layer, kRealmCount> layers_;
+    std::array<Layer, kMaxRealms> layers_;
     std::uint32_t epoch_ = 1;
     std::size_t inserted_ = 0;
 

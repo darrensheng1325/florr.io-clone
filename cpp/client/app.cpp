@@ -47,6 +47,20 @@ namespace {
 constexpr int kDesignWidth = 1920;
 constexpr int kDesignHeight = 930;
 
+/// The spawn picker's two rows. A row is sized so all of its buttons fit the
+/// design width with a gap between them, and never wider or narrower than
+/// these two bounds; below the small-text width the labels drop to 12px.
+constexpr double kPickerRowHeight = 32.0;
+/// The picker's height when it is one row of tabs-as-buttons: the height
+/// the original single biome row had.
+constexpr double kPickerSingleRowHeight = 35.0;
+constexpr double kPickerGap = 10.0;
+constexpr double kPickerMaxWidth = 150.0;
+constexpr double kPickerMinWidth = 70.0;
+constexpr double kPickerSmallTextBelow = 90.0;
+/// Breathing room the widest row keeps from the design frame's edges.
+constexpr double kPickerMargin = 10.0;
+
 /// Layout constants for the shell, in design units like everything else. Kept
 /// local because nothing outside this file positions these; the shared values
 /// that widgets derive from live in theme.h.
@@ -306,18 +320,6 @@ std::string authControlAt(const AuthLayout& layout, bool registering, Vec2 mouse
     return {};
 }
 
-/// The spawn picker's label and colour.
-///
-/// PVP Arena and the Maze are title-screen destinations rather than map
-/// annotations, so `biomeDisplay` -- which reads the map -- has nothing to say
-/// about them. Their two rows live here, beside the picker that is their only
-/// consumer.
-BiomeDisplay titleBiomeDisplay(const std::string& id) {
-    if (id == "pvp") return {"PVP Arena", 0xDC3C3Cu};
-    if (id == "maze") return {"Maze", 0x573D80u};
-    return biomeDisplay(id);
-}
-
 /// True while the pointer is over this client's window. Window gets the answer
 /// from DOM enter/leave callbacks in a page and SDL focus on the desktop; a
 /// bounds test against the last position cannot answer after the pointer left.
@@ -330,15 +332,6 @@ bool pointerInWindow(const Window& window) { return window.pointerInside(); }
 /// way -- leaves them dead.
 bool hitInclusive(Rect r, Vec2 p) {
     return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
-}
-
-/// The picker's fallback label: the id with its first character upper-cased
-/// and nothing else touched. Deliberately not `titleCase` -- the browser
-/// build's getBiomeConfig capitalises one character, so "foo_bar" reads
-/// "Foo_bar" there and must here.
-std::string capitaliseFirst(std::string id) {
-    if (!id.empty()) id[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[0])));
-    return id;
 }
 
 /// The name field's overflow rule: drop trailing characters until the string
@@ -740,22 +733,34 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // NetClient keeps this object alive for the entire connection and replaces
     // its grid with the authoritative TypeScript map when a game is joined.
     renderer_.setTerrain(&net_.terrain());
+    // The annotation layers -- ground art, teleporter pads, the rarity glow's
+    // bands -- of every staged map, by realm. A pointer to a member that is
+    // filled a few lines down: the renderer reads it per frame, never now.
+    renderer_.setWorldMaps(&worldMaps_);
     net_.contentHash = content().contentHash();
 
-    // The client needs one thing from the map's annotation layer: which biomes
-    // the spawn picker may offer. A bundle it cannot read costs the picker its
-    // choices, not the client its start.
+    // The client reads the maps for what they MEAN, never for what is solid:
+    // the tile grids arrive over the wire, authoritative, and a second copy off
+    // disk would be a second answer about where the walls are. Passing no
+    // Terrain is how that is said in one place rather than remembered in
+    // several. Maps it cannot read cost the picker its choices, not the client
+    // its start.
     std::string mapWarning;
-    if (!mapData_.loadWorldMap(worldMapPath(config.dataDir), mapWarning)) {
-        std::fprintf(stderr, "[map] %s; the spawn picker will offer the garden only\n",
+    if (!worldMaps_.load(config.dataDir, nullptr, mapWarning)) {
+        std::fprintf(stderr, "[map] %s; the spawn picker will offer the default only\n",
                      mapWarning.c_str());
     }
-    // The browser build's picker, in its order: the garden, the two special
-    // destinations, then every biome the map names.
-    spawnChoices_.push_back("default");
-    spawnChoices_.push_back("pvp");
-    spawnChoices_.push_back("maze");
-    for (const std::string& biome : mapData_.pickableBiomes()) spawnChoices_.push_back(biome);
+    // Everything the picker can name: the default, the two realms that have
+    // no map file, and then every player spawn rectangle every staged map
+    // draws -- which is how a second map is reachable without walking to a
+    // teleporter first. pickerTabs() files these under one tab per biome.
+    spawnChoices_.push_back(
+        SpawnChoice{"default", "Default", 0x00BE4Fu, Realm::Overworld, -1, {}, {}});
+    spawnChoices_.push_back(
+        SpawnChoice{kArenaSpawnChoice, "PVP Arena", 0xDC3C3Cu, Realm::Arena, -1, {}, {}});
+    spawnChoices_.push_back(
+        SpawnChoice{kMazeSpawnChoice, "Maze", 0x573D80u, Realm::Maze, -1, {}, {}});
+    for (const SpawnChoice& choice : worldMaps_.spawnChoices()) spawnChoices_.push_back(choice);
 
     // The backdrop's petals are drawn from every petal a player could actually
     // own: admin-only art and the runtime egg petals are excluded, exactly as
@@ -781,6 +786,23 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // A missing settings file is a first run, not a failure: the defaults in
     // ClientSettings are already the shipped configuration.
     menus_.settings().load(settingsPath());
+    // A saved door that no staged map offers any more -- renamed, removed,
+    // or a sublevel door that stopped being pickable -- is dropped here,
+    // once. Kept, it would send a choice the server refuses with a notice
+    // on every join, and show a picker with nothing chosen on it.
+    {
+        const std::string& saved = menus_.settings().spawnChoice;
+        bool offered = saved.empty();
+        for (const SpawnChoice& choice : spawnChoices_) offered |= choice.id == saved;
+        if (!offered) {
+            std::fprintf(stderr, "[spawn] the saved spawn point \"%s\" is not on this build's "
+                                 "maps; starting at the default\n", saved.c_str());
+            menus_.settings().spawnChoice.clear();
+        }
+    }
+    // The picker opens on the tab the saved door is filed under, so the row a
+    // returning player sees is the one their choice is on.
+    pickerTab_ = pickerTabOf(menus_.settings().spawnChoice);
     // Before the first frame rather than only from frame(): a --frames run
     // short enough to be one screenshot would otherwise photograph the
     // default resolution whatever the file says.
@@ -1014,6 +1036,15 @@ void App::frame(double dt) {
         // stamped against this one, and mob playback has to be measured on
         // the same timeline it is stamped on.
         net_.view().interpolate(renderClockMillis(), dt);
+        // A teleporter that led to another map: the body is in a different
+        // coordinate space now, and easing the flower or the camera from
+        // where it WAS would sweep the view across a world it is not in.
+        // Snapped exactly as the join does, then the stream takes over.
+        Vec2 arrival;
+        if (net_.takeRealmChange(arrival)) {
+            net_.view().snapAll();
+            camera_.snapTo(arrival);
+        }
     }
 
     switch (screen_) {
@@ -1073,7 +1104,13 @@ void App::frame(double dt) {
         // Pinned, not eased: the reference keeps the flower exactly on the
         // screen centre, which is what the cursor-relative control law reads.
         // The EASE is on the flower itself, one frame earlier -- see frame().
-        const Vec2 selfDrawn = net_.view().selfDrawnPosition();
+        //
+        // Until a snapshot has placed the body -- the frames right after a
+        // join or a realm change -- the view's self is a zeroed default, and
+        // pinning to it draws the map's top-left corner with no flower in it.
+        // The arrival the server sent is the honest position for those frames.
+        const Vec2 selfDrawn =
+            net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival();
         camera_.snapTo(selfDrawn);
         renderer_.draw(canvas, net_.view(), camera_, selfDrawn, timeSeconds_);
         drawHud(canvas, timeSeconds_);
@@ -1573,25 +1610,47 @@ void App::updateLobby(double dt) {
         if (window_.mousePressed(MouseButton::Left)) {
             pressedControl_.clear();
             if (hitInclusive(layout.ready, mouse)) pressedControl_ = "start";
-            for (std::size_t i = 0; i < layout.biomes.size(); ++i) {
-                if (hitInclusive(layout.biomes[i], mouse)) {
-                    pressedControl_ = "biome_" + std::to_string(i);
+            for (std::size_t i = 0; i < layout.tabs.size(); ++i) {
+                if (hitInclusive(layout.tabs[i], mouse)) {
+                    pressedControl_ = "tab_" + std::to_string(i);
+                }
+            }
+            for (std::size_t i = 0; i < layout.doors.size(); ++i) {
+                if (hitInclusive(layout.doors[i], mouse)) {
+                    pressedControl_ = "door_" + std::to_string(i);
                 }
             }
         }
         if (window_.mouseReleased(MouseButton::Left)) {
-            bool onBiome = false;
-            for (std::size_t i = 0; i < layout.biomes.size(); ++i) {
-                if (!hitInclusive(layout.biomes[i], mouse)) continue;
-                onBiome = true;
-                // "default" is stored as no choice at all, so a player who
-                // never touches this row is not pinned to a biome that may be
-                // edited out of the map later.
-                menus_.settings().spawnBiome =
-                    spawnChoices_[i] == "default" ? std::string() : spawnChoices_[i];
+            // "default" is stored as no choice at all, so a player who never
+            // touches the picker is not pinned to a door that may be edited
+            // out of the map later.
+            const auto choose = [&](std::size_t choice) {
+                menus_.settings().spawnChoice =
+                    spawnChoices_[choice].id == "default" ? std::string() : spawnChoices_[choice].id;
+            };
+            bool onPicker = false;
+            const std::vector<PickerTab> tabs = pickerTabs();
+            for (std::size_t i = 0; i < layout.tabs.size() && i < tabs.size(); ++i) {
+                if (!hitInclusive(layout.tabs[i], mouse)) continue;
+                onPicker = true;
+                pickerTab_ = tabs[i].id;
+                // A tab with one door IS that door -- Default, the arena, the
+                // maze, a biome with a single entrance -- so one click picks
+                // it rather than opening a row of one to click again.
+                if (tabs[i].choices.size() == 1) choose(tabs[i].choices.front());
+            }
+            const PickerTab* open = nullptr;
+            for (const PickerTab& tab : tabs) {
+                if (tab.id == pickerTab_) open = &tab;
+            }
+            for (std::size_t i = 0; i < layout.doors.size(); ++i) {
+                if (!hitInclusive(layout.doors[i], mouse)) continue;
+                onPicker = true;
+                if (open != nullptr && i < open->choices.size()) choose(open->choices[i]);
             }
 
-            // Focus follows the click. Ready and the biome row are the two
+            // Focus follows the click. Ready and the picker's two rows are the
             // things the reference lets you click WITHOUT losing the caret in
             // the name field; everything else blurs it.
             // Taking the name whole: a click into the box that was not already
@@ -1600,7 +1659,7 @@ void App::updateLobby(double dt) {
             // what this box, capped at twenty characters, wants.
             if (hitInclusive(layout.name, mouse)) {
                 if (!nameField_.focused) nameField_.focus(playerName_, timeSeconds_);
-            } else if (!onBiome && !hitInclusive(layout.ready, mouse)) {
+            } else if (!onPicker && !hitInclusive(layout.ready, mouse)) {
                 nameField_.blur();
             }
             chatOpen_ = hit(titleChatBox(window_.width(), window_.height()), mouse);
@@ -1611,7 +1670,9 @@ void App::updateLobby(double dt) {
 
     if (net_.status() == NetClient::Status::Playing) {
         net_.view().snapAll();
-        camera_.snapTo(net_.view().selfDrawnPosition());
+        // The join's spawn point: the first snapshot has not placed the body
+        // yet, and the view's own self position is still zero.
+        camera_.snapTo(net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival());
         beginSceneWipe(true);
         // --dead is the only route a scripted run has to the death card: being
         // killed for real is not something `--frames` can arrange.
@@ -1637,7 +1698,7 @@ void App::startGame() {
     // and a screenshot run that left "maze" in it would send their next
     // ordinary game to the maze.
     const std::string& where =
-        config_.autoSpawn.empty() ? menus_.settings().spawnBiome : config_.autoSpawn;
+        config_.autoSpawn.empty() ? menus_.settings().spawnChoice : config_.autoSpawn;
     net_.joinGame(window_.width(), window_.height(), where, playerName_);
 }
 
@@ -1996,15 +2057,18 @@ void App::drawLogin(Canvas& canvas, double time) {
     if (statsVisible()) drawStatsCounters(canvas, true);
 }
 
-const SvgDocument* App::titleBackground(const std::string& biomeName) {
-    // The browser build's BIOME_SVG_MAP. A biome without art of its own tiles
-    // the garden's, which is what it does there too.
+const SvgDocument* App::titleBackground(const std::string& backdrop) {
+    // The ground artworks, by the name a spawn point's `backdrop` names them
+    // with -- which defaults to the spawn point's own id, so a point called
+    // `desert` gets the desert without saying anything. Anything unrecognised
+    // tiles the garden's, which is what the browser build did too.
     static const std::unordered_map<std::string, std::string> kFiles = {
         {"default", "land.svg"},  {"land", "land.svg"},     {"desert", "desert.svg"},
         {"ocean", "ocean.svg"},   {"hel", "hel.svg"},       {"ant_hell", "ant_hell.svg"},
-        {"sewers", "sewers.svg"}, {"jungle", "jungle.svg"},
+        {"sewers", "sewers.svg"}, {"jungle", "jungle.svg"}, {"computer", "computer.svg"},
+        {"unknown", "unknown.svg"},
     };
-    const auto entry = kFiles.find(biomeName);
+    const auto entry = kFiles.find(backdrop);
     const std::string file = entry == kFiles.end() ? "land.svg" : entry->second;
 
     // Compiled on first use and kept: a player flicking along the picker would
@@ -2021,8 +2085,17 @@ const SvgDocument* App::titleBackground(const std::string& biomeName) {
 }
 
 void App::drawTitleBackground(Canvas& canvas, double time) {
-    const std::string& biome = menus_.settings().spawnBiome;
-    const SvgDocument* texture = titleBackground(biome.empty() ? "default" : biome);
+    // The chosen door's own artwork, so the title screen shows the ground the
+    // player is about to be dropped onto. A door that names no backdrop
+    // shows its biome's, which is what the tab it sits under is called.
+    std::string backdrop = "default";
+    for (const SpawnChoice& choice : spawnChoices_) {
+        if (choice.id != menus_.settings().spawnChoice) continue;
+        if (!choice.backdrop.empty()) backdrop = choice.backdrop;
+        else if (!choice.biome.empty()) backdrop = choice.biome;
+        break;
+    }
+    const SvgDocument* texture = titleBackground(backdrop);
 
     // A fixed step per rendered frame rather than elapsed seconds: this is the
     // reference's own clock, and matching it is what keeps the two scrolling
@@ -2122,10 +2195,112 @@ void App::drawTitlePetals(Canvas& canvas, double time) {
     }
 }
 
+namespace {
+
+/// A picker row's button width: the widest that lets `count` buttons and
+/// their gaps fit `rowSpace`, between the two bounds that keep a lone tab
+/// from becoming a bar and a crowded row from becoming unreadable.
+double pickerButtonWidth(std::size_t count, double rowSpace) {
+    if (count == 0) return kPickerMaxWidth;
+    const double fitted = (rowSpace - kPickerMargin * 2.0 - (count - 1) * kPickerGap) /
+                          static_cast<double>(count);
+    return clamp(fitted, kPickerMinWidth, kPickerMaxWidth);
+}
+
+/// One row of `count` buttons of `width` by `height`, centred on centreX at
+/// `y`.
+void layPickerRow(std::vector<Rect>& out, std::size_t count, double width, double centreX,
+                  double y, double height = kPickerRowHeight) {
+    if (count == 0) return;
+    const double rowWidth = count * (width + kPickerGap) - kPickerGap;
+    for (std::size_t i = 0; i < count; ++i) {
+        out.push_back({centreX - rowWidth * 0.5 + i * (width + kPickerGap), y, width, height});
+    }
+}
+
+/// "ant_hell" -> "Ant Hell": the tab label for a biome id, which is a file
+/// stem rather than something anyone wrote to be read.
+std::string titleCaseId(const std::string& id) {
+    std::string out;
+    out.reserve(id.size());
+    bool wordStart = true;
+    for (char c : id) {
+        if (c == '_' || c == '-' || c == ' ') {
+            out.push_back(' ');
+            wordStart = true;
+            continue;
+        }
+        out.push_back(wordStart ? static_cast<char>(std::toupper(static_cast<unsigned char>(c)))
+                                : c);
+        wordStart = false;
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<App::PickerTab> App::pickerTabs() const {
+    // Default first and the two generated realms last, with every biome the
+    // doors are filed under between them in the order the doors were loaded
+    // -- which is the order maps.json lists the maps, so the overworld's own
+    // doors decide the row and a temporary map never reorders it.
+    std::vector<PickerTab> tabs;
+    tabs.push_back(PickerTab{"default", "Default", 0x00BE4Fu, {}});
+    PickerTab arena{kArenaSpawnChoice, "PVP Arena", 0xDC3C3Cu, {}};
+    PickerTab maze{kMazeSpawnChoice, "Maze", 0x573D80u, {}};
+    for (std::size_t i = 0; i < spawnChoices_.size(); ++i) {
+        const SpawnChoice& choice = spawnChoices_[i];
+        if (choice.id == "default") {
+            tabs.front().color = choice.color;
+            tabs.front().choices.push_back(i);
+            continue;
+        }
+        if (choice.id == kArenaSpawnChoice) {
+            arena.color = choice.color;
+            arena.choices.push_back(i);
+            continue;
+        }
+        if (choice.id == kMazeSpawnChoice) {
+            maze.color = choice.color;
+            maze.choices.push_back(i);
+            continue;
+        }
+        // A door with no biome at all files under its own id, so it is still
+        // reachable rather than silently dropped from the picker.
+        const std::string& biome = choice.biome.empty() ? choice.id : choice.biome;
+        PickerTab* tab = nullptr;
+        for (PickerTab& candidate : tabs) {
+            if (candidate.id == biome) tab = &candidate;
+        }
+        if (tab == nullptr) {
+            // The tab wears the colour of its first door, which for the
+            // overworld's doors is the colour the biome always had.
+            tabs.push_back(PickerTab{biome, titleCaseId(biome), choice.color, {}});
+            tab = &tabs.back();
+        }
+        tab->choices.push_back(i);
+    }
+    tabs.push_back(std::move(arena));
+    tabs.push_back(std::move(maze));
+    return tabs;
+}
+
+std::string App::pickerTabOf(const std::string& choiceId) const {
+    if (choiceId.empty()) return "default";
+    for (const PickerTab& tab : pickerTabs()) {
+        for (std::size_t i : tab.choices) {
+            if (spawnChoices_[i].id == choiceId) return tab.id;
+        }
+    }
+    return "default";
+}
+
 App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
     // The browser title screen's rhythm, measured from the centre: the name
-    // field and the Ready button side by side a hundred above it, the biome
-    // label at fifty, the row of biome buttons at twenty.
+    // field and the Ready button side by side a hundred above it, the
+    // "Spawn At:" label at fifty, then the picker's two rows -- the biome
+    // tabs at twenty-two above and the selected biome's doors at fourteen
+    // below -- both of which have to clear the loadout bar at fifty below.
     const double centreX = viewWidth * 0.5;
     const double centreY = viewHeight * 0.5;
 
@@ -2133,19 +2308,32 @@ App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
     layout.name = {centreX - 200.0, centreY - 100.0, 280.0, 42.0};
     layout.ready = {centreX + 120.0, centreY - 100.0, 120.0, 42.0};
 
-    constexpr double kBiomeWidth = 90.0;
-    constexpr double kBiomeHeight = 35.0;
-    constexpr double kBiomeGap = 10.0;
-    const std::size_t count = spawnChoices_.size();
-    if (count == 0) return layout;
-
-    // Always one row, even when it does not fit. Wrapping would put the picker
-    // on top of the loadout bar, and the reference simply lets a long row run
-    // off both edges of a narrow window.
-    const double rowWidth = count * (kBiomeWidth + kBiomeGap) - kBiomeGap;
-    for (std::size_t i = 0; i < count; ++i) {
-        layout.biomes.push_back({centreX - rowWidth * 0.5 + i * (kBiomeWidth + kBiomeGap),
-                                 centreY - 20.0, kBiomeWidth, kBiomeHeight});
+    // Each row is sized to fit the frame on its own, so neither wraps:
+    // wrapping would put the picker on top of the loadout bar. The frame is
+    // the design width, or less of it when the window's aspect shows less --
+    // a 16:9 window scaled to the design HEIGHT shows about 1650 units.
+    const double rowSpace = std::min(static_cast<double>(viewWidth),
+                                     static_cast<double>(kDesignWidth));
+    const std::vector<PickerTab> tabs = pickerTabs();
+    // One row when every tab has at most one door -- the shipped case, where
+    // a biome is entered from its main area alone and the sublevels hang off
+    // pads. The tabs are then the buttons themselves, in the slot the
+    // picker's original single row had (twenty above centre, thirty-five
+    // tall), and there is no doors row to open. Two rows only when some tab
+    // really has several doors to choose between.
+    bool singleRow = true;
+    for (const PickerTab& tab : tabs) singleRow &= tab.choices.size() <= 1;
+    if (singleRow) {
+        layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), rowSpace), centreX,
+                     centreY - 20.0, kPickerSingleRowHeight);
+        return layout;
+    }
+    layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), rowSpace), centreX,
+                 centreY - 22.0);
+    for (const PickerTab& tab : tabs) {
+        if (tab.id != pickerTab_) continue;
+        layPickerRow(layout.doors, tab.choices.size(),
+                     pickerButtonWidth(tab.choices.size(), rowSpace), centreX, centreY + 14.0);
     }
     return layout;
 }
@@ -2203,23 +2391,38 @@ void App::drawLobby(Canvas& canvas, double time) {
     label.align = Align::Centre;
     label.bold = true;
     label.strokeWidth = 4.0;
-    text(canvas, "Spawn Biome:", centreX, centreY - 50.0, label);
+    text(canvas, "Spawn At:", centreX, centreY - 50.0, label);
 
-    for (std::size_t i = 0; i < layout.biomes.size(); ++i) {
-        const std::string& id = spawnChoices_[i];
-        const BiomeDisplay display = titleBiomeDisplay(id);
-        // The chosen one is drawn darker with a heavier outline, rather than
-        // brighter: hover already means brighter, and two states that both
-        // brighten are two states nobody can tell apart.
-        const bool chosen = id == menus_.settings().spawnBiome ||
-                            (id == "default" && menus_.settings().spawnBiome.empty());
+    // The picker: a row of biome tabs, and under it the doors of the open
+    // tab. The chosen one in each row is drawn darker with a heavier
+    // outline, rather than brighter: hover already means brighter, and two
+    // states that both brighten are two states nobody can tell apart.
+    const auto pickerButton = [&](const Rect& box, const std::string& text_,
+                                  std::uint32_t colour, bool chosen, const std::string& id) {
         ButtonStyle style;
-        style.fill = chosen ? hsvScale(display.color, 0.85) : display.color;
+        style.fill = chosen ? hsvScale(colour, 0.85) : colour;
         style.outlineWidth = chosen ? 5.0 : 4.0;
-        style.textSize = 14.0;
-        button(canvas, layout.biomes[i], display.label ? display.label : capitaliseFirst(id),
-               freeMouse && !chosen && hitInclusive(layout.biomes[i], mouse),
-               freeMouse && pressedControl_ == "biome_" + std::to_string(i), style);
+        // A crowded row shrinks its type with its buttons, so "Ant Hell"
+        // still fits inside one.
+        style.textSize = box.w < kPickerSmallTextBelow ? 12.0 : 14.0;
+        button(canvas, box, text_, freeMouse && !chosen && hitInclusive(box, mouse),
+               freeMouse && pressedControl_ == id, style);
+    };
+    const std::vector<PickerTab> tabs = pickerTabs();
+    const PickerTab* open = nullptr;
+    for (std::size_t i = 0; i < layout.tabs.size() && i < tabs.size(); ++i) {
+        const bool chosen = tabs[i].id == pickerTab_;
+        if (chosen) open = &tabs[i];
+        pickerButton(layout.tabs[i], tabs[i].label, tabs[i].color, chosen,
+                     "tab_" + std::to_string(i));
+    }
+    for (std::size_t i = 0; open != nullptr && i < layout.doors.size() &&
+                            i < open->choices.size(); ++i) {
+        const SpawnChoice& choice = spawnChoices_[open->choices[i]];
+        const bool chosen = choice.id == menus_.settings().spawnChoice ||
+                            (choice.id == "default" && menus_.settings().spawnChoice.empty());
+        pickerButton(layout.doors[i], choice.label, choice.color, chosen,
+                     "door_" + std::to_string(i));
     }
 
     TextStyle hint;
@@ -2660,20 +2863,45 @@ void App::drawBossBars(Canvas& canvas, bool altHeld) {
     }
 }
 
+namespace {
+
+/// The minimap's section grid for a world map: one section per kSectionSize
+/// square of the map's extent, rounded up so a map that is not a multiple of
+/// the section -- most of the temporary biome maps -- still shows its last
+/// strip of tiles. The overworld comes out as the reference's 3x3.
+struct SectionGrid {
+    int cols = 1;
+    int rows = 1;
+};
+
+SectionGrid sectionGridOf(const Terrain& terrain, Realm realm) {
+    const Vec2 extent = terrain.realmExtent(realm);
+    SectionGrid grid;
+    grid.cols = std::max(1, static_cast<int>(std::ceil(extent.x / kSectionSize - 1e-9)));
+    grid.rows = std::max(1, static_cast<int>(std::ceil(extent.y / kSectionSize - 1e-9)));
+    return grid;
+}
+
+} // namespace
+
 const Canvas* App::minimapStatic(int section, bool rarityGlow) {
     // ALT is part of the key, not just the draw: the reference's bake cache is
     // keyed `scrollX_scrollY_glow` (minimap.ts:216), so pressing ALT rebakes
     // the layer rather than tinting a stale one.
     // uiScale is the third key. See minimapDensity_: the bake is a bitmap and
-    // has to be rasterised at the density it will be shown at.
+    // has to be rasterised at the density it will be shown at. The realm is
+    // the fourth: a section index means a different square on every map.
+    const Realm realm = net_.view().realm();
     const double density = window_.uiScale();
-    if (minimapStatic_ && minimapSection_ == section && minimapGlow_ == rarityGlow &&
-        minimapDensity_ == density) {
+    if (minimapStatic_ && minimapSection_ == section && minimapRealm_ == realm &&
+        minimapGlow_ == rarityGlow && minimapDensity_ == density) {
         return minimapStatic_.get();
     }
 
-    const int sectionX = section % kSectionsPerAxis;
-    const int sectionY = section / kSectionsPerAxis;
+    const Terrain& terrain = net_.terrain();
+    const SectionGrid sections = sectionGridOf(terrain, realm);
+    const int sectionX = section % sections.cols;
+    const int sectionY = section / sections.cols;
     const double scrollX = sectionX * kSectionSize;
     const double scrollY = sectionY * kSectionSize;
     const double scale = kMinimapSize / kSectionSize;
@@ -2689,15 +2917,41 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
 
     setFill(map, kPaper, 0.9);
     map.fillRect(0, 0, static_cast<float>(kMinimapSize), static_cast<float>(kMinimapSize));
+    // Beyond the map's own edge is void, and reads as void: a map smaller
+    // than a section would otherwise show paper past its last wall, an open
+    // room the world draws black and the terrain treats as solid.
+    {
+        const Vec2 extent = terrain.realmExtent(realm);
+        const double edgeX = (extent.x - scrollX) * scale;
+        const double edgeY = (extent.y - scrollY) * scale;
+        setFill(map, 0x000000u);
+        if (edgeX < kMinimapSize) {
+            map.fillRect(static_cast<float>(std::max(0.0, edgeX)), 0,
+                         static_cast<float>(kMinimapSize - std::max(0.0, edgeX)),
+                         static_cast<float>(kMinimapSize));
+        }
+        if (edgeY < kMinimapSize) {
+            map.fillRect(0, static_cast<float>(std::max(0.0, edgeY)),
+                         static_cast<float>(kMinimapSize),
+                         static_cast<float>(kMinimapSize - std::max(0.0, edgeY)));
+        }
+    }
 
     // Spawn bands, under the walls, only while ALT is held. Their own palette,
     // not kRarityColors: MINIMAP_SPAWN_COLORS (minimap.ts:11-22) gives unique a
     // violet and apex a cyan where the item tiers are white and magenta.
-    if (rarityGlow) {
-        for (const MapElement& element : mapData_.elements()) {
-            // Every spawn zone, tier or not: the reference falls back to
-            // `|| 'common'` rather than skipping an untagged one.
-            if (element.kind != MapElementKind::Spawn) continue;
+    // The annotations of the map the flower is actually standing on. The arena
+    // and the maze have none, which is correct: neither is an authored map, so
+    // there are no bands and no pads to draw.
+    const MapData* annotations = worldMaps_.forRealm(net_.view().realm());
+    if (rarityGlow && annotations != nullptr) {
+        for (const MapElement& element : annotations->elements()) {
+            // Tier BANDS only. A spawn object with no tier is a mob region --
+            // a whole section, or a whole map, saying what lives there -- and
+            // painting it as a common band washes the entire minimap in the
+            // common colour with the real common bands lost in it. The world
+            // renderer's rarity glow makes the same distinction.
+            if (!element.isSpawnBand()) continue;
             const double left = (element.bounds.x - scrollX) * scale;
             const double top = (element.bounds.y - scrollY) * scale;
             const double w = element.bounds.w * scale;
@@ -2705,7 +2959,7 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
             if (left + w <= 0 || left >= kMinimapSize || top + h <= 0 || top >= kMinimapSize) {
                 continue;
             }
-            const Rarity tier = element.hasSpawnTier ? element.spawnTier : Rarity::Common;
+            const Rarity tier = element.spawnTier;
             setFill(map, kMinimapSpawnColors[static_cast<std::size_t>(rarityIndex(tier))], 0.4);
             // The zone's outline, so the minimap shows the band the spawner
             // actually uses rather than the box around it. The bounding box
@@ -2729,16 +2983,19 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
 
     // One section's worth of tiles, at three pixels each. Baked rather than
     // rescanned: this is four and a half thousand cells and it only changes
-    // when the player walks into another section.
-    const Terrain& terrain = net_.terrain();
+    // when the player walks into another section. Clamped to THIS realm's
+    // grid: every world map has its own, and a small map's last section is
+    // mostly off its edge.
     const int minTileX = std::max(0, Terrain::toTileCoord(scrollX));
-    const int maxTileX = std::min(kTilesPerAxis - 1, Terrain::toTileCoord(scrollX + kSectionSize));
+    const int maxTileX =
+        std::min(terrain.tileCols(realm) - 1, Terrain::toTileCoord(scrollX + kSectionSize));
     const int minTileY = std::max(0, Terrain::toTileCoord(scrollY));
-    const int maxTileY = std::min(kTilesPerAxis - 1, Terrain::toTileCoord(scrollY + kSectionSize));
+    const int maxTileY =
+        std::min(terrain.tileRows(realm) - 1, Terrain::toTileCoord(scrollY + kSectionSize));
     const float tilePixels = static_cast<float>(kTileSize * scale);
     for (int ty = minTileY; ty <= maxTileY; ++ty) {
         for (int tx = minTileX; tx <= maxTileX; ++tx) {
-            const Tile tile = terrain.atTile(tx, ty);
+            const Tile tile = terrain.atTile(tx, ty, realm);
             if (tile == Tile::Ground) continue;
             // Solid ground reads as one black silhouette whatever kind of wall
             // it is; only the passable oddities keep a colour of their own.
@@ -2751,7 +3008,9 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
         }
     }
 
-    for (const MapElement& element : mapData_.elements()) {
+    static const std::vector<MapElement> kNoElements;
+    for (const MapElement& element :
+         annotations != nullptr ? annotations->elements() : kNoElements) {
         if (element.kind != MapElementKind::Teleporter) continue;
         const Vec2 centre = element.centre();
         const float dotX = static_cast<float>((centre.x - scrollX) * scale);
@@ -2771,6 +3030,7 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
 
     minimapStatic_ = std::move(baked);
     minimapSection_ = section;
+    minimapRealm_ = realm;
     minimapGlow_ = rarityGlow;
     minimapDensity_ = density;
     return minimapStatic_.get();
@@ -2798,13 +3058,17 @@ void App::drawMinimap(Canvas& canvas) {
 
     // The map always shows exactly the section the player stands in, snapped to
     // its corner. There is no zoom and no free scrolling: the reference's
-    // scroll and zoom entry points are both no-ops.
+    // scroll and zoom entry points are both no-ops. The section grid is the
+    // realm's own: the overworld's 3x3, or however many kSectionSize squares
+    // another map's extent takes.
+    const Realm realm = net_.view().realm();
+    const SectionGrid sections = sectionGridOf(net_.terrain(), realm);
     const Vec2 me = net_.view().selfDrawnPosition();
     const int sectionX = static_cast<int>(clamp(std::floor(me.x / kSectionSize), 0.0,
-                                                kSectionsPerAxis - 1.0));
+                                                sections.cols - 1.0));
     const int sectionY = static_cast<int>(clamp(std::floor(me.y / kSectionSize), 0.0,
-                                                kSectionsPerAxis - 1.0));
-    const int section = sectionY * kSectionsPerAxis + sectionX;
+                                                sections.rows - 1.0));
+    const int section = sectionY * sections.cols + sectionX;
     const double scrollX = sectionX * kSectionSize;
     const double scrollY = sectionY * kSectionSize;
 
@@ -2886,7 +3150,15 @@ void App::drawMinimap(Canvas& canvas) {
     caption.strokeWidth = 3.0;
     caption.align = Align::Centre;
     caption.baseline = Baseline::Alphabetic;
-    text(canvas, biomeOf(section).name, x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
+    // The overworld's caption is the section's biome, as the reference's is;
+    // any other map has no biome table and is captioned with its own name.
+    std::string captionText;
+    if (realm == Realm::Overworld) {
+        captionText = biomeOf(section).name;
+    } else if (const MapData* map = worldMaps_.forRealm(realm)) {
+        captionText = map->displayName().empty() ? map->id() : map->displayName();
+    }
+    text(canvas, captionText, x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
 }
 
 namespace {

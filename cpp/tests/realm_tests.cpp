@@ -78,7 +78,7 @@ TEST(the_arena_is_a_ring_and_the_terrain_keeps_bodies_inside_it) {
 
     // The clamp is radial and leaves a body of `radius` tangent to the edge.
     const Vec2 outside{kArenaCentre.x + kArenaRadius + 900.0, kArenaCentre.y + 50.0};
-    const Vec2 held = Terrain::clampInside(outside, 20.0, Realm::Arena);
+    const Vec2 held = terrain.clampInside(outside, 20.0, Realm::Arena);
     CHECK_NEAR(distance(held, kArenaCentre), kArenaRadius - 20.0, 1e-9);
     // resolveCircle does the same, and reports the contact.
     const Terrain::WallResolution wall = terrain.resolveWall(outside, 20.0, Realm::Arena);
@@ -89,8 +89,8 @@ TEST(the_arena_is_a_ring_and_the_terrain_keeps_bodies_inside_it) {
     // Sight is never blocked on open floor; the ring is not a wall to see past.
     CHECK(!terrain.segmentBlocked(kArenaCentre, kArenaSpawn, Realm::Arena));
     CHECK(terrain.hasLineOfSight(kArenaCentre, kArenaSpawn, Realm::Arena));
-    CHECK(!Terrain::outside(kArenaSpawn, Realm::Arena));
-    CHECK(Terrain::outside(outside, Realm::Arena));
+    CHECK(!terrain.outside(kArenaSpawn, Realm::Arena));
+    CHECK(terrain.outside(outside, Realm::Arena));
 }
 
 TEST(the_maze_lives_at_its_own_origin_and_its_walls_answer_for_it) {
@@ -125,7 +125,7 @@ TEST(the_maze_lives_at_its_own_origin_and_its_walls_answer_for_it) {
         // A body placed in the void is pushed onto floor, inside the square.
         const Vec2 pushed = terrain.resolveCircle(voidPoint, 20.0, Realm::Maze);
         CHECK(!maze.blocksPoint(pushed));
-        CHECK(!Terrain::outside(pushed, Realm::Maze));
+        CHECK(!terrain.outside(pushed, Realm::Maze));
     }
 
     // findOpenSpawn in the maze hands back floor, near where it was asked.
@@ -138,10 +138,10 @@ TEST(the_maze_lives_at_its_own_origin_and_its_walls_answer_for_it) {
 
     // The realm's square is what a body is clamped to, and the layer size the
     // broadphase is built from.
-    CHECK_NEAR(Terrain::realmSize(Realm::Maze), maze.worldSize(), 1e-9);
+    CHECK_NEAR(terrain.realmSize(Realm::Maze), maze.worldSize(), 1e-9);
     const Vec2 far{maze.worldSize() + 5000.0, -3000.0};
-    const Vec2 held = Terrain::clampInside(far, 20.0, Realm::Maze);
-    CHECK(!Terrain::outside(held, Realm::Maze));
+    const Vec2 held = terrain.clampInside(far, 20.0, Realm::Maze);
+    CHECK(!terrain.outside(held, Realm::Maze));
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +328,7 @@ TEST(a_client_that_picks_the_maze_arrives_in_it_and_cannot_walk_through_its_wall
             h.step(1, {&client});
             const Vec2 at = world.get<Transform>(body).position;
             CHECK(!maze.blocksPoint(at));
-            CHECK(!Terrain::outside(at, Realm::Maze));
+            CHECK(!h.server.terrain().outside(at, Realm::Maze));
         }
     }
 
@@ -767,4 +767,69 @@ TEST(each_realm_draws_its_own_ground) {
     const double offMapDark = renderDark(Realm::Overworld, {-40000.0, -40000.0}, 16);
     CHECK(overworldDark < 0.01);
     CHECK(offMapDark > 0.99);
+}
+
+// ---------------------------------------------------------------------------
+// A respawn that changes realm restates the map
+// ---------------------------------------------------------------------------
+
+TEST(a_respawn_into_another_realm_sends_the_client_that_realms_map) {
+    // Join the overworld, take the pad into the sewers, die there, respawn:
+    // the spawn choice is still the default, so the new body is on the
+    // overworld -- and the client has to be told, or it keeps drawing the
+    // sewers under a flower that is walking the garden.
+    Harness h("respawn-realm");
+    if (!h.ready) { CHECK(false); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "spelunker", ""));
+
+    const MapData* overworld = h.server.worldMaps().forRealm(Realm::Overworld);
+    const MapElement* pad = nullptr;
+    for (const MapElement& element : overworld != nullptr ? overworld->elements()
+                                                          : std::vector<MapElement>{}) {
+        if (element.kind == MapElementKind::Teleporter && element.targetMap == "sewers") {
+            pad = &element;
+        }
+    }
+    CHECK(pad != nullptr);
+    if (pad == nullptr) return;
+    bool found = false;
+    const Realm sewers = h.server.worldMaps().realmOfId("sewers", found);
+    CHECK(found);
+
+    World& world = h.server.world();
+    const Entity body = bodyOf(world, "spelunker");
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+    world.get<Transform>(body).position = pad->centre();
+    CHECK(h.stepUntil({&client}, [&] { return world.get<Transform>(body).realm == sewers; }, 120));
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == sewers; }));
+    CHECK_EQ(client.terrain().tileCols(sewers), h.server.terrain().tileCols(sewers));
+    // The client's drawn body catches up with the arrival: it is placed by a
+    // snapshot, and until then the arrival stands in for it.
+    CHECK(h.stepUntil({&client}, [&] { return client.selfPlaced(); }));
+
+    // Death in the sewers.
+    world.get<Health>(body).current = 0;
+    world.add<Dead>(body, Dead{NULL_ENTITY});
+    CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
+    client.requestRespawn();
+    CHECK(h.stepUntil({&client}, [&] {
+        const Entity reborn = bodyOf(world, "spelunker");
+        return reborn != NULL_ENTITY && reborn != body && world.has<Transform>(reborn);
+    }));
+    const Entity reborn = bodyOf(world, "spelunker");
+    CHECK(reborn != NULL_ENTITY);
+    if (reborn == NULL_ENTITY) return;
+    CHECK(world.get<Transform>(reborn).realm == Realm::Overworld);
+
+    // The client followed: its realm, its grid and its drawn body all belong
+    // to the overworld again, and the arrival it was handed is the new
+    // body's spawn.
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == Realm::Overworld; }));
+    CHECK_EQ(client.terrain().tileCols(Realm::Overworld), h.server.terrain().tileCols(Realm::Overworld));
+    CHECK_EQ(client.terrain().tileRows(Realm::Overworld), h.server.terrain().tileRows(Realm::Overworld));
+    CHECK(h.stepUntil({&client}, [&] { return client.selfPlaced(); }));
+    CHECK_NEAR(client.arrival().x, world.get<Transform>(reborn).position.x, 1.0);
+    CHECK_NEAR(client.arrival().y, world.get<Transform>(reborn).position.y, 1.0);
 }

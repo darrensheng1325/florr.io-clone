@@ -9,7 +9,14 @@
 // crowd is on screen, and the vector path is fast enough.
 //
 // The biome ground and the textured map tiles are the same idea one step out:
-// a document per map section, tiled across the world by the renderer.
+// a document per map section, tiled across the world by the renderer. The wall
+// and water tiles are a table of them: per SKIN (constants.h's kTileSkinNames:
+// the plain family, then sewers, computer and unknown) a base wall, a base
+// water and fifteen edge variants of each, plus three floor decorations for
+// every biome skin --
+// the same files Tiled shows in the palette (maps/tiles/), so what the author
+// sees is what is drawn. The table is filled once at build() and read by
+// index thereafter: no frame ever builds a file name.
 
 #include <array>
 #include <cstdint>
@@ -63,6 +70,25 @@ public:
     /// build's tile pattern repeats at.
     const SvgDocument* tileArt(Tile tile) const;
 
+    /// The artwork of a wall or water tile of skin `skin` (constants.h's
+    /// kTileSkinNames index) showing the sides in `mask` (kEdge* bits). For
+    /// the default skin: `wall.svg` for a wall with no edges,
+    /// `wall_edge_<sides>.svg` / `water_edge_<sides>.svg` otherwise, and null
+    /// for water with no edges -- the flat fill IS its artwork. For a biome
+    /// skin: `wall_<skin>.svg`, `wall_<skin>_edge_<sides>.svg`,
+    /// `water_<skin>.svg`, `water_<skin>_edge_<sides>.svg`. Null for any other
+    /// tile kind, for a skin past the table, and for a file that could not be
+    /// read, which the renderer answers with the default skin's art or the
+    /// flat colour rather than a hole.
+    const SvgDocument* edgeArt(Tile tile, std::uint8_t skin, std::uint8_t mask) const;
+
+    /// The floor decoration `floor_<skin>_<variant>.svg` an air cell of a
+    /// biome skin draws over its ground. Null for the default skin (which has
+    /// none), for a variant past kFloorVariantsPerSkin, and for a file that
+    /// could not be read -- and null means draw nothing, which is what a
+    /// plain air cell does anyway.
+    const SvgDocument* floorArt(std::uint8_t skin, std::uint8_t variant) const;
+
     const std::vector<std::string>& warnings() const { return warnings_; }
 
 private:
@@ -88,6 +114,14 @@ private:
     std::vector<Sprite> petals_;
     std::array<std::shared_ptr<SvgDocument>, kSectionCount> ground_{};
     std::shared_ptr<SvgDocument> bridge_;
+    /// One row per skin, indexed by edge mask (or, for the floors, by
+    /// variant). Slot 0 of a wall row is the skin's plain wall; slot 0 of the
+    /// default water row stays empty (the flat fill), of a biome water row
+    /// holds its base art; a floor row uses slots 0..kFloorVariantsPerSkin-1.
+    using TileArtRow = std::array<std::shared_ptr<SvgDocument>, kEdgeMaskMax + 1>;
+    std::array<TileArtRow, kTileSkinCount> wallArt_{};
+    std::array<TileArtRow, kTileSkinCount> waterArt_{};
+    std::array<TileArtRow, kTileSkinCount> floorArt_{};
     std::vector<std::string> warnings_;
 };
 

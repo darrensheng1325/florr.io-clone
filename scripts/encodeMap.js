@@ -125,6 +125,11 @@ export const MAP_TILE_RLE = ${JSON.stringify(rle)};
     const data = loadMapData(input);
 
     if (!Array.isArray(data.elements)) throw new Error('input has no .elements array');
+    // Player spawn rectangles stay out of the bundle: the TypeScript server it
+    // feeds has no spawn picker, and its frozen renderer indexes a colour table
+    // by element type that would not know the new kind. The C++ side reads
+    // them off the Tiled map itself.
+    data.elements = data.elements.filter(element => element.type !== 'player_spawn');
     const wallGrid = data.wallGrid;
     if (!Array.isArray(wallGrid) || !Array.isArray(wallGrid[0])) {
         throw new Error('input has no .wallGrid 2D array');

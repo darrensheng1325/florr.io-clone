@@ -3,7 +3,7 @@
   "version": "0.5.0",
   "main": "index.js",
   "scripts": {
-    "build:map": "node scripts/encodeMap.js",
+    "build:map": "node scripts/edgeTiles.js --apply --manifest maps/maps.json && node scripts/encodeMap.js",
     "map:to-tiled": "node scripts/mapToTiled.js",
     "svg2skin": "node scripts/svg-to-skin.js",
     "build": "node scripts/encodeMap.js && FLIX_BUILD=release node scripts/build-web.js all",

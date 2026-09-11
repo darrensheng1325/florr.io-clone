@@ -1,7 +1,14 @@
 #include "test.h"
 
+#include "server/db.h"
 #include "server_harness.h"
+#include "shared/core/json.h"
 #include "shared/game/map_elements.h"
+
+#include <sys/stat.h>
+
+#include <fstream>
+#include <iterator>
 
 using namespace flix;
 using flix::testsupport::connectClient;
@@ -11,32 +18,26 @@ using flix::testsupport::loginNew;
 
 // Where a player appears.
 //
-// The map says which ground is the beginner's; the middle of the world is the
-// legendary and mythic band, which a level-1 flower cannot survive and cannot
-// walk out of. These tests exist because spawning there was not an obviously
-// wrong line of code -- it was a plausible-looking "start at the centre".
+// The map says where a player may be put down: a `player_spawns` rectangle is
+// a door, and the picker's row is the list of doors. The middle of the world
+// is the legendary and mythic band, which a level-1 flower cannot survive and
+// cannot walk out of. These tests exist because spawning there was not an
+// obviously wrong line of code -- it was a plausible-looking "start at the
+// centre".
 
 namespace {
 
-/// True when `at` is inside a spawn zone the map marks `common`.
-bool inBeginnerGround(const MapData& map, Vec2 at) {
-    for (const MapElement& element : map.elements()) {
-        if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
-        if (element.spawnTier != Rarity::Common) continue;
-        // The outline, which is what the spawner and the join handler ask. A
-        // bounding-box test here would pass a spawn that landed in the corner a
-        // polygon zone does not cover -- the exact bug this shape change is
-        // meant to make impossible.
-        if (element.contains(at)) return true;
-    }
-    return false;
+/// True when `at` is inside the player spawn rectangle called `spawnId`.
+bool inSpawnPoint(const MapData& map, const std::string& spawnId, Vec2 at) {
+    const MapElement* point = map.playerSpawn(spawnId);
+    return point != nullptr && point->contains(at);
 }
 
 /// The tier bands the map declares over a point, worst first. A spawn that
 /// lands in one of these is a spawn into mobs the player cannot fight.
 bool inTierAbove(const MapData& map, Vec2 at, Rarity floor) {
     for (const MapElement& element : map.elements()) {
-        if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
+        if (!element.isSpawnBand()) continue;
         if (rarityIndex(element.spawnTier) < rarityIndex(floor)) continue;
         if (element.contains(at)) return true;
     }
@@ -50,97 +51,121 @@ Entity onlyPlayer(World& world) {
     return found;
 }
 
+const MapData& overworld(const Harness& h) {
+    static const MapData kEmpty;
+    const MapData* map = h.server.worldMaps().forRealm(Realm::Overworld);
+    return map != nullptr ? *map : kEmpty;
+}
+
 } // namespace
 
-TEST(the_map_bundles_annotation_layer_loads) {
-    MapData map;
+TEST(the_maps_annotation_layers_load) {
+    WorldMaps maps;
     std::string error;
-    CHECK(map.load(dataDir() + "/map_bundle.ts", error));
+    CHECK(maps.load(dataDir(), nullptr, error));
     CHECK(error.empty());
+    for (const std::string& warning : maps.warnings()) {
+        ::testing::reportFailure(__FILE__, __LINE__, "map warning: " + warning);
+    }
+    // The shipped manifest names the overworld and the sewers, in that order,
+    // then the 45 biome maps (nine biomes x five): the order IS the realm
+    // numbering. Regenerating the biome maps or adding one to maps.json must
+    // update this number.
+    CHECK_EQ(maps.count(), 47);
+    CHECK(maps.forRealm(Realm::Overworld) != nullptr);
+    CHECK(maps.forRealm(worldRealm(1)) != nullptr);
+    CHECK(maps.forRealm(Realm::Arena) == nullptr);
+    CHECK(maps.forRealm(Realm::Maze) == nullptr);
+    bool found = false;
+    CHECK(maps.realmOfId("sewers", found) == worldRealm(1));
+    CHECK(found);
 
-    // The declaration reads `MAP_ELEMENTS: MapElement[] = [...]`, and the first
-    // '[' in it belongs to the TYPE. Slicing from there yields an empty array
-    // that parses perfectly and leaves every spawn falling back to the map
-    // centre -- silently. Hence a count, not just a "did it parse".
-    CHECK(map.elements().size() > 100);
+    const MapData& world = *maps.forRealm(Realm::Overworld);
+    CHECK_EQ(world.id(), std::string("world"));
+    CHECK_EQ(world.defaultMobGroup(), std::string("garden"));
+    CHECK(world.elements().size() > 100);
 
-    int spawns = 0;
-    int biomes = 0;
+    int bands = 0;
+    int regions = 0;
+    int doors = 0;
     int teleporters = 0;
-    for (const MapElement& element : map.elements()) {
-        if (element.kind == MapElementKind::Spawn) ++spawns;
-        if (element.kind == MapElementKind::Biome) ++biomes;
+    for (const MapElement& element : world.elements()) {
+        if (element.isSpawnBand()) ++bands;
+        if (element.isMobRegion()) ++regions;
+        if (element.kind == MapElementKind::PlayerSpawn) ++doors;
         if (element.kind == MapElementKind::Teleporter) ++teleporters;
     }
-    CHECK(spawns > 50);
-    CHECK(biomes > 20);
-    // Every teleporter in the bundle is a POINT: width and height are both 0.
-    // A size test that rejects them takes the dots off the minimap and the
-    // glow out of the world, and does it without a word of complaint.
-    CHECK_EQ(teleporters, 8);
-}
-
-TEST(the_picker_offers_every_named_biome_even_a_dangerous_one) {
-    MapData map;
-    std::string error;
-    CHECK(map.load(dataDir() + "/map_bundle.ts", error));
-
-    // The browser's title screen adds every element.type === 'biome' whose
-    // name is neither `garden` nor `unnamed_biome`, with no tier test at all --
-    // the safety filter belongs to the server's spawn logic, which is the
-    // narrower spawnableBiomes() list.
-    CHECK(!map.pickableBiomes().empty());
-    CHECK(map.pickableBiomes().size() >= map.spawnableBiomes().size());
-    for (const std::string& name : map.pickableBiomes()) {
-        CHECK(name != "garden");
-        CHECK(name != "unnamed_biome");
-    }
-    for (const std::string& name : map.spawnableBiomes()) {
-        CHECK(std::find(map.pickableBiomes().begin(), map.pickableBiomes().end(), name) !=
-              map.pickableBiomes().end());
+    CHECK(bands > 150);
+    // One per section: the seven sectionAt() used to decide, plus the jungle
+    // and the unknown corner, which had no mobs of their own before.
+    CHECK_EQ(regions, 9);
+    // The nine biome doors plus the sewers gate.
+    CHECK_EQ(doors, 10);
+    // Every teleporter is a POINT: width and height are both 0. A size test
+    // that rejects them takes the dots off the minimap and the glow out of the
+    // world, and does it without a word of complaint. The eight authored pads
+    // plus one entrance per biome into its first sublevel.
+    CHECK_EQ(teleporters, 17);
+    // And every one of them says where it leads.
+    for (const MapElement& element : world.elements()) {
+        if (element.kind != MapElementKind::Teleporter) continue;
+        CHECK(!element.targetMap.empty());
     }
 }
 
-TEST(only_biomes_with_a_safe_spawn_table_are_offered) {
-    MapData map;
+TEST(the_picker_offers_every_player_spawn_rectangle) {
+    WorldMaps maps;
     std::string error;
-    CHECK(map.load(dataDir() + "/map_bundle.ts", error));
-    CHECK(!map.spawnableBiomes().empty());
+    CHECK(maps.load(dataDir(), nullptr, error));
 
-    for (const std::string& name : map.spawnableBiomes()) {
-        // The editor's names for the default ground and for unnamed rectangles
-        // are not destinations.
-        CHECK(name != "garden");
-        CHECK(name != "unnamed_biome");
-
-        // Every offered biome must have at least one area a player can be put
-        // in, or the picker is offering a choice that silently falls back.
-        bool anySafe = false;
-        for (const MapElement& element : map.elements()) {
-            if (element.kind != MapElementKind::Biome || element.biomeName != name) continue;
-            if (MapData::safeForSpawn(element)) anySafe = true;
+    // Every door on every map is known, each with a label; the PICKABLE ones
+    // are offered, and each of those is reachable by the id the picker sends
+    // back. A biome's sublevel doors are not pickable: they are reached
+    // through pads from the biome's main area, and only door() knows them.
+    std::size_t doors = 0;
+    std::size_t pickable = 0;
+    for (const MapData& map : maps.maps()) {
+        for (const MapElement* point : map.playerSpawns()) {
+            ++doors;
+            if (point->pickable) ++pickable;
         }
-        CHECK(anySafe);
     }
-}
-
-TEST(a_biome_with_no_spawn_table_is_never_safe) {
-    // A biome that declares no table inherits the world's tiers, which run all
-    // the way up. "No table" reads like "no dangerous mobs" and is the opposite.
-    MapElement bare;
-    bare.kind = MapElementKind::Biome;
-    bare.biomeName = "somewhere";
-    CHECK(!MapData::safeForSpawn(bare));
-
-    MapElement safe = bare;
-    safe.hasSpawnTable = true;
-    safe.spawnTable = {BiomeSpawnEntry{Rarity::Common, 1.0, ""},
-                       BiomeSpawnEntry{Rarity::Uncommon, 1.0, ""}};
-    CHECK(MapData::safeForSpawn(safe));
-
-    MapElement deadly = safe;
-    deadly.spawnTable.push_back(BiomeSpawnEntry{Rarity::Mythic, 1.0, ""});
-    CHECK(!MapData::safeForSpawn(deadly));
+    CHECK_EQ(maps.doors().size(), doors);
+    CHECK_EQ(maps.spawnChoices().size(), pickable);
+    // Nine biome doors and a gate on the world, two in the sewers, and one on
+    // each of the 45 generated biome maps.
+    CHECK_EQ(doors, std::size_t{57});
+    // A biome is spawnable only from its MAIN area, the overworld door that
+    // carries its name: the 45 sublevel doors, the two doors of the
+    // hand-authored sewers map and the world's sewer gate (the return point
+    // from that map, next to the pad that leads in) are all reached through
+    // pads, and only the nine biome doors are offered.
+    CHECK_EQ(pickable, std::size_t{9});
+    for (const SpawnChoice& choice : maps.spawnChoices()) {
+        CHECK(!choice.label.empty());
+        CHECK(choice.pickable);
+        CHECK(maps.choice(choice.id) == &choice);
+        CHECK(isWorldRealm(choice.realm));
+    }
+    for (const SpawnChoice& door : maps.doors()) {
+        CHECK(!door.label.empty());
+        CHECK(maps.door(door.id) == &door);
+        if (!door.pickable) CHECK(maps.choice(door.id) == nullptr);
+    }
+    // The garden door is first: it is what a player who chose nothing gets.
+    // (Guarded: a world map that failed to load has no doors, and that should
+    // read as a failed test, not a crashed binary.)
+    const MapData* overworld = maps.forRealm(Realm::Overworld);
+    CHECK(overworld != nullptr && !overworld->playerSpawns().empty());
+    if (overworld != nullptr && !overworld->playerSpawns().empty()) {
+        CHECK_EQ(overworld->playerSpawns().front()->spawnId, std::string("garden"));
+    }
+    // A door on the second map carries that map's realm, and is known to
+    // door() but not offered by choice().
+    const SpawnChoice* entrance = maps.door("sewers_entrance");
+    CHECK(entrance != nullptr);
+    if (entrance != nullptr) CHECK(entrance->realm == worldRealm(1));
+    CHECK(maps.choice("sewers_entrance") == nullptr);
 }
 
 TEST(a_player_joins_on_the_beginner_ground) {
@@ -157,11 +182,12 @@ TEST(a_player_joins_on_the_beginner_ground) {
     if (body == NULL_ENTITY) return;
     const Vec2 at = h.server.world().get<Transform>(body).position;
 
-    CHECK(inBeginnerGround(h.server.mapData(), at));
-    CHECK(!inTierAbove(h.server.mapData(), at, Rarity::Rare));
+    CHECK(inSpawnPoint(overworld(h), "garden", at));
+    CHECK(!inTierAbove(overworld(h), at, Rarity::Rare));
     // Section 0 is the map's top-left, which is where the beginner ground is.
     CHECK_EQ(sectionAt(at), 0);
     CHECK(!h.server.terrain().blocked(at, Realm::Overworld));
+    CHECK(h.server.world().get<Transform>(body).realm == Realm::Overworld);
 }
 
 TEST(respawning_returns_to_the_beginner_ground) {
@@ -197,37 +223,26 @@ TEST(respawning_returns_to_the_beginner_ground) {
 
     // The whole point: a respawn goes back to the beginner ground, NOT to a
     // band picked from the player's level and not to the middle of the map.
-    CHECK(inBeginnerGround(h.server.mapData(), at));
-    CHECK(!inTierAbove(h.server.mapData(), at, Rarity::Rare));
+    CHECK(inSpawnPoint(overworld(h), "garden", at));
+    CHECK(!inTierAbove(overworld(h), at, Rarity::Rare));
     CHECK(distance(at, {kWorldHalf, kWorldHalf}) > 5000.0);
 }
 
-TEST(a_chosen_biome_is_honoured_and_survives_a_respawn) {
-    Harness h("spawn-biome");
+TEST(a_chosen_spawn_point_is_honoured_and_survives_a_respawn) {
+    Harness h("spawn-choice");
     if (!h.ready) { CHECK(false); return; }
-    const std::vector<std::string>& offered = h.server.mapData().spawnableBiomes();
-    CHECK(!offered.empty());
-    if (offered.empty()) return;
-    const std::string biome = offered.front();
+    CHECK(h.server.worldMaps().choice("desert") != nullptr);
 
     NetClient client;
     CHECK(loginNew(h, client, "wanderer", "password7"));
-    client.joinGame(1280, 720, biome);
+    client.joinGame(1280, 720, "desert");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
 
     World& world = h.server.world();
-    const auto insideChosenBiome = [&](Vec2 at) {
-        for (const MapElement& element : h.server.mapData().elements()) {
-            if (element.kind != MapElementKind::Biome || element.biomeName != biome) continue;
-            if (MapData::safeForSpawn(element) && element.contains(at)) return true;
-        }
-        return false;
-    };
-
     Entity body = onlyPlayer(world);
     CHECK(body != NULL_ENTITY);
     if (body == NULL_ENTITY) return;
-    CHECK(insideChosenBiome(world.get<Transform>(body).position));
+    CHECK(inSpawnPoint(overworld(h), "desert", world.get<Transform>(body).position));
 
     // The choice lives on the session, so dying does not quietly move the
     // player back to the garden.
@@ -242,16 +257,66 @@ TEST(a_chosen_biome_is_honoured_and_survives_a_respawn) {
 
     body = onlyPlayer(world);
     CHECK(body != NULL_ENTITY);
-    if (body != NULL_ENTITY) CHECK(insideChosenBiome(world.get<Transform>(body).position));
+    if (body != NULL_ENTITY) {
+        CHECK(inSpawnPoint(overworld(h), "desert", world.get<Transform>(body).position));
+    }
 }
 
-TEST(a_biome_the_map_cannot_place_anyone_in_falls_back) {
+TEST(a_teleporter_carries_a_player_to_another_map) {
+    Harness h("spawn-teleporter");
+    if (!h.ready) { CHECK(false); return; }
+
+    // The pad in the sewer corner is the door to the sewers map.
+    const MapElement* pad = nullptr;
+    for (const MapElement& element : overworld(h).elements()) {
+        if (element.kind == MapElementKind::Teleporter && element.targetMap == "sewers") pad = &element;
+    }
+    CHECK(pad != nullptr);
+    if (pad == nullptr) return;
+
+    NetClient client;
+    CHECK(loginNew(h, client, "spelunker", "password7"));
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    World& world = h.server.world();
+    const Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+
+    // Stand on the pad and wait out the dwell. The pad is HELD, not touched:
+    // stepping onto it and straight off again must not fire it.
+    world.get<Transform>(body).position = pad->centre();
+    CHECK(h.stepUntil({&client}, [&] {
+        return world.get<Transform>(body).realm != Realm::Overworld;
+    }, 120));
+
+    const Transform& at = world.get<Transform>(body);
+    bool found = false;
+    const Realm sewers = h.server.worldMaps().realmOfId("sewers", found);
+    CHECK(found);
+    CHECK(at.realm == sewers);
+    const MapData* map = h.server.worldMaps().forRealm(sewers);
+    CHECK(map != nullptr);
+    if (map != nullptr) CHECK(inSpawnPoint(*map, pad->targetSpawn, at.position));
+    // The kit came too: nothing of this flower's is left in the overworld.
+    Query<Transform, PetalInstance> petals{world};
+    petals.each([&](Entity, Transform& petal, PetalInstance& owner) {
+        if (owner.owner == body) CHECK(petal.realm == sewers);
+    });
+    // And the client followed: it was sent the sewers' grid and drew the
+    // arrival there.
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == sewers; }));
+    CHECK_EQ(client.terrain().tileCols(sewers), h.server.terrain().tileCols(sewers));
+}
+
+TEST(a_spawn_choice_the_maps_do_not_define_falls_back) {
     Harness h("spawn-unknown");
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
     CHECK(loginNew(h, client, "lost", "password7"));
-    // A biome that is not in the map at all. The join must still succeed, on
+    // A spawn point that is not on any map. The join must still succeed, on
     // the beginner ground, rather than being refused or landing nowhere.
     client.joinGame(1280, 720, "atlantis");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
@@ -259,7 +324,7 @@ TEST(a_biome_the_map_cannot_place_anyone_in_falls_back) {
     const Entity body = onlyPlayer(h.server.world());
     CHECK(body != NULL_ENTITY);
     if (body == NULL_ENTITY) return;
-    CHECK(inBeginnerGround(h.server.mapData(), h.server.world().get<Transform>(body).position));
+    CHECK(inSpawnPoint(overworld(h), "garden", h.server.world().get<Transform>(body).position));
 }
 
 // ---------------------------------------------------------------------------
@@ -368,16 +433,12 @@ TEST(a_distribution_parses_the_authored_syntax) {
     CHECK(warning.empty());
     CHECK(rows.size() == 2);
 
-    // "garden" is one of the nine mob-spawn sections, so it is a preset: this
-    // row defers to whatever the Garden's ambient table holds.
-    CHECK(rows[0].isPreset());
-    CHECK(rows[0].presetSection == 0);
-    CHECK(rows[0].mobType.empty());
+    // Names only. Whether "garden" is a group or "hornet" is a mob is the
+    // content's question, answered when the band is built against it: the map
+    // layer must not depend on mobs.json to be readable.
+    CHECK_EQ(rows[0].name, std::string("garden"));
     CHECK_EQ(rows[0].weight, 50.0);
-
-    // "hornet" is not a section, so it is a mob named outright.
-    CHECK(!rows[1].isPreset());
-    CHECK_EQ(rows[1].mobType, std::string("hornet"));
+    CHECK_EQ(rows[1].name, std::string("hornet"));
     CHECK_EQ(rows[1].weight, 50.0);
 }
 
@@ -389,26 +450,26 @@ TEST(a_distribution_accepts_the_shapes_an_author_will_type) {
     const std::vector<ZoneMobEntry> ratio = parseMobDistribution("ocean 1 jellyfish 4", nullptr);
     for (const auto* rows : {&spelled, &bare, &ratio}) {
         CHECK(rows->size() == 2);
-        CHECK((*rows)[0].presetSection == 3);          // Ocean
-        CHECK_EQ((*rows)[1].mobType, std::string("jellyfish"));
+        CHECK_EQ((*rows)[0].name, std::string("ocean"));
+        CHECK_EQ((*rows)[1].name, std::string("jellyfish"));
         CHECK((*rows)[1].weight > (*rows)[0].weight);
     }
 
     // A bare name is a zone of nothing but that.
     const std::vector<ZoneMobEntry> only = parseMobDistribution("hornet", nullptr);
     CHECK(only.size() == 1);
-    CHECK_EQ(only[0].mobType, std::string("hornet"));
+    CHECK_EQ(only[0].name, std::string("hornet"));
     CHECK_EQ(only[0].weight, 1.0);
 
-    // Underscored section names, because "Ant Hell" is a section.
+    // Underscores are part of a name, because "ant_hell" is a group.
     const std::vector<ZoneMobEntry> ants = parseMobDistribution("ant_hell 100%", nullptr);
     CHECK(ants.size() == 1);
-    CHECK(ants[0].presetSection == 4);
+    CHECK_EQ(ants[0].name, std::string("ant_hell"));
 }
 
 TEST(a_broken_distribution_is_reported_not_guessed_at) {
     // Nothing at all: the spawner reads an empty list as "no distribution" and
-    // does the ambient roll it always did.
+    // asks the ground under the band instead.
     CHECK(parseMobDistribution("", nullptr).empty());
     CHECK(parseMobDistribution("   ", nullptr).empty());
 
@@ -419,30 +480,300 @@ TEST(a_broken_distribution_is_reported_not_guessed_at) {
     const std::vector<ZoneMobEntry> rows = parseMobDistribution("hornet 0 bee 3", &warning);
     CHECK(!warning.empty());
     CHECK(rows.size() == 1);
-    CHECK_EQ(rows[0].mobType, std::string("bee"));
-
-    // Every section name resolves, and nothing else does.
-    CHECK(sectionIndexByName("garden") == 0);
-    CHECK(sectionIndexByName("sewers") == 6);
-    CHECK(sectionIndexByName("unknown") == 8);
-    CHECK(sectionIndexByName("hornet") == -1);
-    CHECK(sectionIndexByName("Garden") == -1);   // ids are lower case
+    CHECK_EQ(rows[0].name, std::string("bee"));
 }
 
-TEST(the_shipped_zones_keep_the_ambient_roll) {
-    // No zone on the map declares a distribution yet, and that is the point of
-    // the empty case: 151 zones go on spawning the ambient table of whichever
-    // section the mob lands in, exactly as they did. Six of them straddle two
-    // sections, and for those "the section the mob landed in" is not a constant
-    // -- which is why the default is not written out as a preset.
+TEST(the_shipped_bands_lean_on_the_regions_under_them) {
+    // The tier bands say how dangerous their ground is and nothing else: what
+    // grows there is the mob REGION under them, one per section, which is
+    // exactly what sectionAt() decided before it was written into the map.
+    // Six bands straddle a section boundary, and a band that named a group
+    // would have to average the two.
     MapData map;
     std::string error;
     CHECK(map.loadWorldMap(dataDir() + "/world.tmj", error));
-    int zones = 0;
+    int silentBands = 0;
+    int namedBands = 0;
+    int regions = 0;
     for (const MapElement& element : map.elements()) {
-        if (element.kind != MapElementKind::Spawn) continue;
-        ++zones;
-        CHECK(element.mobDistribution.empty());
+        if (element.isMobRegion()) {
+            ++regions;
+            // One group, or a weighted mix -- the unknown corner is half
+            // computer and half hel.
+            CHECK(!element.mobDistribution.empty());
+            continue;
+        }
+        if (!element.isSpawnBand()) continue;
+        if (element.mobDistribution.empty()) ++silentBands;
+        else ++namedBands;
     }
-    CHECK(zones > 100);
+    CHECK(silentBands > 100);
+    // The old biome rooms -- bee fields, ant nests, the DPS row -- became
+    // bands that name their mobs outright.
+    CHECK(namedBands > 50);
+    CHECK_EQ(regions, 9);
+}
+
+// ---------------------------------------------------------------------------
+// Doors: safe ground, and who may use which
+// ---------------------------------------------------------------------------
+
+TEST(every_pickable_door_stands_on_safe_open_ground) {
+    // The rule the picker relies on: a door the title screen offers puts a
+    // fresh flower down on open ground with nothing above uncommon over it.
+    // Checked over every staged map, so a generator regression or a hand edit
+    // that slides a rare band over a door does not ship unnoticed.
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    if (!maps.load(flix::testsupport::dataDir(), &terrain, error)) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load: " + error);
+        return;
+    }
+    int doors = 0;
+    for (const SpawnChoice& choice : maps.spawnChoices()) {
+        CHECK(choice.pickable);
+        const MapData* map = maps.forRealm(choice.realm);
+        if (map == nullptr || choice.element < 0 ||
+            choice.element >= static_cast<int>(map->elements().size())) {
+            ::testing::reportFailure(__FILE__, __LINE__, "door " + choice.id + " has no rectangle");
+            continue;
+        }
+        const MapElement& door = map->elements()[static_cast<std::size_t>(choice.element)];
+        const Vec2 centre = door.centre();
+        ++doors;
+        if (inTierAbove(*map, centre, Rarity::Rare)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "door " + choice.id + " on " + map->id() +
+                                         " sits under a rare-or-better band");
+        }
+        if (terrain.blocked(centre, choice.realm)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "door " + choice.id + " on " + map->id() +
+                                         " is walled over");
+        }
+    }
+    CHECK(doors > 0);
+    // Every door, pickable or not, is known by the same ids: a pad arrives at
+    // a sublevel door through door(), never through choice().
+    CHECK(maps.doors().size() >= maps.spawnChoices().size());
+    for (const SpawnChoice& choice : maps.spawnChoices()) {
+        const SpawnChoice* same = maps.door(choice.id);
+        CHECK(same != nullptr);
+        if (same != nullptr) CHECK(same->realm == choice.realm);
+    }
+}
+
+namespace {
+
+bool copyFile(const std::string& from, const std::string& to) {
+    std::ifstream in(from, std::ios::binary);
+    if (!in) return false;
+    std::ofstream out(to, std::ios::binary | std::ios::trunc);
+    out << in.rdbuf();
+    return out.good();
+}
+
+/// A data directory that is the staged one with the sewers' door marked
+/// `pickable = false`: a sublevel door, as the biome maps' are. Built rather
+/// than taken from the staged maps so the test does not depend on which maps
+/// the generator has marked yet.
+std::string stageSublevelDataDir() {
+    const std::string src = flix::testsupport::dataDir();
+    const std::string dir = "/tmp/florr-itest-sublevel-" + std::to_string(::getpid());
+    mkdir(dir.c_str(), 0755);
+    for (const char* name : {"mobs.json", "petals.json", "mob_xp.json", "mob_drops.json",
+                             "terrain.tsj", "ground.tsj", "world.tmj"}) {
+        if (!copyFile(src + "/" + name, dir + "/" + name)) return {};
+    }
+    std::ifstream in(src + "/sewers.tmj", std::ios::binary);
+    if (!in) return {};
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    Json map;
+    std::string error;
+    if (!Json::parse(text, map, error)) return {};
+    for (Json& layer : map["layers"].items()) {
+        if (layer["name"].asString() != "player_spawns") continue;
+        for (Json& object : layer["objects"].items()) {
+            bool flagged = false;
+            if (object.contains("properties")) {
+                for (Json& property : object["properties"].items()) {
+                    if (property["name"].asString() == "pickable") { property["value"] = false; flagged = true; }
+                }
+            }
+            if (flagged) continue;
+            Json flag = Json::object();
+            flag["name"] = "pickable";
+            flag["type"] = "bool";
+            flag["value"] = false;
+            if (!object.contains("properties")) object["properties"] = Json::array();
+            object["properties"].push(flag);
+        }
+    }
+    std::ofstream out(dir + "/sewers.tmj", std::ios::binary | std::ios::trunc);
+    out << map.dump();
+    std::ofstream manifest(dir + "/maps.json", std::ios::binary | std::ios::trunc);
+    manifest << R"({"maps": [{"file": "world.tmj"}, {"file": "sewers.tmj"}]})";
+    return dir;
+}
+
+/// An admin account, seeded before the server opens the database.
+void seedAdminAccount(const std::string& path) {
+    Database db;
+    std::string error;
+    db.load(path, error);
+    db.setPasswordCost(4);
+    CreateResult created = db.createUser("boss", "password7");
+    if (created.ok()) created.account->admin = true;
+    db.markDirty();
+    db.save();
+}
+
+/// The loopback harness over a data directory of the test's choosing.
+struct DataDirHarness {
+    GameServer server;
+    std::string dbPath;
+    std::uint16_t port = 0;
+    bool ready = false;
+    double clock = 0;
+
+    DataDirHarness(const std::string& dataDir, const char* dbName) {
+        dbPath = flix::testsupport::tempPath(dbName);
+        std::remove(dbPath.c_str());
+        seedAdminAccount(dbPath);
+        ServerConfig config;
+        config.dataDir = dataDir;
+        config.databasePath = dbPath;
+        config.worldSeed = 12345;
+        std::string error;
+        for (std::uint16_t candidate = 47100; candidate < 47160; ++candidate) {
+            config.port = candidate;
+            if (server.start(config, error)) { port = candidate; ready = true; break; }
+        }
+        if (!ready) std::printf("  harness could not start a server: %s\n", error.c_str());
+    }
+    ~DataDirHarness() { std::remove(dbPath.c_str()); }
+
+    void step(int ticks, std::vector<NetClient*> clients) {
+        for (int i = 0; i < ticks; ++i) {
+            for (NetClient* c : clients) c->poll(1);
+            server.serviceNetwork(1);
+            clock += net::kTickMillis;
+            server.tick(clock);
+            server.serviceNetwork(0);
+            for (NetClient* c : clients) c->poll(1);
+        }
+    }
+    template <class F>
+    bool stepUntil(std::vector<NetClient*> clients, F done, int maxTicks = 400) {
+        for (int i = 0; i < maxTicks; ++i) {
+            step(1, clients);
+            if (done()) return true;
+        }
+        return false;
+    }
+    bool connect(NetClient& client) {
+        client.contentHash = content().contentHash();
+        if (!client.connect("127.0.0.1", port)) return false;
+        return stepUntil({&client}, [&] { return client.status() == NetClient::Status::Ready; });
+    }
+};
+
+Entity bodyNamed(World& world, const std::string& name) {
+    Entity found = NULL_ENTITY;
+    Query<PlayerTag, PlayerAccount> players{world};
+    players.each([&](Entity e, PlayerTag&, PlayerAccount& account) {
+        if (account.username == name) found = e;
+    });
+    return found;
+}
+
+} // namespace
+
+TEST(a_spawn_point_on_another_map_joins_into_that_map) {
+    // The sewers' door is not offered, so it takes an admin to name it; what
+    // is checked here is what naming a door on ANOTHER MAP does once the
+    // server accepts it.
+    Harness h("spawn-other-map", seedAdminAccount);
+    if (!h.ready) { CHECK(false); return; }
+    const SpawnChoice* entrance = h.server.worldMaps().door("sewers_entrance");
+    CHECK(entrance != nullptr);
+    if (entrance == nullptr) return;
+
+    NetClient client;
+    CHECK(flix::testsupport::connectClient(h, client));
+    client.requestLogin("boss", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    client.joinGame(1280, 720, "sewers_entrance", "boss");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    World& world = h.server.world();
+    const Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+    const Transform& at = world.get<Transform>(body);
+    // In the sewers' own coordinate space, inside its door, and the client was
+    // told so: the grid it drew is the sewers' shape, not the world's.
+    CHECK(at.realm == entrance->realm);
+    const MapData* sewers = h.server.worldMaps().forRealm(entrance->realm);
+    CHECK(sewers != nullptr);
+    if (sewers != nullptr) CHECK(inSpawnPoint(*sewers, "sewers_entrance", at.position));
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == entrance->realm; }));
+    CHECK_EQ(client.terrain().tileCols(entrance->realm), h.server.terrain().tileCols(entrance->realm));
+    CHECK_EQ(client.terrain().tileRows(entrance->realm), h.server.terrain().tileRows(entrance->realm));
+    CHECK(client.terrain().tileCols(entrance->realm) != kTilesPerAxis);
+    CHECK(!h.server.terrain().blocked(at.position, at.realm));
+}
+
+TEST(a_sublevel_door_is_joined_only_by_an_admin) {
+    const std::string dataDir = stageSublevelDataDir();
+    CHECK(!dataDir.empty());
+    if (dataDir.empty()) return;
+    DataDirHarness h(dataDir, "spawn-sublevel");
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    // The door exists and is not offered.
+    const WorldMaps& maps = h.server.worldMaps();
+    const SpawnChoice* door = maps.door("sewers_entrance");
+    CHECK(door != nullptr);
+    if (door == nullptr) return;
+    CHECK(!door->pickable);
+    CHECK(maps.choice("sewers_entrance") == nullptr);
+    for (const SpawnChoice& choice : maps.spawnChoices()) CHECK(choice.pickable);
+
+    // A player naming it starts at the default, on the overworld.
+    NetClient player;
+    CHECK(h.connect(player));
+    player.requestRegister("ratcatcher", "password7");
+    CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::LoggedIn; }));
+    player.joinGame(1280, 720, "sewers_entrance", "ratcatcher");
+    CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::Playing; }));
+    World& world = h.server.world();
+    const Entity body = bodyNamed(world, "ratcatcher");
+    CHECK(body != NULL_ENTITY);
+    if (body != NULL_ENTITY) {
+        const Transform& at = world.get<Transform>(body);
+        CHECK(at.realm == Realm::Overworld);
+        const MapData* overworldMap = maps.forRealm(Realm::Overworld);
+        CHECK(overworldMap != nullptr && inSpawnPoint(*overworldMap, "garden", at.position));
+    }
+    CHECK(player.view().realm() == Realm::Overworld);
+
+    // An admin naming it arrives in the sewers, at that door.
+    NetClient admin;
+    CHECK(h.connect(admin));
+    admin.requestLogin("boss", "password7");
+    CHECK(h.stepUntil({&admin}, [&] { return admin.status() == NetClient::Status::LoggedIn; }));
+    admin.joinGame(1280, 720, "sewers_entrance", "boss");
+    CHECK(h.stepUntil({&player, &admin}, [&] { return admin.status() == NetClient::Status::Playing; }));
+    const Entity bossBody = bodyNamed(world, "boss");
+    CHECK(bossBody != NULL_ENTITY);
+    if (bossBody != NULL_ENTITY) {
+        const Transform& at = world.get<Transform>(bossBody);
+        CHECK(at.realm == door->realm);
+        const MapData* sewers = maps.forRealm(door->realm);
+        CHECK(sewers != nullptr && inSpawnPoint(*sewers, "sewers_entrance", at.position));
+    }
+    CHECK(h.stepUntil({&player, &admin}, [&] { return admin.view().realm() == door->realm; }));
 }

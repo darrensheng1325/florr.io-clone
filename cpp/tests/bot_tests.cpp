@@ -265,3 +265,63 @@ TEST(set_bot_count_moves_the_population_at_once) {
     h.step(3, {&client});
     CHECK(countBots(world) < kMaxBots);
 }
+
+TEST(a_bot_never_takes_a_pad) {
+    // Bots exist to populate the overworld, and their controller reads only
+    // that map's grid. A bot carried through a pad would steer around walls
+    // it is not standing among, so a pad simply does not take one -- however
+    // long it stands there -- while the same pad takes a player.
+    Harness h("bots-pads");
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    NetClient client;
+    CHECK(loginNew(h, client, "padwatcher", "hunter22"));
+    client.joinGame(1280, 720, {}, "padwatcher");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    h.step(200, {&client});
+
+    World& world = h.server.world();
+    const MapData* overworld = h.server.worldMaps().forRealm(Realm::Overworld);
+    const MapElement* pad = nullptr;
+    for (const MapElement& element : overworld != nullptr ? overworld->elements()
+                                                          : std::vector<MapElement>{}) {
+        if (element.kind == MapElementKind::Teleporter && element.targetMap == "sewers") {
+            pad = &element;
+        }
+    }
+    CHECK(pad != nullptr);
+    const std::vector<Entity> bots = botBodies(world);
+    CHECK(!bots.empty());
+    if (pad == nullptr || bots.empty()) return;
+
+    // Held on the pad's centre every tick for three dwell periods: a player
+    // would have been sent to the sewers three times over.
+    const Entity bot = bots.front();
+    const int ticks = static_cast<int>(3.0 * kTeleporterDwellMillis / net::kTickMillis);
+    for (int i = 0; i < ticks && world.isAlive(bot); ++i) {
+        world.get<Transform>(bot).position = pad->centre();
+        h.step(1, {&client});
+    }
+    CHECK(world.isAlive(bot));
+    if (world.isAlive(bot)) {
+        CHECK(world.get<Transform>(bot).realm == Realm::Overworld);
+        // Not even charging: the pad never began to take it.
+        if (const TeleporterState* state = world.tryGet<TeleporterState>(bot)) {
+            CHECK(state->pad < 0);
+        }
+    }
+
+    // The same pad, the same hold, a player: gone to the sewers.
+    Entity player = NULL_ENTITY;
+    Query<PlayerTag, PlayerAccount> players{world};
+    players.each([&](Entity e, PlayerTag&, PlayerAccount& account) {
+        if (account.username == "padwatcher") player = e;
+    });
+    CHECK(player != NULL_ENTITY);
+    if (player == NULL_ENTITY) return;
+    world.get<Transform>(player).position = pad->centre();
+    CHECK(h.stepUntil({&client}, [&] {
+        return world.get<Transform>(player).realm != Realm::Overworld;
+    }, ticks));
+}

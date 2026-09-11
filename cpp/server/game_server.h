@@ -137,7 +137,8 @@ public:
     /// reports out of it; nothing outside this class writes to it.
     const Database& database() const { return database_; }
     const Terrain& terrain() const { return *terrain_; }
-    const MapData& mapData() const { return mapData_; }
+    /// Every staged map's annotation layer, and which realm each one is.
+    const WorldMaps& worldMaps() const { return worldMaps_; }
     std::size_t playerCount() const;
 
     // net::TransportHandler
@@ -416,6 +417,15 @@ private:
     void despawnPlayer(Session&, bool persist);
     /// Which realm this session's next body belongs in, from its spawn choice.
     Realm spawnRealmFor(const Session&) const;
+    /// The door the session's spawn choice names, or null for the default and
+    /// for the two realms that have no map. A sublevel door (pickable false)
+    /// only resolves for an admin session: everyone else reaches those
+    /// through a pad from the biome's main area.
+    const SpawnChoice* chosenDoor(const Session&) const;
+    /// Tells a client which map its body is standing on now: the arrival
+    /// point and the realm's whole tile grid. Resets the server-side view so
+    /// everything in reach is restated from first sight.
+    void sendRealmChange(Session&, Vec2 position);
     /// The account state a session's body plays with: the arena run's scratch
     /// record while there is one (see Session::arena), else the real account.
     /// Every inventory and loadout handler goes through here, which is what
@@ -455,7 +465,10 @@ private:
     /// Every live mob body, for the spawn-placement tests that refuse a point
     /// standing on one. Rebuilt per call: a spawn is rare and the alternative
     /// is a cache that has to be kept true.
-    void collectSpawnBlockers(std::vector<MobDisc>& out) const;
+    /// Every mob body in `realm`, as the discs a spawn point has to clear. One
+    /// realm's, because a spawn is judged crowded by what stands on ITS map,
+    /// not by a mob at the same numbers on another.
+    void collectSpawnBlockers(Realm realm, std::vector<MobDisc>& out) const;
 
     /// Refreshes each live account's leaderboard reward tier from the ranking.
     /// Cached rather than looked up per kill, as the reference caches it: the
@@ -469,6 +482,17 @@ private:
 
     Session* sessionFor(net::ConnectionId id);
     Session* sessionForEntity(Entity e);
+
+    /// Moves a body -- and its whole kit -- into another realm, and tells its
+    /// client which map it is now standing on.
+    ///
+    /// This is what a teleporter does, and it is deliberately NOT
+    /// teleportEntity(): that one moves a body inside its own realm and can
+    /// stay silent because the client's own snap-distance rule covers it.
+    /// Crossing realms changes which grid is under the body, which nothing on
+    /// the client can infer. A pad whose target is the realm the body is
+    /// already in takes the silent path: same grid, nothing to resend.
+    void moveEntityToRealm(Entity, Realm, Vec2 position);
 
     // -- bots --------------------------------------------------------------
     //
@@ -653,9 +677,10 @@ private:
     World world_;
     CommandBuffer commands_{world_};
     std::unique_ptr<Terrain> terrain_;
-    /// The map's annotation layer: which ground is the beginner's, and which
-    /// rectangle is which biome. Read only when a player spawns.
-    MapData mapData_;
+    /// Every staged map: where a joining player may be put down, what lives on
+    /// each stretch of ground, and which pad leads to which other map. The
+    /// realm an entity is in is the index into this.
+    WorldMaps worldMaps_;
     SpatialGrid grid_;
     Rng rng_;
 

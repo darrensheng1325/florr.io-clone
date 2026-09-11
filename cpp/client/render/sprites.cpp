@@ -5,6 +5,7 @@
 
 #include "client/ui/draw.h"
 #include "shared/game/config.h"
+#include "shared/game/tiled_map.h"
 
 namespace flix {
 
@@ -465,6 +466,52 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
     }
     bridge_ = compileArt(kBridgeArt, "tile bridge");
 
+    // The wall, water and floor tiles of every skin in kTileSkinNames (the
+    // default family plus sewers, computer and unknown -- nothing is looked
+    // up for a biome that has no family), by bare file name out of the data
+    // directory, where the build stages maps/tiles/ flat. Optional in the
+    // same way the ground is: a missing file costs that tile its artwork --
+    // one warning, and the renderer falls back to the default skin's art or
+    // the flat colour -- never the client. A whole skin's art may be missing
+    // while it is still being drawn, and that must be fine.
+    //
+    // The file names are the tileset's class names plus `.svg`
+    // (scripts/lib/tileArt.js writes both from one table):
+    //   skin 0:   wall.svg  wall_edge_<sides>.svg  water_edge_<sides>.svg
+    //   skin s:   wall_<s>.svg  wall_<s>_edge_<sides>.svg  water_<s>.svg
+    //             water_<s>_edge_<sides>.svg  floor_<s>_<0..2>.svg
+    // with <sides> the mask spelled in fixed n, e, s, w order.
+    const auto loadTileFile = [&](const std::string& name, std::shared_ptr<SvgDocument>& out) {
+        const std::string path = dataDir + "/" + name;
+        auto document = std::make_shared<SvgDocument>(SvgDocument::fromFile(path));
+        if (document->empty()) {
+            warnings_.push_back("tile " + path + ": unreadable, falling back to a flat fill");
+            return;
+        }
+        out = std::move(document);
+    };
+    for (int skin = 0; skin < kTileSkinCount; ++skin) {
+        const std::string name = kTileSkinNames[skin];
+        const std::string wall = skin == 0 ? "wall" : "wall_" + name;
+        const std::string water = skin == 0 ? "water" : "water_" + name;
+        TileArtRow& walls = wallArt_[static_cast<std::size_t>(skin)];
+        TileArtRow& waters = waterArt_[static_cast<std::size_t>(skin)];
+        loadTileFile(wall + ".svg", walls[0]);
+        // The default water's plain tile is the flat fill and has no file to
+        // load; a biome's is its base art.
+        if (skin != 0) loadTileFile(water + ".svg", waters[0]);
+        for (std::uint8_t mask = 1; mask <= kEdgeMaskMax; ++mask) {
+            const std::string suffix = edgeMaskSuffix(mask);
+            loadTileFile(wall + "_edge_" + suffix + ".svg", walls[mask]);
+            loadTileFile(water + "_edge_" + suffix + ".svg", waters[mask]);
+        }
+        if (skin == 0) continue;   // the default family has no floor decorations
+        for (int variant = 0; variant < kFloorVariantsPerSkin; ++variant) {
+            loadTileFile("floor_" + name + "_" + std::to_string(variant) + ".svg",
+                         floorArt_[static_cast<std::size_t>(skin)][static_cast<std::size_t>(variant)]);
+        }
+    }
+
     return !mobs_.empty() && !petals_.empty();
 }
 
@@ -483,8 +530,21 @@ const SvgDocument* SpriteCache::groundArt(int groundId) const {
 
 const SvgDocument* SpriteCache::tileArt(Tile tile) const {
     // Only the bridge carries artwork the flat colour cannot express: sewage
-    // is a solid fill in its own SVG, and block declares none at all.
+    // is a solid fill in its own SVG, and block declares none at all. Wall
+    // and water go through edgeArt(), which knows which sides they show.
     return tile == Tile::Sand ? bridge_.get() : nullptr;
+}
+
+const SvgDocument* SpriteCache::edgeArt(Tile tile, std::uint8_t skin, std::uint8_t mask) const {
+    if (mask > kEdgeMaskMax || skin >= kTileSkinCount) return nullptr;
+    if (tile == Tile::Wall) return wallArt_[skin][mask].get();
+    if (tile == Tile::Water) return waterArt_[skin][mask].get();   // [0][0] is empty by design
+    return nullptr;
+}
+
+const SvgDocument* SpriteCache::floorArt(std::uint8_t skin, std::uint8_t variant) const {
+    if (skin == 0 || skin >= kTileSkinCount || variant >= kFloorVariantsPerSkin) return nullptr;
+    return floorArt_[skin][variant].get();
 }
 
 void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y, double diameter,

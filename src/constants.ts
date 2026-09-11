@@ -359,6 +359,11 @@ export interface BiomeSpawnEntry {
 }
 
 export interface MapElement {
+    /**
+     * `biome` is kept in the union only so the frozen TypeScript server's own
+     * type guards still compile; no map has produced one since the object
+     * layers were reworked, and the C++ readers ignore it.
+     */
     type: 'wall' | 'spawn' | 'teleporter' | 'biome';
     /**
      * The element's bounding box. When `polygon` is present these four are its
@@ -373,27 +378,49 @@ export interface MapElement {
     /**
      * The zone's outline in world coordinates, when it is not a rectangle.
      *
-     * Spawn zones are drawn as polygons in Tiled: a tier band follows a
-     * coastline or a canyon, and a rectangle over one of those either spills
-     * mobs into the next tier's ground or leaves a wedge of its own empty. A
-     * missing `polygon` means the outline IS the rectangle, which is what every
-     * biome and teleporter still is.
-     *
      * DECLARED HERE, NOT HONOURED HERE. This file's only stake in it is that
-     * `map_bundle.ts` typechecks; nothing in `src/` reads the field, so the
-     * unmaintained TypeScript server still treats every zone as the box above,
-     * and will spawn into the corners a polygon does not cover. The C++ server
-     * is the one that reads outlines — see cpp/shared/game/map_elements.h.
+     * `map_bundle.ts` typechecks; nothing in `src/` reads the field. The C++
+     * server is the one that reads outlines — see cpp/shared/game/map_elements.h.
      */
     polygon?: { x: number; y: number }[];
+    /**
+     * Everything an annotation says about itself. Like `polygon`, declared so
+     * the generated bundle typechecks: the C++ side is what reads a spawn
+     * band's `mobs`, a player spawn rectangle's button, or a teleporter's
+     * target map. Biome rectangles and their spawn tables no longer exist —
+     * what they said is said by mob regions and tier bands now.
+     */
     properties?: {
+        spawnType?: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic' | 'ultra'
+            | 'super' | 'unique' | 'apex';
+        /** A spawn band's or mob region's distribution: `garden 50% hornet 50%`. */
+        mobs?: string;
+        /**
+         * Player spawn rectangles: the picker's button. The bundle never
+         * carries one -- encodeMap.js leaves `player_spawn` objects out,
+         * because the frozen TypeScript server has no picker to feed and its
+         * renderer indexes a colour table by element type. They are read off
+         * the Tiled map directly by the C++ side.
+         */
+        spawnId?: string;
+        label?: string;
+        color?: string;
+        order?: number;
+        backdrop?: string;
+        biome?: string;
+        pickable?: boolean;
+        /** Teleporters: the map the pad leads to, and where in it. */
+        targetMap?: string;
+        targetSpawn?: string;
         teleportTo?: { x: number; y: number; serverPort?: number };
-        spawnType?: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic' | 'ultra';
+        /** @deprecated Biome rectangles are gone; kept for the frozen TS server's typecheck. */
+        biomeName?: string;
+        /** @deprecated */
+        spawnTable?: BiomeSpawnEntry[];
+        /** @deprecated */
+        backgroundTexture?: string;
+        /** @deprecated */
         isNoCombat?: boolean;
-        // Biome-specific properties
-        biomeName?: string;  // Unique identifier for the biome
-        spawnTable?: BiomeSpawnEntry[];  // Spawn table for this biome
-        backgroundTexture?: string;  // Path to background texture (e.g., "land.svg", "desert.svg")
     };
 }
 

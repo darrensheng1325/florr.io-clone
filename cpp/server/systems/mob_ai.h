@@ -459,7 +459,12 @@ private:
     /// query per hostile mob per tick.
     Entity acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
                             double range);
-    Entity nearestAttacker(World& world, Entity self, Vec2 from, double radius) const;
+    /// The nearest contributor on `self`'s bounty ledger standing in `realm`
+    /// within `radius` of `from`. The ledger outlives a teleport, so a
+    /// contributor who left for another map is skipped however close its
+    /// numbers look.
+    Entity nearestAttacker(World& world, Entity self, Vec2 from, Realm realm,
+                           double radius) const;
     bool targetHeld(World& world, const Terrain& terrain, Vec2 from, Realm realm,
                     Entity target) const;
     /// Whether a pet target still stands. Held on the mob's own aggro RANGE
@@ -477,7 +482,7 @@ private:
     /// direct hits alone and is otherwise purely cosmetic. What a ledger
     /// cannot say is WHEN, so the growth in it since this mob last thought is
     /// what stands in for the call.
-    Entity freshProvoker(World& world, Entity self, Vec2 from);
+    Entity freshProvoker(World& world, Entity self, Vec2 from, Realm realm);
 
     /// `self` and, when it heads a chain, every segment behind it: hurting any
     /// part of a centipede provokes the whole animal, so the whole animal's

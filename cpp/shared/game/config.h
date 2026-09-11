@@ -126,6 +126,16 @@ struct PetalModifiers {
 // MobConfig
 // ---------------------------------------------------------------------------
 
+/// One mob's place in one group: which group, and how heavily it is weighted
+/// inside it. Read from either side -- a MobConfig lists the groups it is in,
+/// and a MobGroup lists the mobs in it -- because a spawn rolls over a group
+/// and a tool asks about a mob.
+struct MobGroupMember {
+    std::uint16_t group = 0;   ///< index into ContentRegistry::mobGroups()
+    std::uint16_t mob = 0;     ///< index into ContentRegistry::mob()
+    double weight = 1.0;
+};
+
 /// One entry of mobs.json, at its base (common) tier. Rarity is applied by
 /// mobStats(); nothing here is pre-scaled.
 struct MobConfig {
@@ -146,14 +156,27 @@ struct MobConfig {
 
     AiKind ai = AiKind::Neutral;
 
-    /// The `section` list as a bitmask over the 3x3 biome grid. Order and
-    /// duplicates in the JSON carry no meaning, and a mask keeps mobStats()
-    /// allocation-free.
-    std::uint16_t sectionMask = 0;
+    /// The groups this mob belongs to, and how heavily it is weighted inside
+    /// each one.
+    ///
+    /// A group is whatever mobs.json says it is -- `garden`, `desert`,
+    /// `sewers`, `boss_rush`, anything an author types. There is no fixed list
+    /// and no fixed count: the groups ARE the union of the names the mobs use,
+    /// which is what lets a map's spawn band name one without a second file
+    /// having to agree that it exists.
+    ///
+    /// The weight is per group on purpose. A hornet that is common in the
+    /// garden and rare in the jungle is one mob with two weights, and a single
+    /// `spawn_weight` could only say one of those.
+    std::vector<MobGroupMember> groups;
+
+    /// The weight a group membership takes when it does not state one of its
+    /// own, from `spawn_weight`. Also what the maze pool weights by.
     double spawnWeight = 1.0;
-    /// The mob does not exist below this tier: mobStats() returns an empty
-    /// section mask for anything lower, which is the single place every
-    /// spawner already looks.
+
+    /// The mob does not exist below this tier: mobStats() reports it as
+    /// non-ambient for anything lower, which is the single place every spawner
+    /// already looks.
     Rarity minRarity = Rarity::Common;
 
     bool hideRotation = false;   ///< draw upright regardless of heading
@@ -161,10 +184,11 @@ struct MobConfig {
     bool reversed = false;       ///< art is mirrored horizontally
     bool noMobCollision = false;
 
-    /// The mob never appears in an ambient spawn roll. `target_dummy` declares
-    /// no spawn_weight and so would otherwise inherit the default 1.0 and take
-    /// a fifth of section 7's spawns; the reference filters it by name and
-    /// places dummies only where a biome table asks for one.
+    /// The mob never appears in a GROUP roll -- the density fill, a band or a
+    /// region naming a group never produces it. `target_dummy` declares no
+    /// spawn_weight and would otherwise inherit the default 1.0 and take its
+    /// share of every group it belongs to; it only reaches the world through
+    /// a band that names it outright, which is how the dummy plots work.
     bool neverAmbient = false;
 
     /// Touching this mob -- body, ring or shot -- leaves the flower glitched
@@ -344,15 +368,14 @@ struct MobStats {
     /// Some mob behaviours change by rarity (for example rare bees become
     /// neutral/retaliatory). This is derived alongside the numeric stats.
     AiKind ai = AiKind::Neutral;
-    /// Biome sections this mob may spawn in AT THIS TIER. Empty below
-    /// `min_rarity`, which is how that rule is enforced everywhere at once.
-    std::uint16_t sectionMask = 0;
 
-    bool spawnable() const { return sectionMask != 0; }
-    bool spawnsIn(int section) const {
-        return section >= 0 && section < kSectionCount &&
-               (sectionMask & (1u << section)) != 0;
-    }
+    /// True when an ambient group roll may produce this mob AT THIS TIER.
+    ///
+    /// False below `min_rarity`, which is how that rule is enforced everywhere
+    /// at once: a spawner asks this and never has to know the rule exists.
+    bool ambient = false;
+
+    bool spawnable() const { return ambient; }
 };
 
 /// A petal at one tier.
@@ -393,10 +416,24 @@ struct PetalStats {
 // ContentRegistry
 // ---------------------------------------------------------------------------
 
+/// One mob group, as the mobs themselves define it.
+///
+/// Built by the loader out of every `groups` entry in mobs.json: the groups
+/// are the union of the names used, in first-mention order, and a group's
+/// members are the mobs that named it with the weight each gave.
+struct MobGroup {
+    std::string id;
+    std::vector<MobGroupMember> members;
+};
+
 class ContentRegistry {
 public:
     /// Loads `mobs.json`, `petals.json` and (optionally) `mob_xp.json` from
-    /// one directory.
+    /// one directory, and folds the directory's maps -- `maps.json` and every
+    /// map it names -- into contentHash(), so a client whose staged maps
+    /// differ from the server's (a moved pad, a renamed door) is refused at
+    /// the handshake rather than drawing annotations the server does not
+    /// have. A directory with no manifest folds nothing.
     ///
     /// On failure `errorOut` says what went wrong and the registry keeps
     /// whatever it already held -- a bad hot reload must not leave a running
@@ -440,14 +477,32 @@ public:
     MobStats mobStats(std::uint16_t index, Rarity r) const;
     PetalStats petalStats(std::uint16_t index, Rarity r) const;
 
+    /// The mob groups, in first-mention order. A map's spawn band names one of
+    /// these, or a mob id; the group is looked up first, so a group and a mob
+    /// sharing a name resolves to the group.
+    const std::vector<MobGroup>& mobGroups() const { return mobGroups_; }
+    std::size_t mobGroupCount() const { return mobGroups_.size(); }
+
+    /// The group `id` names, or kInvalidIndex.
+    std::uint16_t mobGroupIndex(const std::string& id) const;
+
+    /// An out-of-range index yields a shared empty group, for the same reason
+    /// mob() yields a placeholder: these indices come out of map files.
+    const MobGroup& mobGroup(std::uint16_t index) const;
+
 private:
     std::vector<MobConfig> mobs_;
+    std::vector<MobGroup> mobGroups_;
+    std::unordered_map<std::string, std::uint16_t> mobGroupIds_;
     std::vector<PetalConfig> petals_;
     std::unordered_map<std::string, std::uint16_t> mobIds_;
     std::unordered_map<std::string, std::uint16_t> petalIds_;
     std::vector<std::uint16_t> petalOrder_;
     std::vector<std::string> warnings_;
     std::uint32_t hash_ = 0;
+
+    /// The maps half of load(): see there.
+    void foldMapsIntoHash(const std::string& dataDir);
 };
 
 // ---------------------------------------------------------------------------

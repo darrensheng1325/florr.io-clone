@@ -74,15 +74,15 @@ const ContentRegistry& synthetic() {
         const std::string petals = tempPath("petals.json");
         writeText(mobs, R"({
             "alpha": {"name":"Alpha","health":10,"damage":1,"size":1,"speed":1,
-                      "section":[0],"spawn_weight":1},
+                      "groups":{"meadow":1}},
             "beta":  {"name":"Beta","health":10,"damage":1,"size":1,"speed":1,
-                      "section":[0],"spawn_weight":3},
+                      "groups":{"meadow":3}},
             "gamma": {"name":"Gamma","health":10,"damage":1,"size":1,"speed":1,
-                      "section":[0],"spawn_weight":6},
+                      "groups":{"meadow":6}},
             "delta": {"name":"Delta","health":10,"damage":1,"size":1,"speed":1,
-                      "section":[1],"spawn_weight":100},
+                      "groups":{"dunes":100}},
             "ghost": {"name":"Ghost","health":10,"damage":1,"size":1,"speed":1,
-                      "section":[0],"spawn_weight":0}
+                      "groups":{"meadow":0}}
         })");
         writeText(petals, R"({
             "basic": {"name":"Basic","damage":5,"health":5,"size":1,"cooldown":1000,"count":1}
@@ -93,6 +93,10 @@ const ContentRegistry& synthetic() {
     }();
     return registry;
 }
+
+/// The staged maps, as the server would load them. Defined with the band
+/// tests further down; declared here because the fill test wants them too.
+const WorldMaps& shippedMaps();
 
 /// A world plus everything the spawner needs to be driven one tick at a time.
 struct Sim {
@@ -214,7 +218,8 @@ TEST(weighted_choice_matches_the_configured_weights) {
     int counts[3] = {0, 0, 0};
     int ghostCount = 0;
     for (int i = 0; i < kSamples; ++i) {
-        const std::uint16_t picked = spawner.chooseMobType(content, 0, rng);
+        const std::uint16_t picked =
+            spawner.chooseGroupMob(content, content.mobGroupIndex("meadow"), Rarity::Common, rng);
         if (picked == alpha) ++counts[0];
         else if (picked == beta) ++counts[1];
         else if (picked == gamma) ++counts[2];
@@ -230,19 +235,20 @@ TEST(weighted_choice_matches_the_configured_weights) {
     CHECK_EQ(ghostCount, 0);
 }
 
-TEST(a_section_with_nothing_in_it_yields_no_mob_type) {
+TEST(a_group_with_nothing_in_it_yields_no_mob_type) {
     const ContentRegistry& content = synthetic();
     SpawnSystem spawner;
     Rng rng(1);
-    // Section 1 holds only delta; sections 2..8 hold nothing at all.
-    CHECK_EQ(spawner.chooseMobType(content, 1, rng), content.mobIndex("delta"));
-    for (int section = 2; section < kSectionCount; ++section) {
-        CHECK_EQ(spawner.chooseMobType(content, section, rng), kInvalidIndex);
-    }
-    // Out-of-range section indices are answered, not asserted on: the caller
-    // derives them from a position that may be outside the map.
-    CHECK_EQ(spawner.chooseMobType(content, -1, rng), kInvalidIndex);
-    CHECK_EQ(spawner.chooseMobType(content, kSectionCount, rng), kInvalidIndex);
+    // The two groups the fixture defines are the only two that exist: a group
+    // is the union of the names the mobs use, so there is no third to be empty.
+    CHECK_EQ(content.mobGroupCount(), std::size_t(2));
+    CHECK_EQ(spawner.chooseGroupMob(content, content.mobGroupIndex("dunes"), Rarity::Common, rng),
+             content.mobIndex("delta"));
+    // A name nothing claims is answered, not asserted on: it comes off a map
+    // file, where a typo must cost a band its mobs rather than the process.
+    CHECK_EQ(content.mobGroupIndex("sewers"), kInvalidIndex);
+    CHECK_EQ(spawner.chooseGroupMob(content, kInvalidIndex, Rarity::Common, rng), kInvalidIndex);
+    CHECK_EQ(spawner.chooseGroupMob(content, 9999, Rarity::Common, rng), kInvalidIndex);
 }
 
 TEST(natural_rarity_drift_can_reach_ultra_but_no_higher) {
@@ -401,19 +407,45 @@ TEST(mobs_nobody_has_been_near_are_recycled) {
     CHECK(sim.spawner.census().despawnedTotal >= despawnedBefore + populated);
 }
 
-TEST(section_filtering_follows_the_config) {
+TEST(the_region_under_a_spawn_decides_its_group) {
+    if (!shippedMaps().forRealm(Realm::Overworld)) {
+        // A failure, not a pass with nothing checked: a broken data dir must
+        // not make this test vacuous while its siblings report the same
+        // missing maps.
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+        return;
+    }
     Sim sim;
+    sim.spawner.worldMaps = &shippedMaps();
     const std::vector<Vec2> players{kCentre};
     for (int i = 0; i < 300; ++i) sim.tick(players);
 
-    Query<MobTag, MobType> mobs{sim.world};
+    // The centre of the map is the ant hell region: the spawn ring is 2400
+    // units and the region is 20000 across, so everything the fill placed
+    // around the viewer has to be a member of that group. Only the
+    // neighbourhood is judged: with the shipped maps installed the band fill
+    // stocks every band on the map and the boss pass stands a super in every
+    // section, none of which asked this region for anything.
+    const std::uint16_t antHell = shipped().mobGroupIndex("ant_hell");
+    CHECK(antHell != kInvalidIndex);
+    const double ring = kSpawnRingMax + kSpawnScatterRadius;
+    Query<MobTag, MobType, Transform> mobs{sim.world};
     int checked = 0;
-    mobs.each([&](Entity, MobTag&, MobType& type) {
+    mobs.each([&](Entity, MobTag&, MobType& type, Transform& transform) {
+        if (distanceSq(transform.position, kCentre) > ring * ring) return;
         ++checked;
         const MobConfig& config = shipped().mob(type.configIndex);
-        // Section 4 is the whole neighbourhood: the spawn ring is 2400 units
-        // and the section is 20000 across.
-        CHECK((config.sectionMask & (1u << 4)) != 0);
+        bool member = false;
+        for (const MobGroupMember& entry : config.groups) member |= entry.group == antHell;
+        // Body segments follow their head into the world and belong to no
+        // group of their own; everything else answers for itself.
+        if (config.id.find("_body") == std::string::npos && !member) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "not an ant hell mob: " + config.id + " " +
+                                         rarityName(type.rarity) + " at " +
+                                         std::to_string(transform.position.x) + "," +
+                                         std::to_string(transform.position.y));
+        }
     });
     CHECK(checked > 0);
 }
@@ -1078,35 +1110,42 @@ TEST(a_dead_contributor_is_still_credited_but_a_non_player_is_not) {
 }
 
 // ---------------------------------------------------------------------------
-// Biome spawn tables
+// Bands that name their mobs
 // ---------------------------------------------------------------------------
 //
-// The map does not only say which TIER belongs where. A biome may name the mob
-// outright, and that is the only way a mob the ambient roll refuses ever
-// reaches the world: `target_dummy` declares no spawn weight and is marked
-// neverAmbient, so the four dummy biomes are the whole of its existence. A
-// parser that keeps the tier and drops the name leaves the DPS row unbuilt and
-// nothing else about the world looks wrong.
+// The map does not only say which TIER belongs where. A band may name a mob
+// outright, and that is the only way a mob the group roll refuses ever reaches
+// the world: `target_dummy` is in no group and is marked neverAmbient, so the
+// dummy bands are the whole of its existence. A parser that keeps the tier
+// and drops the name leaves the DPS row unbuilt and nothing else about the
+// world looks wrong.
 
 namespace {
 
-std::string mapBundlePath() {
-    return firstExisting({testsDir() + "/../data/map_bundle.ts",
-                          testsDir() + "/../../src/map_bundle.ts", "data/map_bundle.ts",
-                          "../src/map_bundle.ts", "src/map_bundle.ts"});
+const WorldMaps& shippedMaps() {
+    static const WorldMaps maps = [] {
+        WorldMaps m;
+        std::string error;
+        // The manifest is what marks a staged data directory; its directory is
+        // the one WorldMaps wants.
+        const std::string manifest = firstExisting({testsDir() + "/../data/maps.json",
+                                                    "data/maps.json", "../data/maps.json"});
+        const std::string dir = manifest.substr(0, manifest.find_last_of('/'));
+        if (!m.load(dir, nullptr, error)) {
+            std::fprintf(stderr, "[test] the shipped maps did not load: %s\n", error.c_str());
+        }
+        return m;
+    }();
+    return maps;
 }
 
 const MapData& shippedMap() {
-    static const MapData map = [] {
-        MapData m;
-        std::string error;
-        m.load(mapBundlePath(), error);
-        return m;
-    }();
-    return map;
+    static const MapData kEmpty;
+    const MapData* world = shippedMaps().forRealm(Realm::Overworld);
+    return world != nullptr ? *world : kEmpty;
 }
 
-/// Every biome row that names a mob, so the test asserts against the map
+/// Every band row that names a mob, so the test asserts against the map
 /// rather than against a hard-coded list that the map is free to outgrow.
 struct NamedRow {
     Rect bounds;
@@ -1114,13 +1153,14 @@ struct NamedRow {
     std::string mobType;
 };
 
-std::vector<NamedRow> namedBiomeRows() {
+std::vector<NamedRow> namedBandRows() {
     std::vector<NamedRow> rows;
     for (const MapElement& element : shippedMap().elements()) {
-        if (element.kind != MapElementKind::Biome) continue;
-        for (const BiomeSpawnEntry& entry : element.spawnTable) {
-            if (entry.mobType.empty()) continue;
-            rows.push_back(NamedRow{element.bounds, entry.tier, entry.mobType});
+        if (!element.isSpawnBand()) continue;
+        for (const ZoneMobEntry& entry : element.mobDistribution) {
+            // A row is a group or a mob; only the mobs are of interest here.
+            if (shipped().mobGroupIndex(entry.name) != kInvalidIndex) continue;
+            rows.push_back(NamedRow{element.bounds, element.spawnTier, entry.name});
         }
     }
     return rows;
@@ -1128,14 +1168,13 @@ std::vector<NamedRow> namedBiomeRows() {
 
 } // namespace
 
-TEST(a_biome_spawn_table_keeps_the_mob_it_names) {
+TEST(a_band_keeps_the_mob_it_names) {
     if (!shippedMap().loaded()) {
-        ::testing::reportFailure(__FILE__, __LINE__,
-                                 "no map bundle at " + mapBundlePath());
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
         return;
     }
-    const std::vector<NamedRow> rows = namedBiomeRows();
-    // Nine dummy rows plus the legendary hornet. A parser that drops `mobType`
+    const std::vector<NamedRow> rows = namedBandRows();
+    // Nine dummy rows plus the legendary hornets. A parser that drops the name
     // leaves this at zero, which is exactly the bug this guards.
     CHECK(rows.size() >= 10);
 
@@ -1146,38 +1185,41 @@ TEST(a_biome_spawn_table_keeps_the_mob_it_names) {
     CHECK_EQ(dummyRows, 9);
 }
 
-TEST(the_dummy_biomes_actually_build_the_dps_row) {
+TEST(the_dummy_bands_actually_build_the_dps_row) {
     if (!shippedMap().loaded()) return;
     const std::uint16_t dummy = shipped().mobIndex("target_dummy");
     CHECK(dummy != kInvalidIndex);
-    // The premise of the whole mechanism: the ambient roll will never produce
-    // one, so if the biome table does not, nothing does.
+    // The premise of the whole mechanism: the group roll will never produce
+    // one, so if the band does not, nothing does.
     CHECK(shipped().mob(dummy).neverAmbient);
+    CHECK(shipped().mob(dummy).groups.empty());
 
     Sim sim;
-    sim.spawner.mapData = &shippedMap();
+    sim.spawner.worldMaps = &shippedMaps();
 
-    // Standing in the common/uncommon dummy biome, which sits inside the big
-    // common spawn rectangle -- so it is the ZONE fill that has to honour it,
-    // not the neighbourhood fill.
-    const Rect biome = [&] {
-        for (const NamedRow& row : namedBiomeRows()) {
+    // Standing in the common dummy band, which sits inside the big common
+    // spawn band -- so it is the ZONE fill that has to honour it, not the
+    // neighbourhood fill.
+    const Rect band = [&] {
+        for (const NamedRow& row : namedBandRows()) {
             if (row.mobType == "target_dummy") return row.bounds;
         }
         return Rect{};
     }();
-    const Vec2 at{biome.x + biome.w * 0.5, biome.y + biome.h * 0.5};
+    const Vec2 at{band.x + band.w * 0.5, band.y + band.h * 0.5};
 
     const std::vector<Vec2> players{at};
     for (int i = 0; i < 400; ++i) sim.tick(players);
 
     int dummies = 0;
     std::vector<Rarity> tiers;
-    Query<MobTag, MobType> mobs{sim.world};
-    mobs.each([&](Entity, MobTag&, MobType& type) {
+    std::vector<Vec2> where;
+    Query<MobTag, MobType, Transform> mobs{sim.world};
+    mobs.each([&](Entity, MobTag&, MobType& type, Transform& transform) {
         if (type.configIndex != dummy) return;
         ++dummies;
         tiers.push_back(type.rarity);
+        where.push_back(transform.position);
     });
     CHECK(dummies > 0);
 
@@ -1185,18 +1227,25 @@ TEST(the_dummy_biomes_actually_build_the_dps_row) {
     // of each rarity per section, no more.
     for (std::size_t i = 0; i < tiers.size(); ++i) {
         for (std::size_t j = i + 1; j < tiers.size(); ++j) {
-            CHECK(tiers[i] != tiers[j]);
+            if (tiers[i] == tiers[j]) {
+                ::testing::reportFailure(__FILE__, __LINE__,
+                                         std::string("two ") + rarityName(tiers[i]) +
+                                             " dummies: " + std::to_string(where[i].x) + "," +
+                                             std::to_string(where[i].y) + " and " +
+                                             std::to_string(where[j].x) + "," +
+                                             std::to_string(where[j].y));
+            }
         }
     }
 
-    // And every tier is one a dummy row actually declares. The four dummy
-    // biomes between them cover common..unique and the big common rectangle
-    // sampled above overlaps several, so the set is wider than one biome --
-    // but a DRIFTED tier would fall outside it, and drift is exactly what a
-    // permanent fixture must not take (a tier nothing asked for is one the
+    // And every tier is one a dummy band actually declares. The dummy bands
+    // between them cover common..unique and the viewport sampled above
+    // overlaps several, so the set is wider than one band -- but a DRIFTED
+    // tier would fall outside it, and drift is exactly what a permanent
+    // fixture must not take (a tier nothing asked for is one the
     // one-per-section check never cleared).
     std::vector<Rarity> declared;
-    for (const NamedRow& row : namedBiomeRows()) {
+    for (const NamedRow& row : namedBandRows()) {
         if (row.mobType == "target_dummy") declared.push_back(row.tier);
     }
     for (const Rarity tier : tiers) {
@@ -1289,7 +1338,9 @@ TEST(a_zone_that_names_a_mob_spawns_only_that_mob) {
     CHECK(map.elements()[0].mobDistribution.size() == 1);
 
     Sim sim;
-    sim.spawner.mapData = &map;
+    WorldMaps maps;
+    maps.adoptSingle(map);
+    sim.spawner.worldMaps = &maps;
     const std::vector<Vec2> players{{9000, 9000}};
     for (int i = 0; i < 400; ++i) sim.tick(players);
 
@@ -1299,11 +1350,11 @@ TEST(a_zone_that_names_a_mob_spawns_only_that_mob) {
     std::remove(path.c_str());
 }
 
-TEST(a_zone_preset_borrows_another_sections_roster) {
-    // The zone sits in the Garden, and asks for the Ocean. This is the whole
-    // point of a preset: the nine mob-spawn sections become a palette a zone
-    // can draw from, rather than nine places the mobs are stuck in.
-    const std::string path = writeZoneMap("flix_zone_preset.tmj", "ocean 100%");
+TEST(a_zone_group_borrows_another_biomes_roster) {
+    // The zone sits in the top-left corner, and asks for the Ocean. This is
+    // the whole point of a group: mobs.json's groups are a palette a band can
+    // draw from, rather than nine places the mobs are stuck in.
+    const std::string path = writeZoneMap("flix_zone_group.tmj", "ocean 100%");
     MapData map;
     std::string error;
     if (!map.loadWorldMap(path, error) || map.elements().empty()) {
@@ -1311,21 +1362,27 @@ TEST(a_zone_preset_borrows_another_sections_roster) {
         CHECK(false);
         return;
     }
-    CHECK(map.elements()[0].mobDistribution[0].presetSection == 3);
+    CHECK_EQ(map.elements()[0].mobDistribution[0].name, std::string("ocean"));
+    const std::uint16_t ocean = shipped().mobGroupIndex("ocean");
+    CHECK(ocean != kInvalidIndex);
 
     Sim sim;
-    sim.spawner.mapData = &map;
+    WorldMaps maps;
+    maps.adoptSingle(map);
+    sim.spawner.worldMaps = &maps;
     const std::vector<Vec2> players{{9000, 9000}};
     for (int i = 0; i < 400; ++i) sim.tick(players);
 
     const std::vector<std::string> ids = spawnedMobIds(sim);
     CHECK(!ids.empty());
     // Ocean's roster, and none of the Garden's -- a bee here would mean the
-    // preset was ignored and the point's own section rolled instead.
+    // group was ignored and something else rolled instead.
     for (const std::string& id : ids) {
         const std::uint16_t index = shipped().mobIndex(id);
         CHECK(index != kInvalidIndex);
-        CHECK(shipped().mobStats(index, Rarity::Common).spawnsIn(3));
+        bool member = false;
+        for (const MobGroupMember& entry : shipped().mob(index).groups) member |= entry.group == ocean;
+        CHECK(member);
     }
     std::remove(path.c_str());
 }
@@ -1344,7 +1401,9 @@ TEST(a_distribution_splits_in_roughly_the_authored_proportion) {
     }
 
     Sim sim;
-    sim.spawner.mapData = &map;
+    WorldMaps maps;
+    maps.adoptSingle(map);
+    sim.spawner.worldMaps = &maps;
     const std::vector<Vec2> players{{9000, 9000}};
     for (int i = 0; i < 400; ++i) sim.tick(players);
 
@@ -1358,4 +1417,241 @@ TEST(a_distribution_splits_in_roughly_the_authored_proportion) {
     CHECK(hornets + bees > 20);
     CHECK(hornets > bees);
     std::remove(path.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Realm isolation
+// ---------------------------------------------------------------------------
+//
+// Every map is its own coordinate space. A band on a biome map is stocked for
+// the flower standing on THAT map, through that map's own walls, and the
+// overworld's boss pass and census never read another map's numbers as their
+// own. Each of these pins one place the spawner used to compare positions
+// across realms.
+
+namespace {
+
+/// writeZoneMap()'s band -- one common band naming hornets over
+/// (2000,2000)-(16000,16000) -- loaded as `realm`.
+bool loadHornetBandAs(const std::string& name, Realm realm, MapData& out) {
+    const std::string path = writeZoneMap(name, "hornet 100%");
+    std::string error;
+    const bool ok = out.loadWorldMap(path, error, realm) && out.elements().size() == 1;
+    if (!ok) std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+    std::remove(path.c_str());
+    return ok;
+}
+
+/// A flat, open `side`-tile grid installed as `realm`'s map.
+void installOpenGrid(Terrain& terrain, Realm realm, int side) {
+    std::vector<std::uint8_t> tiles(static_cast<std::size_t>(side) * side,
+                                    static_cast<std::uint8_t>(Tile::Ground));
+    CHECK(terrain.setTiles(tiles, side, side, realm));
+}
+
+int mobsInRealm(World& world, Realm realm) {
+    int n = 0;
+    Query<MobTag, Transform> mobs{world};
+    mobs.each([&](Entity, MobTag&, Transform& t) { n += t.realm == realm ? 1 : 0; });
+    return n;
+}
+
+/// The ultras standing on the overworld that the boss pass would count as
+/// its own -- a permanent fixture is not one.
+int overworldUltras(World& world) {
+    int n = 0;
+    Query<MobTag, MobType, Transform> mobs{world};
+    mobs.each([&](Entity, MobTag&, MobType& type, Transform& t) {
+        if (t.realm != Realm::Overworld || type.rarity != Rarity::Ultra) return;
+        if (shipped().mob(type.configIndex).neverAmbient) return;
+        ++n;
+    });
+    return n;
+}
+
+} // namespace
+
+TEST(a_band_on_another_map_is_stocked_through_that_maps_own_terrain) {
+    // Two maps with the SAME band at the SAME numbers: the overworld's and a
+    // second map's. The flower stands on the second map; only its band may
+    // fill, and it must fill through the second map's grid -- the overworld
+    // is walled over under those numbers, which used to starve it.
+    const Realm other = worldRealm(1);
+    MapData overworld;
+    MapData second;
+    if (!loadHornetBandAs("flix_band_realm0.tmj", Realm::Overworld, overworld) ||
+        !loadHornetBandAs("flix_band_realm1.tmj", other, second)) {
+        CHECK(false);
+        return;
+    }
+    std::vector<MapData> maps;
+    maps.push_back(std::move(overworld));
+    maps.push_back(std::move(second));
+    WorldMaps worldMaps;
+    worldMaps.adoptMaps(std::move(maps));
+    CHECK(worldMaps.forRealm(other) != nullptr);
+
+    Sim sim;
+    sim.spawner.worldMaps = &worldMaps;
+    installOpenGrid(sim.terrain, other, 60);   // 18000 units: the band fits
+    // The overworld under the whole band is solid.
+    for (int ty = 6; ty <= 54; ++ty) {
+        for (int tx = 6; tx <= 54; ++tx) sim.terrain.setTile(tx, ty, Tile::Wall, Realm::Overworld);
+    }
+    CHECK(sim.terrain.blocked({9000, 9000}, Realm::Overworld));
+    CHECK(!sim.terrain.blocked({9000, 9000}, other));
+
+    const std::vector<RealmPoint> players{{{9000, 9000}, other}};
+    for (int i = 0; i < 400; ++i) {
+        sim.spawner.run(sim.world, sim.terrain, shipped(), players, sim.rng, sim.now,
+                        net::kTickSeconds, sim.commands);
+        sim.commands.flush();
+        sim.now += net::kTickMillis;
+    }
+
+    // Stocked on the second map, and nowhere else: the overworld's band at
+    // the same numbers has nobody looking at it.
+    CHECK(mobsInRealm(sim.world, other) > 0);
+    CHECK_EQ(mobsInRealm(sim.world, Realm::Overworld), 0);
+
+    // Every one on that map's own open ground, inside the band, and spaced
+    // against the others placed in the same pass -- the placement record has
+    // to carry the realm for that.
+    const Rect band = worldMaps.forRealm(other)->elements()[0].bounds;
+    std::vector<Vec2> placed;
+    Query<MobTag, Transform, Body> mobs{sim.world};
+    mobs.each([&](Entity, MobTag&, Transform& t, Body& body) {
+        CHECK(t.realm == other);
+        CHECK(!sim.terrain.blocked(t.position, other));
+        CHECK(band.contains(t.position));
+        for (const Vec2 earlier : placed) {
+            CHECK(distance(earlier, t.position) >= body.radius);   // never stacked
+        }
+        placed.push_back(t.position);
+    });
+
+    // And the flower's own presence keeps them: nobody on the overworld means
+    // nothing there to recycle, and the band's mobs are near their viewer.
+    sim.spawner.run(sim.world, sim.terrain, shipped(), players, sim.rng,
+                    sim.now + kMobDespawnDelayMillis + 1000.0, 0.0, sim.commands);
+    sim.commands.flush();
+    CHECK(mobsInRealm(sim.world, other) > 0);
+}
+
+TEST(a_flower_on_another_map_does_not_stock_the_overworld_at_its_numbers) {
+    // The overworld's band alone, and a flower standing at the band's numbers
+    // on a map that has no band at all: nothing may spawn anywhere.
+    MapData overworld;
+    if (!loadHornetBandAs("flix_band_only_realm0.tmj", Realm::Overworld, overworld)) {
+        CHECK(false);
+        return;
+    }
+    const Realm other = worldRealm(1);
+    std::vector<MapData> maps;
+    maps.push_back(std::move(overworld));
+    maps.push_back(MapData{});
+    WorldMaps worldMaps;
+    worldMaps.adoptMaps(std::move(maps));
+
+    Sim sim;
+    sim.spawner.worldMaps = &worldMaps;
+    installOpenGrid(sim.terrain, other, 60);
+    const std::vector<RealmPoint> players{{{9000, 9000}, other}};
+    for (int i = 0; i < 200; ++i) {
+        sim.spawner.run(sim.world, sim.terrain, shipped(), players, sim.rng, sim.now,
+                        net::kTickSeconds, sim.commands);
+        sim.commands.flush();
+        sim.now += net::kTickMillis;
+    }
+    CHECK_EQ(sim.mobCount(), 0);
+}
+
+TEST(the_boss_pass_only_ever_stands_a_boss_in_an_overworld_plot) {
+    if (!shippedMaps().forRealm(Realm::Overworld)) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+        return;
+    }
+    const MapData& world = *shippedMaps().forRealm(Realm::Overworld);
+    const auto inOverworldBossPlot = [&](Vec2 at) {
+        for (const MapElement& element : world.elements()) {
+            if (!element.isSpawnBand()) continue;
+            if (element.spawnTier != Rarity::Mythic && element.spawnTier != Rarity::Ultra) continue;
+            if (element.contains(at)) return true;
+        }
+        return false;
+    };
+
+    // The biome maps' mythic blocks sit at small numbers that are the
+    // beginner garden on world.tmj. Many seeds, because the leak was a
+    // proportional share of the mythic branch rather than every pass.
+    int bosses = 0;
+    for (std::uint64_t seed = 1; seed <= 40; ++seed) {
+        Sim sim;
+        sim.rng.reseed(seed);
+        sim.spawner.worldMaps = &shippedMaps();
+        sim.tick({});   // the startup boss pass, nobody online
+        Query<MobTag, MobType, Transform> mobs{sim.world};
+        mobs.each([&](Entity e, MobTag&, MobType& type, Transform& t) {
+            if (rarityIndex(type.rarity) < rarityIndex(Rarity::Ultra)) return;
+            // The boss itself: its escorts ring it and its body trails it.
+            if (sim.world.has<HoleTether>(e)) return;
+            if (const BodySegment* link = sim.world.tryGet<BodySegment>(e)) {
+                if (!link->head) return;
+            }
+            ++bosses;
+            CHECK(t.realm == Realm::Overworld);
+            // The Sim's overworld is flat and ungenerated, so nothing pushed
+            // the boss off the point that was sampled for it.
+            if (!inOverworldBossPlot(t.position)) {
+                ::testing::reportFailure(__FILE__, __LINE__,
+                                         "seed " + std::to_string(seed) + ": " +
+                                             rarityName(type.rarity) + " " +
+                                             shipped().mob(type.configIndex).id +
+                                             " outside every overworld boss plot at " +
+                                             std::to_string(t.position.x) + "," +
+                                             std::to_string(t.position.y));
+            }
+        });
+    }
+    CHECK(bosses >= 40);   // at least the one ultra per startup pass
+}
+
+TEST(a_boss_in_another_realm_does_not_count_as_the_overworlds) {
+    if (!shippedMaps().forRealm(Realm::Overworld)) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+        return;
+    }
+    Sim sim;
+    sim.spawner.worldMaps = &shippedMaps();
+    const Realm other = worldRealm(1);
+    installOpenGrid(sim.terrain, other, 60);
+    const std::vector<Vec2> players{kCentre};
+    sim.tick(players);   // startup: exactly one overworld ultra is stood
+    CHECK_EQ(overworldUltras(sim.world), 1);
+
+    // It dies.
+    std::vector<Entity> gone;
+    Query<MobTag, MobType, Transform> mobs{sim.world};
+    mobs.each([&](Entity e, MobTag&, MobType& type, Transform& t) {
+        if (t.realm == Realm::Overworld && type.rarity == Rarity::Ultra) gone.push_back(e);
+    });
+    for (const Entity e : gone) sim.commands.destroy(e);
+    sim.commands.flush();
+    CHECK_EQ(overworldUltras(sim.world), 0);
+
+    // Meanwhile an ultra stands on a biome map -- a mythic band's drift can
+    // mint one -- and another in the maze. Neither is the overworld's.
+    const std::uint16_t hornet = shipped().mobIndex("hornet");
+    CHECK(hornet != kInvalidIndex);
+    CHECK(sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), hornet, Rarity::Ultra,
+                               {9000, 9000}, other, sim.now, sim.rng) != NULL_ENTITY);
+    CHECK(sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), hornet, Rarity::Ultra,
+                               {3000, 3000}, Realm::Maze, sim.now, sim.rng) != NULL_ENTITY);
+    CHECK_EQ(overworldUltras(sim.world), 0);
+
+    // The next pass restocks the overworld's: the census that decides it is
+    // that map's alone.
+    sim.jump(kBossIntervalMillis + 1.0, players);
+    CHECK_EQ(overworldUltras(sim.world), 1);
+    CHECK_EQ(mobsInRealm(sim.world, other), 1);   // and the biome map's is left be
 }

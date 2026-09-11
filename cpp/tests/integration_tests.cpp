@@ -215,6 +215,18 @@ TEST(two_players_see_each_other_move) {
     CHECK(bobBody != NULL_ENTITY);
     if (bobBody != NULL_ENTITY) world.get<Transform>(bobBody).position = aliceAt + Vec2{60, 0};
 
+    // And clear the ground in front of them. The door is a single tile inside
+    // the garden's common band, which the band fill stocked before anyone
+    // arrived, and a mob standing (or wandering) in Alice's lane shoves her
+    // sideways as she runs through it -- a real collision, not a replication
+    // fault, and not what this test measures.
+    std::vector<Entity> bystanders;
+    Query<MobTag, Transform> mobs{world};
+    mobs.each([&](Entity e, MobTag&, Transform& transform) {
+        if (distanceSq(transform.position, aliceAt) < 4000.0 * 4000.0) bystanders.push_back(e);
+    });
+    for (Entity e : bystanders) world.destroy(e);
+
     CHECK(h.stepUntil({&alice, &bob}, [&] {
         return playersVisibleTo(alice) >= 2 && playersVisibleTo(bob) >= 2;
     }));
@@ -624,16 +636,27 @@ TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
     const double expected = std::max(
         1.0, ammoStats.size * kProjectileRadiusPerSize * ownerScale / kProjectileSizeDivisor);
 
+    // THIS hornet's shot, found through the server's Projectile.owner and
+    // its net id, not the first projectile the stream happens to carry: the
+    // flower stands at the garden door, where the ambient fill puts hornets
+    // of other tiers within sight, and an uncommon one firing first would
+    // deliver a shot 1.3x this size that has nothing to do with the port
+    // under test.
     double seenRadius = -1.0;
     std::uint16_t seenType = 0xFFFF;
+    Query<Projectile, NetId> shots(world);
     const bool sawShot = h.stepUntil({&client}, [&] {
-        for (const auto& entry : client.view().entities()) {
-            if (entry.second.kind != net::EntityKind::Projectile) continue;
-            seenRadius = entry.second.radius;
-            seenType = entry.second.typeIndex;
-            return true;
-        }
-        return false;
+        bool seen = false;
+        shots.each([&](Entity, Projectile& shot, NetId& id) {
+            if (seen || shot.owner != hornet) return;
+            const auto entry = client.view().entities().find(id.value);
+            if (entry == client.view().entities().end()) return;
+            if (entry->second.kind != net::EntityKind::Projectile) return;
+            seenRadius = entry->second.radius;
+            seenType = entry->second.typeIndex;
+            seen = true;
+        });
+        return seen;
     }, 600);
     CHECK(sawShot);
 

@@ -270,10 +270,15 @@ public:
     /// up -- the connection is not the session -- so the status falls back to
     /// Ready and the login form can be used again without a reconnect.
     void logout();
-    /// `spawnBiome` is empty (or "default") for the beginner ground.
+    /// `spawnChoice` is one of the server's spawn-picker ids -- a door on some
+    /// map (`garden`, `sewers_entrance`, a qualified `<map>:<door>`), or
+    /// "pvp" / "maze" for the two realms that have no map -- and empty (or
+    /// "default") for the beginner ground. It is NOT a biome name: the server
+    /// resolves it through WorldMaps::choice(), and a sublevel's door is only
+    /// honoured for an admin session.
     /// `playerName` is the flower's nameplate; empty spawns as "Unnamed".
     void joinGame(int viewportWidth, int viewportHeight,
-                  const std::string& spawnBiome = {}, const std::string& playerName = {});
+                  const std::string& spawnChoice = {}, const std::string& playerName = {});
     void leaveGame();
     void sendInput(const net::InputFrame&);
     void sendChat(const std::string& text);
@@ -323,6 +328,26 @@ public:
     const WorldView& view() const { return view_; }
     /// Locally regenerated from the authoritative seed in JoinAccepted.
     const Terrain& terrain() const { return terrain_; }
+
+    /// True once after the body was moved to another realm -- through a
+    /// teleporter, which leads to another map. Consumed by the App, which
+    /// snaps the camera onto `realmArrival()`: easing across two coordinate
+    /// spaces sweeps the view over a world the flower is not in.
+    bool takeRealmChange(Vec2& arrivalOut) {
+        if (!realmChanged_) return false;
+        realmChanged_ = false;
+        arrivalOut = realmArrival_;
+        return true;
+    }
+    /// Where the server last put this flower's body -- the join's spawn, or a
+    /// realm change's arrival -- for the frames between that message and the
+    /// first snapshot of the new body. The view's own self position is zero
+    /// until a snapshot places it, and a camera pinned to zero draws the
+    /// map's corner. See selfPlaced().
+    Vec2 arrival() const { return realmArrival_; }
+    /// True once a snapshot has placed the body the view is drawing; until
+    /// then arrival() is the only honest position for it.
+    bool selfPlaced() const { return view_.self().netId != 0; }
     const Profile& profile() const { return profile_; }
     const std::string& sessionToken() const { return sessionToken_; }
     const std::vector<ChatLine>& chat() const { return chat_; }
@@ -448,6 +473,7 @@ private:
     void handleAuthResult(ByteReader&);
     void handleProfile(ByteReader&);
     void handleJoinAccepted(ByteReader&);
+    void handleRealmChange(ByteReader&);
     void handleMazeInfo(ByteReader&);
     void handleChat(ByteReader&);
     void handleNotice(ByteReader&);
@@ -491,6 +517,8 @@ private:
 
     WorldView view_;
     Terrain terrain_;
+    Vec2 realmArrival_;
+    bool realmChanged_ = false;
     Profile profile_;
     std::string sessionToken_;
     std::vector<ChatLine> chat_;

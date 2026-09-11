@@ -1,5 +1,6 @@
 #include "shared/game/tiled_map.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -18,8 +19,19 @@ namespace {
 /// WITHIN a kind is observable, and that is the order they appear in here.
 constexpr struct { const char* layer; const char* kind; } kObjectLayers[] = {
     {"spawns", "spawn"},
-    {"biomes", "biome"},
+    {"player_spawns", "player_spawn"},
     {"teleporters", "teleporter"},
+};
+
+/// The custom properties each kind of object carries through verbatim.
+///
+/// Listed per kind rather than merged, so a property written onto the wrong
+/// object -- a `targetMap` on a spawn band, say -- is dropped here instead of
+/// reaching MapData and being acted on somewhere it means nothing.
+constexpr struct { const char* kind; const char* properties[9]; } kObjectProperties[] = {
+    {"spawn",        {"spawnType", "mobs", nullptr}},
+    {"player_spawn", {"spawnId", "label", "color", "order", "backdrop", "biome", "pickable", nullptr}},
+    {"teleporter",   {"targetMap", "targetSpawn", nullptr}},
 };
 
 /// The file name half of a path, for a tileset tile's `image`.
@@ -145,16 +157,49 @@ bool decodeLayer(const Json& layer, const std::string& path, std::vector<std::ui
     return true;
 }
 
+/// What one gid resolves to: a tile id (or ground id) and, for a terrain
+/// tile, the style byte it paints (constants.h: skin and edge mask or floor
+/// variant).
+struct GidEntry {
+    int gid = 0;
+    int value = 0;
+    std::uint8_t style = 0;
+};
+
 /// Resolves one gid through a tileset's gid map. Tiled packs its flip flags
 /// into the top three bits; nothing here flips a tile, but a stray flag from a
 /// drag in the editor would otherwise read as a wildly out-of-range id.
-bool resolveGid(const std::vector<std::pair<int, int>>& map, std::uint32_t raw, int& out) {
+bool resolveGid(const std::vector<GidEntry>& map, std::uint32_t raw, int& out,
+                std::uint8_t* styleOut = nullptr) {
     const int gid = static_cast<int>(raw & 0x1FFFFFFFu);
-    for (const auto& entry : map) {
-        if (entry.first == gid) { out = entry.second; return true; }
+    for (const GidEntry& entry : map) {
+        if (entry.gid == gid) {
+            out = entry.value;
+            if (styleOut != nullptr) *styleOut = entry.style;
+            return true;
+        }
     }
     out = gid;   // for the caller's error message
     return false;
+}
+
+/// The gid range one tileset owns, for the overlap check.
+struct TilesetRange {
+    std::string name;
+    int firstGid = 0;
+    int tileCount = 0;
+};
+
+/// How many gids a tileset spans: its declared `tilecount`, or, for a tileset
+/// that does not say, one past the highest tile id it defines.
+int tileCountOf(const Json& tileset) {
+    const int declared = tileset["tilecount"].asInt();
+    if (declared > 0) return declared;
+    int highest = -1;
+    for (const Json& tile : tileset["tiles"].items()) {
+        if (tile.isObject()) highest = std::max(highest, tile["id"].asInt());
+    }
+    return highest + 1;
 }
 
 /// Tiled 1.9 renamed an object's `type` to `class` and still reads both.
@@ -165,12 +210,38 @@ std::string classOf(const Json& node) {
 
 } // namespace
 
+std::uint8_t parseEdgeMask(const std::string& text) {
+    std::uint8_t mask = 0;
+    for (const char c : text) {
+        switch (c) {
+            case 'n': case 'N': mask |= kEdgeNorth; break;
+            case 'e': case 'E': mask |= kEdgeEast; break;
+            case 's': case 'S': mask |= kEdgeSouth; break;
+            case 'w': case 'W': mask |= kEdgeWest; break;
+            default: break;   // separators, and anything that is not a side
+        }
+    }
+    return mask;
+}
+
+std::string edgeMaskSuffix(std::uint8_t mask) {
+    std::string out;
+    if (mask & kEdgeNorth) out += 'n';
+    if (mask & kEdgeEast) out += 'e';
+    if (mask & kEdgeSouth) out += 's';
+    if (mask & kEdgeWest) out += 'w';
+    return out;
+}
+
 bool TiledMap::load(const std::string& path, std::string& errorOut) {
     tiles_.clear();
+    styles_.clear();
     background_.clear();
     palette_.clear();
     groundPalette_.clear();
+    warnings_.clear();
     elements_ = Json::array();
+    properties_ = Json::object();
     width_ = height_ = 0;
 
     Json map;
@@ -198,14 +269,21 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
         return false;
     }
 
+    // The map's OWN custom properties, as Tiled's Map Properties dialog
+    // writes them. A map says things about itself that no object on it can --
+    // what to call it in the spawn picker, and which mob group its untagged
+    // spawn bands fall back to.
+    properties_ = propertiesOf(map);
+
     // -- palette ------------------------------------------------------------
     // Tiled's global tile ids (gids) are per-map and depend on tileset order,
     // so the game's tile id is read off each tile as a property rather than
     // inferred. gid 0 is Tiled's empty cell, which is walkable ground here.
-    std::vector<std::pair<int, int>> tileIdOfGid;
-    tileIdOfGid.emplace_back(0, 0);
-    std::vector<std::pair<int, int>> groundIdOfGid;
-    groundIdOfGid.emplace_back(0, -1);   // an empty background cell is bare void
+    std::vector<GidEntry> tileIdOfGid;
+    tileIdOfGid.push_back({0, 0, 0});
+    std::vector<GidEntry> groundIdOfGid;
+    groundIdOfGid.push_back({0, -1, 0});   // an empty background cell is bare void
+    std::vector<TilesetRange> ranges;
     for (const Json& reference : map["tilesets"].items()) {
         if (!reference.isObject()) continue;
         const int firstGid = reference["firstgid"].asInt();
@@ -216,6 +294,13 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
         } else if (!parseJsonFile(resolveRelative(path, source), tileset, errorOut)) {
             return false;
         }
+        if (firstGid < 1) {
+            errorOut = path + ": tileset \"" + (source.empty() ? tileset["name"].asString() : source) +
+                       "\" starts at gid " + std::to_string(firstGid) + "; gids start at 1";
+            return false;
+        }
+        ranges.push_back({source.empty() ? tileset["name"].asString() : fileNameOf(source),
+                          firstGid, tileCountOf(tileset)});
         for (const Json& tile : tileset["tiles"].items()) {
             if (!tile.isObject()) continue;
             const int localId = tile["id"].asInt();
@@ -227,7 +312,7 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
                                std::to_string(groundId) + ", which is out of range";
                     return false;
                 }
-                groundIdOfGid.emplace_back(firstGid + localId, groundId);
+                groundIdOfGid.push_back({firstGid + localId, groundId, 0});
                 TiledGroundType ground;
                 ground.id = groundId;
                 ground.name = classOf(tile);
@@ -241,13 +326,61 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
                            std::to_string(tileId) + ", which is out of range";
                 return false;
             }
-            tileIdOfGid.emplace_back(firstGid + localId, tileId);
             TiledTileType entry;
             entry.id = tileId;
             entry.name = classOf(tile);
             entry.solid = properties["solid"].asBool();
             entry.water = properties["water"].asBool();
+            // A variant is its base tile with a style: the same tileId, the
+            // same flags, a `skin` naming the biome family, and either an
+            // `edges` property naming the sides (wall, water) or a `variant`
+            // picking the floor decoration (air).
+            if (properties.contains("skin")) {
+                const std::string skinName = properties["skin"].asString();
+                const int skin = tileSkinIndex(skinName);
+                if (skin < 0) {
+                    warnings_.push_back(path + ": tile \"" + entry.name + "\" names skin \"" +
+                                        skinName + "\", which the engine does not know; "
+                                        "drawing it as the default family");
+                    std::fprintf(stderr, "[map] %s\n", warnings_.back().c_str());
+                } else {
+                    entry.skin = static_cast<std::uint8_t>(skin);
+                }
+            }
+            if (tileId == 0) {
+                const int variant = properties.contains("variant") ? properties["variant"].asInt() : 0;
+                if (variant < 0 || variant > kStyleNibbleMax) {
+                    errorOut = path + ": tile \"" + entry.name + "\" declares floor variant " +
+                               std::to_string(variant) + ", which is out of range (0..15)";
+                    return false;
+                }
+                entry.variant = static_cast<std::uint8_t>(variant);
+            } else if (properties.contains("edges")) {
+                entry.edgeMask = parseEdgeMask(properties["edges"].asString());
+            }
+            tileIdOfGid.push_back({firstGid + localId, tileId, entry.style()});
             palette_.push_back(std::move(entry));
+        }
+    }
+
+    // No two tilesets may own the same gid. Tiled itself does not check this
+    // -- it resolves an ambiguous gid to whichever tileset it finds first --
+    // and a map that draws one thing in the editor and another here is worse
+    // than one that does not load. Checked over every pair by sorting on
+    // firstgid: each tileset must end before the next begins.
+    std::sort(ranges.begin(), ranges.end(),
+              [](const TilesetRange& a, const TilesetRange& b) { return a.firstGid < b.firstGid; });
+    for (std::size_t i = 1; i < ranges.size(); ++i) {
+        const TilesetRange& before = ranges[i - 1];
+        const TilesetRange& after = ranges[i];
+        if (before.firstGid + before.tileCount > after.firstGid) {
+            errorOut = path + ": tilesets \"" + before.name + "\" (gids " +
+                       std::to_string(before.firstGid) + ".." +
+                       std::to_string(before.firstGid + before.tileCount - 1) + ") and \"" +
+                       after.name + "\" (first gid " + std::to_string(after.firstGid) +
+                       ") overlap; set \"" + after.name + "\"'s firstgid to at least " +
+                       std::to_string(before.firstGid + before.tileCount);
+            return false;
         }
     }
 
@@ -288,14 +421,17 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
         return false;
     }
     tiles_.reserve(gids.size());
+    styles_.reserve(gids.size());
     for (const std::uint32_t raw : gids) {
         int tileId = 0;
-        if (!resolveGid(tileIdOfGid, raw, tileId)) {
+        std::uint8_t style = 0;
+        if (!resolveGid(tileIdOfGid, raw, tileId, &style)) {
             errorOut = path + ": tile " + std::to_string(tiles_.size()) + " uses gid " +
                        std::to_string(tileId) + ", which no tileset defines";
             return false;
         }
         tiles_.push_back(static_cast<std::uint8_t>(tileId));
+        styles_.push_back(style);
     }
 
     // -- background -----------------------------------------------------------
@@ -332,37 +468,35 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
                 if (!object.isObject()) continue;
                 const std::string kind = classOf(object);
                 // An object of the wrong class on a kind's layer is an editing
-                // mistake, and one that would otherwise turn a biome into a
-                // spawn zone silently. Skipped, not guessed at.
+                // mistake, and one that would otherwise turn a door into a
+                // spawn band silently. Skipped, not guessed at.
                 if (!kind.empty() && kind != spec.kind) continue;
 
                 const Json custom = propertiesOf(object);
                 Json properties = Json::object();
-                for (const char* name : {"spawnType", "mobs", "biomeName", "backgroundTexture"}) {
-                    if (custom.contains(name)) properties.set(name, custom[name]);
+                for (const auto& allowed : kObjectProperties) {
+                    if (std::string(allowed.kind) != spec.kind) continue;
+                    for (const char* name : allowed.properties) {
+                        if (name == nullptr) break;
+                        if (custom.contains(name)) properties.set(name, custom[name]);
+                    }
                 }
-                if (custom.contains("isNoCombat")) properties.set("isNoCombat", custom["isNoCombat"]);
+                // A teleporter may name a point in the target map instead of
+                // one of its spawn rectangles. Both halves are optional and
+                // default to zero, which is what `targetSpawn` exists to avoid
+                // having to write.
                 if (custom.contains("teleportToX") || custom.contains("teleportToY")) {
                     Json destination = Json::object();
                     destination.set("x", custom["teleportToX"].asDouble());
                     destination.set("y", custom["teleportToY"].asDouble());
-                    if (custom.contains("serverPort")) destination.set("serverPort", custom["serverPort"]);
                     properties.set("teleportTo", std::move(destination));
                 }
-                if (custom.contains("spawnTable")) {
-                    // Tiled has no property type for a list of records, so a
-                    // biome's spawn table travels as a JSON string. A table
-                    // that will not parse is dropped with the biome left
-                    // table-less, which safeForSpawn() already treats as
-                    // "never spawn anyone here" -- the safe reading.
-                    Json table;
-                    std::string tableError;
-                    if (Json::parse(custom["spawnTable"].asString(), table, tableError) && table.isArray()) {
-                        properties.set("spawnTable", std::move(table));
-                    } else {
-                        std::fprintf(stderr, "[map] %s: object on layer \"%s\" has an unreadable spawnTable\n",
-                                     path.c_str(), spec.layer);
-                    }
+                // Tiled writes an object's name outside its property bag, and
+                // it is the obvious place to type a spawn point's id. The
+                // explicit `spawnId` property still wins, so a map that wants
+                // a human name and a stable id can have both.
+                if (!object["name"].asString().empty() && !properties.contains("spawnId")) {
+                    properties.set("spawnId", object["name"].asString());
                 }
 
                 Json element = Json::object();

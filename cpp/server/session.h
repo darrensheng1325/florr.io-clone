@@ -46,11 +46,14 @@ struct Session {
     /// The player's body, while Playing.
     Entity entity = NULL_ENTITY;
 
-    /// The biome this connection asked to start in, from JoinGame. Empty means
-    /// the beginner ground; "pvp" and "maze" name the two other realms. Kept on
-    /// the session rather than passed down so a respawn lands where the player
-    /// chose, not back at the default.
-    std::string spawnBiome;
+    /// The spawn point this connection asked to start at, from JoinGame.
+    ///
+    /// One of WorldMaps::spawnChoices()' ids -- a player spawn rectangle on
+    /// some map -- or "pvp"/"maze" for the two realms that have no map file.
+    /// Empty means the overworld's default. Kept on the session rather than
+    /// passed down so a respawn lands where the player chose, not back at the
+    /// default.
+    std::string spawnChoice;
 
     /// The coordinate space the body is in while Playing (realm.h). Overworld
     /// between bodies, so a title-screen session reads as ordinary ground.

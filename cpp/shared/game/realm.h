@@ -24,20 +24,57 @@
 namespace flix {
 
 enum class Realm : std::uint8_t {
-    Overworld = 0,   ///< the 60000x60000 tile map
+    Overworld = 0,   ///< the first world map, maps/world.tmj
     Arena = 1,       ///< the PVP ring
     Maze = 2,        ///< the daily maze
+    // 3 and up are the OTHER world maps, one realm each, in the order
+    // WorldMaps loaded them. See worldRealm() below.
 };
 
-inline constexpr int kRealmCount = 3;
+/// How many realms can exist at once, and therefore how long every per-realm
+/// array is. A cap rather than a count: the world maps are discovered at
+/// runtime, and a fixed-size array indexed by realm is what keeps the
+/// broadphase and the terrain grids allocation-free per tick.
+///
+/// Sixty-four because the realm travels as a byte and the shipped set is
+/// already forty-seven maps -- the overworld, the sewers and five temporary
+/// maps per biome. Raising it costs one broadphase Layer and one tile grid
+/// header per realm, and nothing on the wire; a realm nothing was staged for
+/// keeps a one-cell layer and an empty grid.
+inline constexpr int kMaxRealms = 64;
+
+/// How many world MAPS can be staged: every realm that is not the arena or the
+/// maze.
+inline constexpr int kMaxWorldMaps = kMaxRealms - 2;
 
 /// A byte off the wire or out of a file, made safe.
 inline constexpr Realm realmFromByte(std::uint8_t value) {
-    return value < static_cast<std::uint8_t>(kRealmCount) ? static_cast<Realm>(value)
-                                                          : Realm::Overworld;
+    return value < static_cast<std::uint8_t>(kMaxRealms) ? static_cast<Realm>(value)
+                                                         : Realm::Overworld;
 }
 
 inline constexpr std::size_t realmIndex(Realm realm) { return static_cast<std::size_t>(realm); }
+
+/// The realm a world map occupies, by the slot WorldMaps loaded it into.
+///
+/// Slot 0 is the overworld and keeps realm 0, because that is the default a
+/// Transform is born with and the value every test and every legacy record
+/// already carries. The rest start after the two special realms.
+inline constexpr Realm worldRealm(int mapSlot) {
+    return mapSlot <= 0 ? Realm::Overworld : static_cast<Realm>(mapSlot + 2);
+}
+
+/// The map slot behind a realm, or -1 for the arena and the maze -- the two
+/// realms that are generated rather than authored and have no map file.
+inline constexpr int worldMapSlot(Realm realm) {
+    if (realm == Realm::Overworld) return 0;
+    if (realm == Realm::Arena || realm == Realm::Maze) return -1;
+    return static_cast<int>(realm) - 2;
+}
+
+/// True when a realm is one of the authored maps, i.e. has a tile grid and an
+/// annotation layer of its own.
+inline constexpr bool isWorldRealm(Realm realm) { return worldMapSlot(realm) >= 0; }
 
 /// A position that knows which space it is in. What the per-tick player lists
 /// carry, so a distance test between a mob and "the players" can never pair a

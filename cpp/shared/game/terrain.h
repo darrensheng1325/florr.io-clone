@@ -1,15 +1,23 @@
 #pragma once
 // The tile world.
 //
-// A 200x200 grid of Tile over the 60000-unit map; constants.h owns both
-// numbers. Terrain answers three questions and nothing else: what is at a
-// point, where does a circle end up once it is out of the walls, and is there
-// a clear straight line between two points.
+// One grid of Tile per world realm, 300 units a tile; constants.h owns the
+// tile size, the map file owns the dimensions. Terrain answers three questions
+// and nothing else: what is at a point, where does a circle end up once it is
+// out of the walls, and is there a clear straight line between two points.
 //
 // Every accessor is TOTAL: a read outside the grid answers Tile::Wall. That is
 // what closes the world -- no system special-cases the map edge, it is simply
 // wall all the way out -- and it means resolveCircle keeps a body inside the
 // map without a single bounds check of its own.
+//
+// A tile is its rectangle. Collision, line of sight and the push-out all work
+// on the plain 300-unit squares; the edges a wall or water tile is DRAWN with,
+// the biome skin it wears and the decoration an air cell shows are tileset
+// artwork chosen by scripts/edgeTiles.js, carried here only as a per-cell
+// STYLE byte (constants.h; styleAt / edgeMaskAt / skinAt / floorVariantAt)
+// for the renderer to read. Nothing in this file computes a style, and
+// nothing collides with one.
 
 #include <array>
 #include <cstdint>
@@ -17,47 +25,11 @@
 #include <vector>
 
 #include "shared/core/types.h"
+#include "shared/net/bytebuffer.h"
 #include "shared/game/constants.h"
 #include "shared/game/realm.h"
 
 namespace flix {
-
-/// One point on a tile's jagged edge, in tile-local coordinates: `t` runs
-/// along the edge (0..kTileSize) and `offset` is how far the outline bulges
-/// outward into the air there.
-struct JaggedEdgePoint {
-    double t = 0;
-    double offset = 0;
-};
-
-/// The outline one side of a wall or water tile wears, sorted by `t`, with a
-/// zero-offset point pinned at each end so the protrusion closes onto the flat
-/// tile edge.
-using JaggedEdge = std::array<JaggedEdgePoint, kJaggedSegmentCount + 2>;
-
-/// The outline for one edge of one tile. `edge` is 0 top, 1 bottom, 2 left,
-/// 3 right.
-///
-/// THE single generator, deliberately: collision detection, the wall push-out
-/// and the renderer all call this one function. They used to carry two copies
-/// of the arithmetic that were required to agree and did not -- the seed
-/// additions overflowed in one and not the other -- which meant some tiles
-/// were drawn with an outline they did not collide with. Deterministic in the
-/// tile coordinates alone, so it is also stable across client and server.
-const JaggedEdge& jaggedEdge(int tileX, int tileY, int edge);
-
-class Terrain;
-
-/// Whether that outline is actually worn on that side, i.e. whether the tile
-/// shows an edge there. Companion to jaggedEdge() and, for the same reason,
-/// THE single answer: collision and the renderer must agree on which sides
-/// exist, or the client draws a shore the server does not collide with.
-///
-/// Outside the grid counts as exposed. A solid tile shows its edge against
-/// water; water does NOT show one back, or every shoreline would be drawn
-/// twice, once in each colour -- and, crucially, water against water shows
-/// nothing at all, or a lake is ruled into tiles.
-bool jaggedEdgeExposed(const Terrain& terrain, int tileX, int tileY, int edge);
 
 /// Number of distinct Tile values, i.e. the size of a per-tile-kind table.
 inline constexpr int kTileKindCount = 5;
@@ -131,6 +103,13 @@ enum class MazeBiome : std::uint8_t { Garden = 0, Desert = 1, Ocean = 2 };
 /// Which map section each maze biome borrows its ground colours from, so the
 /// renderer paints a maze the way it paints that biome's overworld.
 inline constexpr std::array<int, 3> kMazeBiomeSections = {{0, 1, 3}};
+
+/// Which MOB GROUP each maze biome is stocked from: a garden maze is full of
+/// garden mobs. Names rather than section indices, because what lives where is
+/// mobs.json's business now -- see MobGroup in config.h. A group the content
+/// does not define leaves that maze empty, which is visible, rather than
+/// quietly full of whatever happened to be nearby.
+inline constexpr std::array<const char*, 3> kMazeBiomeGroups = {{"garden", "desert", "ocean"}};
 
 /// One day's maze: the corner-coded cell grid, its difficulty zones, and the
 /// two places the mode needs to put things (the entrance, and the boss rooms).
@@ -253,6 +232,11 @@ public:
 
     /// An ungenerated Terrain is all Ground: legal, walkable, and useless as a
     /// map. Systems can run against one, which is what tests want.
+    ///
+    /// The overworld grid starts at the historical size (kTilesPerAxis square)
+    /// so a harness that never loads a map gets the world it always did. Every
+    /// other world realm starts EMPTY, which reads as solid everywhere: a
+    /// realm nobody staged a map for is not somewhere a body can be.
     Terrain();
 
     /// Builds the legacy procedural map for `seed`. Equal seeds give
@@ -270,28 +254,100 @@ public:
     /// Loads the tile grid from whichever map format `path` names: the Tiled
     /// map the game is authored in, or the TypeScript bundle it used to ship
     /// as. Pair it with worldMapPath() to pick the file.
-    bool loadWorldMap(const std::string& path, std::string& errorOut);
+    ///
+    /// `realm` says WHICH world this map is. Every world realm carries its own
+    /// grid with its own dimensions, so a second map need not be the size of
+    /// the first -- a corridor level is a hundred tiles across and would
+    /// otherwise have to be drawn inside a 200-square sheet of wall.
+    bool loadWorldMap(const std::string& path, std::string& errorOut,
+                      Realm realm = Realm::Overworld);
 
     /// Loads the tile layer of a Tiled `.tmj`. See shared/game/tiled_map.h.
-    bool loadTiledMap(const std::string& path, std::string& errorOut);
+    bool loadTiledMap(const std::string& path, std::string& errorOut,
+                      Realm realm = Realm::Overworld);
 
     /// Loads MAP_TILE_RLE from TypeScript's generated map_bundle.ts, which is
-    /// itself built from the Tiled map by scripts/encodeMap.js.
-    bool loadMapBundle(const std::string& path, std::string& errorOut);
+    /// itself built from the Tiled map by scripts/encodeMap.js. The bundle
+    /// carries no dimensions, so it is always the historical square.
+    bool loadMapBundle(const std::string& path, std::string& errorOut,
+                       Realm realm = Realm::Overworld);
 
-    /// Replaces the grid with an authoritative network copy.
-    bool setTiles(const std::vector<std::uint8_t>& tiles);
+    /// Replaces one realm's grid with an authoritative network copy.
+    ///
+    /// The dimensions travel WITH the tiles: a client is told the shape of the
+    /// map it is being dropped into, because it has no map file of its own to
+    /// read it out of and a grid interpreted at the wrong width is a world
+    /// sheared diagonally.
+    ///
+    /// `styles` is the parallel grid of style bytes (constants.h: skin in the
+    /// high nibble, edge mask or floor variant in the low, so any value
+    /// 0..255), or EMPTY for a map with no variants, which reads as all zero.
+    /// Any other size refuses the grid.
+    bool setTiles(const std::vector<std::uint8_t>& tiles, int cols, int rows,
+                  Realm realm = Realm::Overworld,
+                  const std::vector<std::uint8_t>& styles = {});
+
+    /// Drops a realm's grid, so the realm reads as solid everywhere again.
+    void clearRealm(Realm realm);
+
+    /// True when a realm has a grid installed. The arena and the maze never
+    /// do -- they answer for themselves -- so this asks only about maps.
+    bool hasMap(Realm realm) const;
 
     std::uint64_t seed() const { return seed_; }
 
     // -- reads --------------------------------------------------------------
 
-    Tile atTile(int tx, int ty) const {
-        if (tx < 0 || ty < 0 || tx >= kTilesPerAxis || ty >= kTilesPerAxis) return Tile::Wall;
-        return static_cast<Tile>(tiles_[static_cast<std::size_t>(ty) * kTilesPerAxis + static_cast<std::size_t>(tx)]);
+    /// Off the grid -- and every tile of a realm with no map -- reads as Wall,
+    /// which is what keeps a body inside a map whatever its dimensions are.
+    Tile atTile(int tx, int ty, Realm realm = Realm::Overworld) const {
+        const Grid& g = grid(realm);
+        if (tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) return Tile::Wall;
+        return static_cast<Tile>(
+            g.tiles[static_cast<std::size_t>(ty) * static_cast<std::size_t>(g.cols) +
+                    static_cast<std::size_t>(tx)]);
     }
 
-    Tile at(Vec2 p) const { return atTile(toTileCoord(p.x), toTileCoord(p.y)); }
+    Tile at(Vec2 p, Realm realm = Realm::Overworld) const {
+        return atTile(toTileCoord(p.x), toTileCoord(p.y), realm);
+    }
+
+    /// The raw style byte of a cell, as the map authored it (constants.h).
+    /// A renderer's question only: nothing collides with a style. Zero off
+    /// the grid and everywhere on a map that carries no styles.
+    std::uint8_t styleAt(int tx, int ty, Realm realm = Realm::Overworld) const {
+        const Grid& g = grid(realm);
+        if (g.styles.empty() || tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) return 0;
+        return g.styles[static_cast<std::size_t>(ty) * static_cast<std::size_t>(g.cols) +
+                        static_cast<std::size_t>(tx)];
+    }
+
+    /// The sides a wall or water tile shows an edge on (constants.h's kEdge*
+    /// bits): the style's low nibble. Zero for an air cell, whose low nibble
+    /// is a floor variant instead, and zero off the grid.
+    std::uint8_t edgeMaskAt(int tx, int ty, Realm realm = Realm::Overworld) const {
+        if (atTile(tx, ty, realm) == Tile::Ground) return 0;
+        return styleEdgeMask(styleAt(tx, ty, realm));
+    }
+
+    /// The biome family a cell's artwork is drawn from: the style's high
+    /// nibble, 0 for the default family (and for a cell that leaves the
+    /// choice to the ground it stands on -- see the renderer).
+    std::uint8_t skinAt(int tx, int ty, Realm realm = Realm::Overworld) const {
+        return styleSkin(styleAt(tx, ty, realm));
+    }
+
+    /// The floor decoration an AIR cell shows: the style's low nibble. Zero
+    /// for any other tile kind, whose low nibble is its edge mask.
+    std::uint8_t floorVariantAt(int tx, int ty, Realm realm = Realm::Overworld) const {
+        if (atTile(tx, ty, realm) != Tile::Ground) return 0;
+        return styleFloorVariant(styleAt(tx, ty, realm));
+    }
+
+    /// A realm's grid dimensions, in tiles. Zero for the arena, the maze and
+    /// any realm no map was staged for.
+    int tileCols(Realm realm = Realm::Overworld) const { return grid(realm).cols; }
+    int tileRows(Realm realm = Realm::Overworld) const { return grid(realm).rows; }
 
     /// Whether a point is inside something solid, in the given realm.
     ///
@@ -300,34 +356,45 @@ public:
     /// simply had no entry, and the maze here answers for itself instead.
     /// Arena: outside the ring, which is the arena's one wall.
     bool blocked(Vec2 p, Realm realm) const;
-    /// Water slows; only the overworld has any.
+    /// Water slows; only a tile map has any.
     bool inWater(Vec2 p, Realm realm) const {
-        return realm == Realm::Overworld && tileIsWater(at(p));
+        return isWorldRealm(realm) && tileIsWater(at(p, realm));
     }
 
     // -- realm geometry -------------------------------------------------------
 
-    /// The square a realm's coordinates span, from (0, 0). The broadphase is
-    /// sized to it and a body is clamped inside it.
-    static double realmSize(Realm realm);
+    /// The rectangle a realm's coordinates span, from (0, 0).
+    ///
+    /// A member rather than a static now: the arena and the maze are fixed
+    /// shapes the class can answer for on its own, but a world map's extent is
+    /// whatever the file said, so the answer belongs to the loaded Terrain.
+    Vec2 realmExtent(Realm realm) const;
 
-    /// Keeps a body of `radius` inside its realm: the world rectangle, the
+    /// The longer axis of realmExtent(). What the broadphase sizes a square
+    /// layer to.
+    double realmSize(Realm realm) const;
+
+    /// Keeps a body of `radius` inside its realm: the map rectangle, the
     /// arena ring, or the maze square. The reference's PVP clamp
     /// (src/server/playerState.ts:1989) is the arena case.
-    static Vec2 clampInside(Vec2 p, double radius, Realm realm);
+    Vec2 clampInside(Vec2 p, double radius, Realm realm) const;
 
     /// True when a point has left its realm's playable area altogether. What
     /// the loot system asks about a drop the resolver could not save.
-    static bool outside(Vec2 p, Realm realm);
+    bool outside(Vec2 p, Realm realm) const;
 
     /// Which of the nine sections a point is in, or -1 outside the map.
+    ///
+    /// The section grid is a RENDERING question now -- which palette a tile is
+    /// painted in, and which ground the maze borrows. What lives where is a
+    /// mob group's business (content.h), not a corner of the map's.
     int sectionAt(Vec2 p) const { return flix::sectionAt(p); }
     int sectionOfTile(int tx, int ty) const { return flix::sectionAt(tileCenter(tx, ty)); }
     const Biome& biomeAt(Vec2 p) const { return biomeOf(sectionAt(p)); }
 
     /// The connectivity root chosen by generate(), and where a fresh player
     /// starts. Guaranteed walkable on a generated map.
-    Vec2 spawnPoint() const;
+    Vec2 spawnPoint(Realm realm = Realm::Overworld) const;
 
     // -- collision ----------------------------------------------------------
 
@@ -392,7 +459,8 @@ public:
     /// Off-grid tiles are air here, exactly as in the reference's scan, so a
     /// path outside the map crosses nothing. A tile question, so it is asked
     /// of the overworld only: the maze and the arena have no tiles.
-    bool segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps = kCenterPathInflation) const;
+    bool segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps = kCenterPathInflation,
+                                    Realm realm = Realm::Overworld) const;
 
     /// The reference's sight test, sample for sample: endpoints closer than
     /// ten units always see each other, and otherwise 21 evenly spaced points
@@ -413,16 +481,16 @@ public:
 
     /// The nearest tile a body can stand in, searched outward from `p`. False
     /// when everything within the search bound is solid.
-    bool nearestOpenTile(Vec2 p, int& outTx, int& outTy) const;
+    bool nearestOpenTile(Vec2 p, int& outTx, int& outTy, Realm realm = Realm::Overworld) const;
 
     // -- invariants ---------------------------------------------------------
 
     /// True when every non-blocking tile is reachable from the spawn. generate()
     /// guarantees it; setTile() can break it, which is why it is public.
-    bool isConnected() const;
+    bool isConnected(Realm realm = Realm::Overworld) const;
 
     /// Passable tile count, for tests and map statistics.
-    int openTileCount() const;
+    int openTileCount(Realm realm = Realm::Overworld) const;
 
     // -- authoring ----------------------------------------------------------
     //
@@ -430,8 +498,8 @@ public:
     // re-verify connectivity: a caller that walls off a region owns the
     // consequences.
 
-    void setTile(int tx, int ty, Tile t);
-    void fill(Tile t);
+    void setTile(int tx, int ty, Tile t, Realm realm = Realm::Overworld);
+    void fill(Tile t, Realm realm = Realm::Overworld);
 
     // -- grid geometry ------------------------------------------------------
 
@@ -454,11 +522,19 @@ public:
         return {tx * kTileSize, ty * kTileSize, kTileSize, kTileSize};
     }
 
-    static constexpr int tilesPerAxis() { return kTilesPerAxis; }
-
-    /// Raw row-major grid, one byte per tile, for the renderer and for saving.
-    const std::uint8_t* tiles() const { return tiles_.data(); }
-    std::size_t tileCount() const { return tiles_.size(); }
+    /// Raw row-major grid, one byte per tile, for the renderer and for the
+    /// wire. `tileCols`/`tileRows` above say how to read it.
+    const std::uint8_t* tiles(Realm realm = Realm::Overworld) const {
+        return grid(realm).tiles.data();
+    }
+    std::size_t tileCount(Realm realm = Realm::Overworld) const {
+        return grid(realm).tiles.size();
+    }
+    /// The raw style grid: tileCount() bytes parallel to tiles(), or EMPTY
+    /// when the realm's map carries none. styleAt() is the per-cell read.
+    const std::vector<std::uint8_t>& styles(Realm realm = Realm::Overworld) const {
+        return grid(realm).styles;
+    }
 
 private:
     static constexpr int kTileCoordLimit = 1 << 20;
@@ -473,14 +549,48 @@ private:
     /// the cap is what makes a wedge the circle cannot fit into terminate.
     static constexpr int kResolvePasses = 4;
 
-    /// A DDA long enough to cross the map twice. Past that the segment is
-    /// nonsense and reporting it blocked is the conservative answer.
-    static constexpr int kMaxSegmentSteps = 2 * kTilesPerAxis + 8;
+    /// A DDA long enough to cross the widest map twice. Past that the segment
+    /// is nonsense and reporting it blocked is the conservative answer.
+    ///
+    /// Sized off the LARGEST grid a map may have rather than off the one being
+    /// walked, so the bound is a constant and the loop needs no per-call
+    /// arithmetic; a small map simply reaches its far edge long before it.
+    static constexpr int kMaxSegmentSteps = 2 * kMaxTilesPerAxis + 8;
 
     static constexpr int kNearestOpenSearchTiles = 24;
 
-    int index(int tx, int ty) const { return ty * kTilesPerAxis + tx; }
-    bool passableIndex(int i) const { return !tileBlocks(static_cast<Tile>(tiles_[static_cast<std::size_t>(i)])); }
+    /// One world realm's tile grid.
+    ///
+    /// `cols`/`rows` are the map's own dimensions, so two realms may be
+    /// different shapes. An EMPTY grid (both zero) is a realm nothing was
+    /// staged for: every read off it is Wall, so no body can be there and no
+    /// query has to special-case it.
+    struct Grid {
+        int cols = 0;
+        int rows = 0;
+        std::vector<std::uint8_t> tiles;
+        /// Style bytes parallel to `tiles`, or empty when the map carries
+        /// none (the generated map, the TypeScript bundle, a map never run
+        /// through scripts/edgeTiles.js). Empty and all-zero read the same;
+        /// empty is just the cheaper spelling of it.
+        std::vector<std::uint8_t> styles;
+        /// The connectivity root generate() chose, as a tile index.
+        int spawnTile = 0;
+    };
+
+    Grid& grid(Realm realm) { return grids_[realmIndex(realm)]; }
+    const Grid& grid(Realm realm) const { return grids_[realmIndex(realm)]; }
+
+    int index(const Grid& g, int tx, int ty) const { return ty * g.cols + tx; }
+    bool passableIndex(const Grid& g, int i) const {
+        return !tileBlocks(static_cast<Tile>(g.tiles[static_cast<std::size_t>(i)]));
+    }
+
+    /// Installs a grid of `cols` x `rows`, rejecting a shape the engine cannot
+    /// hold, a tile it has no Tile for, or a style grid that is neither empty
+    /// nor the tiles' size. Shared by every loader and by the wire.
+    bool install(Realm realm, std::vector<std::uint8_t> tiles, int cols, int rows,
+                 std::vector<std::uint8_t> styles);
 
     void generateSections(Rng& rng);
     void carveAntHell(Rng& rng);
@@ -492,9 +602,49 @@ private:
     /// every region the fill missed.
     void connectAll();
 
-    std::vector<std::uint8_t> tiles_;
+    /// One grid per realm. The arena's and the maze's slots stay empty: those
+    /// two realms are geometry, not tiles, and every query dispatches to them
+    /// before it ever looks in here.
+    std::array<Grid, kMaxRealms> grids_;
     std::uint64_t seed_ = 0;
-    int spawnTile_ = 0;
 };
+
+// ---------------------------------------------------------------------------
+// The tile run-length encoding
+// ---------------------------------------------------------------------------
+//
+// The format `map_bundle.ts` stores MAP_TILE_RLE in, and the one a tile grid
+// travels over the wire in -- and, since the same shape fits, the one the
+// style bytes travel in beside it. One codec for all three, because a second
+// would be a second thing to keep in step with a decoder that already exists.
+//
+// A run is a header byte, an optional two-byte extension, then the value:
+//
+//   header = (count << 1) | extended     count 0..127
+//   if extended: count += (hi << 8) | lo
+//   value
+//
+// A raw grid is a byte per tile, which for the shipped world is forty
+// kilobytes -- already close to the socket's backpressure ceiling, and a
+// larger map would sail past it. Maps are overwhelmingly long runs of the same
+// tile, so this costs a few hundred bytes instead; a style grid is mostly
+// runs of one skin's plain cells and costs about the same.
+
+/// Encodes a row-major grid. Never fails: every byte value encodes.
+std::vector<std::uint8_t> encodeTileRle(const std::vector<std::uint8_t>& tiles);
+
+/// Decodes one, refusing a stream that does not yield exactly `expected`
+/// values or that carries a value above `maxValue` -- the last Tile for a tile
+/// grid; a style grid uses every byte value, so 255 for one.
+bool decodeTileRle(const std::uint8_t* data, std::size_t size, std::size_t expected,
+                   std::vector<std::uint8_t>& out, std::string& errorOut,
+                   std::uint8_t maxValue = static_cast<std::uint8_t>(Tile::Block));
+
+/// Writes one realm's grid in the wire's MapGrid shape (net/protocol.h).
+void writeMapGrid(ByteWriter& out, const Terrain& terrain, Realm realm);
+
+/// Reads one back and installs it. `realmOut` is the realm it named; false
+/// means the payload was malformed and nothing was installed.
+bool readMapGrid(ByteReader& in, Terrain& terrain, Realm& realmOut, std::string& errorOut);
 
 } // namespace flix

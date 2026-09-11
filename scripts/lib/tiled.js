@@ -53,9 +53,16 @@ const SECTIONS_PER_AXIS = 3;
 /** Object layers, in the order their elements are concatenated on import. */
 const OBJECT_LAYERS = [
     { name: 'spawns', kind: 'spawn' },
-    { name: 'biomes', kind: 'biome' },
+    { name: 'player_spawns', kind: 'player_spawn' },
     { name: 'teleporters', kind: 'teleporter' },
 ];
+
+/** Custom properties each kind of object carries through verbatim. */
+const OBJECT_PROPERTIES = {
+    spawn: ['spawnType', 'mobs'],
+    player_spawn: ['spawnId', 'label', 'color', 'order', 'backdrop', 'biome', 'pickable'],
+    teleporter: ['targetMap', 'targetSpawn'],
+};
 
 // ---------------------------------------------------------------------------
 // Custom properties
@@ -134,10 +141,10 @@ function fitSvgToTile(svg) {
  * purpose -- air is where the background layer shows through, in Tiled exactly
  * as in the game.
  *
- * Water's shoreline is not here either. The renderer draws it as a separate
- * pass over every EXPOSED edge, with an outline generated from the tile's own
- * coordinates (terrain.h's jaggedEdge), so it belongs to a pair of tiles
- * rather than to one, and no single palette image can be honest about it.
+ * Water's shoreline is not here either. It is an EDGE VARIANT of the tile
+ * (water_edge_<sides>, chosen per cell by scripts/edgeTiles.js from which of
+ * its neighbours are open), so it belongs to the authored tile grid rather
+ * than to a single palette image, and this fallback draws none.
  */
 function paletteSvg(config) {
     const size = TILE_SIZE;
@@ -171,16 +178,6 @@ function normalizeHex(color) {
 // ---------------------------------------------------------------------------
 // Elements <-> objects
 // ---------------------------------------------------------------------------
-
-/**
- * A biome's spawn table is a list of records, and Tiled has no property type
- * for that — its custom types cannot hold an array of structs. It travels as a
- * JSON string, which Tiled edits in its multi-line string editor and which
- * round-trips exactly.
- */
-function encodeSpawnTable(table) {
-    return JSON.stringify(table, null, 1).replace(/\n\s*/g, ' ');
-}
 
 /**
  * A spawn zone's outline, as a Tiled polygon.
@@ -226,6 +223,14 @@ function objectFromElement(element, id) {
         object.polygon = points.map(point => ({ x: point.x - points[0].x, y: point.y - points[0].y }));
     }
     const custom = {};
+    if (element.type === 'biome') {
+        // Biome rectangles are gone: what one said is now said by a mob
+        // REGION (a `spawn` object with `mobs` and no `spawnType`) or by tier
+        // bands with a `mobs` distribution. There is no faithful automatic
+        // translation of a spawn table's several tiers into one shape, so the
+        // author has to redraw it rather than have it silently dropped.
+        throw new Error('legacy "biome" elements cannot be converted; redraw them as spawn bands or mob regions');
+    }
     if (element.type === 'teleporter') {
         // Every teleporter in the map is authored as a point: the pad has no
         // extent, and map_elements.cpp keeps zero-sized teleporters for exactly
@@ -236,18 +241,15 @@ function objectFromElement(element, id) {
         if (p.teleportTo) {
             custom.teleportToX = p.teleportTo.x;
             custom.teleportToY = p.teleportTo.y;
-            if (p.teleportTo.serverPort !== undefined) custom.serverPort = p.teleportTo.serverPort;
         }
     }
-    if (p.spawnType !== undefined) custom.spawnType = p.spawnType;
-    // The zone's mob distribution, verbatim. It is parsed on the C++ side --
-    // only the server has a view of what mobs exist — so this layer's whole job
-    // is not to mangle the string.
-    if (p.mobs !== undefined) custom.mobs = p.mobs;
-    if (p.biomeName !== undefined) custom.biomeName = p.biomeName;
-    if (p.backgroundTexture !== undefined) custom.backgroundTexture = p.backgroundTexture;
-    if (p.isNoCombat !== undefined) custom.isNoCombat = p.isNoCombat;
-    if (Array.isArray(p.spawnTable)) custom.spawnTable = encodeSpawnTable(p.spawnTable);
+    for (const name of OBJECT_PROPERTIES[element.type] || []) {
+        // Verbatim. A `mobs` distribution is parsed on the C++ side -- only the
+        // server has a view of what mobs and groups exist -- so this layer's
+        // whole job is not to mangle the string.
+        if (p[name] !== undefined) custom[name] = p[name];
+    }
+    if (element.type === 'player_spawn' && p.spawnId !== undefined) object.name = p.spawnId;
 
     const properties = propertyList(custom);
     if (properties.length) object.properties = properties;
@@ -269,24 +271,16 @@ function boundsOf(points) {
 function elementFromObject(object, kind, context) {
     const custom = readProperties(object);
     const properties = {};
-    if (custom.spawnType !== undefined) properties.spawnType = custom.spawnType;
-    if (custom.mobs !== undefined) properties.mobs = custom.mobs;
-    if (custom.biomeName !== undefined) properties.biomeName = custom.biomeName;
-    if (custom.backgroundTexture !== undefined) properties.backgroundTexture = custom.backgroundTexture;
-    if (custom.isNoCombat !== undefined) properties.isNoCombat = custom.isNoCombat;
-    if (custom.spawnTable !== undefined) {
-        let table;
-        try {
-            table = JSON.parse(custom.spawnTable);
-        } catch (err) {
-            throw new Error(`${context}: spawnTable is not valid JSON (${err.message})`);
-        }
-        if (!Array.isArray(table)) throw new Error(`${context}: spawnTable must be a JSON array`);
-        properties.spawnTable = table;
+    for (const name of OBJECT_PROPERTIES[kind] || []) {
+        if (custom[name] !== undefined) properties[name] = custom[name];
+    }
+    // An object's name is the natural place to type a spawn point's id in the
+    // editor; the explicit property wins when both are given.
+    if (kind === 'player_spawn' && properties.spawnId === undefined && object.name) {
+        properties.spawnId = object.name;
     }
     if (custom.teleportToX !== undefined || custom.teleportToY !== undefined) {
         properties.teleportTo = { x: custom.teleportToX || 0, y: custom.teleportToY || 0 };
-        if (custom.serverPort !== undefined) properties.teleportTo.serverPort = custom.serverPort;
     }
     // A polygon object carries its points relative to its own x/y; the game
     // wants world coordinates, and the rectangle it reports is the AABB. A
@@ -612,6 +606,14 @@ function fromTiled(mapPath) {
             const tileId = custom.tileId !== undefined ? custom.tileId | 0 : tile.id | 0;
             tileIdOfGid.set(firstgid + (tile.id | 0), tileId);
             if (custom.builtin) continue;   // constants.ts owns ids 0-2
+            // A SKINNED tile -- a biome's wall/water base, one of their edge
+            // variants, or a floor decoration -- is still plain air, wall or
+            // water to the game (tileId 0..2 plus a style byte the C++ side
+            // reads off the tileset itself). It is not a custom tile type, and
+            // its art is a client-side concern: the bundle carries only the
+            // tile ids, so a skin whose SVGs are not drawn yet is not an error
+            // here.
+            if (custom.skin !== undefined || tileId <= 2) continue;
             const config = {
                 id: tileId,
                 name: tile.class || tile.type || `tile_${tileId}`,

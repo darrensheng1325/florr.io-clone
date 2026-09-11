@@ -11,6 +11,7 @@
 // path and differs only in where its velocity came from.
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include "shared/core/world.h"
 #include "shared/game/components.h"
 #include "shared/game/spatial.h"
+#include "shared/game/map_elements.h"
 #include "shared/game/terrain.h"
 
 namespace flix {
@@ -65,17 +67,18 @@ inline constexpr double kMaxSaneWorldCoord = 1e9;
 
 /// Longest a single collision substep may be.
 ///
-/// Half a tile is NOT the right number, which is why this subtracts twice.
-/// Detection inflates a tile by the jagged protrusion and the scan buffer, so
-/// the midline that matters sits that much inside the geometric one -- and a
-/// substep that carries the centre past it flips the resolver's
-/// least-penetration ejection to the tile's FAR face, which is a teleport
-/// through the wall. TypeScript spells this out as `MAX_STEP_HARD` in
-/// stepPlayerMovement (src/constants.ts); this is the same expression, and it
-/// only ever binds on bodies wider than half a tile -- a super-tier mob, or a
-/// flower stacked with size petals.
-inline constexpr double kMaxSubstepLength =
-    kTileSize * 0.5 - kJaggedMaxProtrusion - kCollisionScanBuffer;
+/// Half a tile is NOT the right number, which is why this subtracts. The
+/// resolver ejects an embedded centre through the tile's NEAREST face, so a
+/// substep that carries the centre past a tile's midline flips that ejection
+/// to the FAR face, which is a teleport through the wall. Detection reaches
+/// the scan buffer beyond the tile's rectangle, so the midline that matters
+/// sits that much inside the geometric one. TypeScript's `MAX_STEP_HARD` in
+/// stepPlayerMovement (src/constants.ts) subtracted its drawn outline's
+/// protrusion as well; the outline is tileset artwork now and a tile collides
+/// as its flat rectangle, so only the buffer is left. It only ever binds on
+/// bodies wider than half a tile -- a super-tier mob, or a flower stacked with
+/// size petals.
+inline constexpr double kMaxSubstepLength = kTileSize * 0.5 - kCollisionScanBuffer;
 
 /// Shortest a substep may be, whatever the body's radius says. A zero-radius
 /// projectile -- or a NaN one -- would otherwise ask for infinitely many
@@ -141,12 +144,27 @@ Vec2 sanitizeMovementVelocity(Vec2 velocity);
 
 class MovementSystem {
 public:
-    /// The map's annotation layer, or null when the server has none.
+    /// Every staged map's annotation layer, or null when the server has none.
     ///
     /// Set once rather than passed per tick: a teleporter pad is a fixture of
     /// the map, not of the frame. Null leaves the pads inert, which is what a
-    /// focused test or a bench that never loads a map bundle wants.
-    const MapData* mapData = nullptr;
+    /// focused test or a bench that never loads a map wants.
+    const WorldMaps* worldMaps = nullptr;
+
+    /// Called when a pad fires: the flower goes to another MAP, and only the
+    /// server can move a body between realms and tell its client.
+    ///
+    /// A callback rather than something this system does itself, because the
+    /// move is not physics: the destination realm's tile grid has to reach
+    /// that player's client before its next snapshot, and the connection
+    /// layer is the only thing that can send it.
+    std::function<void(Entity, Realm, Vec2)> onTeleport;
+
+    /// Which flowers a pad may take at all. Null means every flower; the
+    /// server answers false for its bots, whose controller only knows the
+    /// overworld. A flower this refuses is neither pulled nor charged by a
+    /// pad, so it walks over one as over open ground.
+    std::function<bool(Entity)> takesTeleporters;
 
     /// Convenience entry point used by focused tests.
     void run(World& world, const Terrain& terrain, double nowMillis, double dt);
@@ -244,6 +262,14 @@ private:
     /// TeleporterState here, and adding a component moves the entity to
     /// another archetype -- which is not something a query walk survives.
     std::vector<Entity> teleportPlayers_;
+    /// The terrain the current phase is running against, so the teleporter
+    /// pass can place an arrival in the DESTINATION map without the whole
+    /// system having to hold a Terrain of its own.
+    const Terrain* teleportTerrain_ = nullptr;
+    /// The stream a teleporter's arrival point is sampled from. Its own, and
+    /// not the world's: an arrival must not consume draws from the simulation
+    /// stream, or every mob spawned after somebody took a pad would differ.
+    Rng teleportRng_{0x7E1E907E1EULL};
 
     /// Projectiles whose distance budget or terrain step ended this tick.
     /// Collected during the query walk and marked Dead afterwards: adding a

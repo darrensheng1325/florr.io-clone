@@ -202,7 +202,7 @@ void GameServer::maintainBots(double nowMillis) {
     // body, and asking for them per bot is a walk over the world per bot --
     // which is what turned a large `set_bot_count` into a visible stall.
     std::vector<MobDisc> blockers;
-    collectSpawnBlockers(blockers);
+    collectSpawnBlockers(Realm::Overworld, blockers);   // bots are born on the overworld
 
     for (Bot& bot : bots_) {
         // Two ways a bot is down: its body was taken away outright (a mob's
@@ -357,27 +357,32 @@ double GameServer::cullScore(const Bot& bot) const {
 
 Vec2 GameServer::pickBotSpawn() {
     std::vector<MobDisc> blockers;
-    collectSpawnBlockers(blockers);
+    collectSpawnBlockers(Realm::Overworld, blockers);   // bots are born on the overworld
     return pickBotSpawn(blockers);
 }
 
 Vec2 GameServer::pickBotSpawn(const std::vector<MobDisc>& blockers) {
-    // EVERY area a real player can actually appear in, and nothing else: a
-    // `common` spawn zone, or a biome whose own table admits nothing above
-    // uncommon. That is exactly what the join handler allows, and it is why a
-    // bot never turns up deep in mythic ground where it is under attack from
-    // the moment it appears.
+    // EVERY area a real player can actually appear in, and nothing else: one
+    // of the overworld's player spawn rectangles, or a `common` mob band. That
+    // is exactly what the join handler allows, and it is why a bot never turns
+    // up deep in mythic ground where it is under attack from the moment it
+    // appears.
     //
     // Sampled uniformly over the whole set, which is what spreads the
     // population over the map instead of stacking it in the beginner's corner
     // the way `defaultSpawn` deliberately does for a joining player.
+    //
+    // The OVERWORLD's, deliberately: bots exist to make the main map feel
+    // inhabited, and scattering them across every staged map would leave the
+    // one anybody joins into as empty as before.
+    const MapData* map = worldMaps_.forRealm(Realm::Overworld);
     std::vector<const MapElement*> anchors;
-    for (const MapElement& element : mapData_.elements()) {
-        if (element.bounds.w <= 0 || element.bounds.h <= 0) continue;
-        if (element.kind == MapElementKind::Spawn && element.hasSpawnTier &&
-            element.spawnTier == Rarity::Common) {
-            anchors.push_back(&element);
-        } else if (element.kind == MapElementKind::Biome && MapData::safeForSpawn(element)) {
+    if (map != nullptr) {
+        for (const MapElement* point : map->playerSpawns()) anchors.push_back(point);
+        for (const MapElement& element : map->elements()) {
+            if (element.bounds.w <= 0 || element.bounds.h <= 0) continue;
+            if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
+            if (element.spawnTier != Rarity::Common) continue;
             anchors.push_back(&element);
         }
     }
@@ -392,7 +397,9 @@ Vec2 GameServer::pickBotSpawn(const std::vector<MobDisc>& blockers) {
     for (int i = 0; i < tries; ++i) {
         const MapElement* anchor =
             anchors[rng_.below(static_cast<std::uint32_t>(anchors.size()))];
-        if (mapData_.spawnInElement(*anchor, rng_, *terrain_, spawn, &blockers)) return spawn;
+        if (map != nullptr && map->spawnInElement(*anchor, rng_, *terrain_, spawn, &blockers)) {
+            return spawn;
+        }
     }
     if (!anchors.empty()) {
         // Every sampled area was crowded or walled over. The centre of one of
@@ -400,7 +407,9 @@ Vec2 GameServer::pickBotSpawn(const std::vector<MobDisc>& blockers) {
         // out of a wall.
         return anchors[rng_.below(static_cast<std::uint32_t>(anchors.size()))]->centre();
     }
-    return mapData_.defaultSpawn(rng_, *terrain_, &blockers);
+    const MapData* overworld = worldMaps_.forRealm(Realm::Overworld);
+    if (overworld == nullptr) return terrain_->spawnPoint(Realm::Overworld);
+    return overworld->defaultSpawn(rng_, *terrain_, &blockers);
 }
 
 Entity GameServer::createBotBody(const std::string& name, Vec2 spawn) {
@@ -713,6 +722,12 @@ bool GameServer::botFindPath(Vec2 start, Vec2 goal, std::vector<Vec2>& out) {
     // call and by a per-tick budget above that, so a whole raid replanning
     // together cannot dominate a frame.
     out.clear();
+    // Overworld grid and overworld tiles, and deliberately so: bots are born
+    // on the overworld (createBotBody) and the movement system's
+    // takesTeleporters predicate keeps them off every pad, so a bot never
+    // leaves Realm::Overworld and the fixed kTilesPerAxis and the realm-less
+    // atTile() are both right. The same holds for every Realm::Overworld
+    // broadphase query and kWorldSize clamp in this file.
     constexpr int kDim = kTilesPerAxis;
     const auto blockedTile = [&](int tx, int ty) {
         return tileBlocks(terrain_->atTile(tx, ty));
@@ -1813,9 +1828,11 @@ bool GameServer::botPickFarmZone(const Bot& bot, int rarityIndexValue, int rotat
     for (int i = rarityIndexValue; i >= 0; --i) push(zoneTierFor(i));
     for (int i = rarityIndexValue + 1; i <= rarityIndex(Rarity::Ultra); ++i) push(zoneTierFor(i));
 
+    const MapData* map = worldMaps_.forRealm(Realm::Overworld);
+    if (map == nullptr) return false;
     std::vector<Vec2> zones;
     for (const Rarity tier : candidates) {
-        for (const MapElement& element : mapData_.elements()) {
+        for (const MapElement& element : map->elements()) {
             if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
             if (element.spawnTier != tier) continue;
             if (element.bounds.w <= 0 || element.bounds.h <= 0) continue;
@@ -1959,44 +1976,20 @@ GameServer::BotModeContext GameServer::computeBotMode(Bot& bot, double nowMillis
 // ---------------------------------------------------------------------------
 
 bool GameServer::botRaidShortcut(Bot& bot, double nowMillis, Vec2 anchor, double distToAnchor) {
-    if (distToAnchor < kBotRaidShortcutMinDist) return false;
-    const Transform* transform = world_.tryGet<Transform>(bot.entity);
-    if (transform == nullptr) return false;
-    const Vec2 at = transform->position;
-
-    // The single-hop teleporter whose destination minimises total travel to
-    // the boss, if any beats simply walking.
-    const double direct = (anchor - at).length();
-    double bestTotal = direct;
-    Vec2 bestSource;
-    bool found = false;
-    for (const MapElement& element : mapData_.elements()) {
-        if (element.kind != MapElementKind::Teleporter || !element.hasTeleportTo) continue;
-        const Vec2 source = element.centre();
-        const double destToBoss = (element.teleportTo - anchor).length();
-        // Only worth it when the destination actually lands near the boss.
-        if (destToBoss > direct * kBotRaidTelePayoffRatio) continue;
-        const double total = (source - at).length() + destToBoss;
-        if (total < bestTotal) {
-            bestTotal = total;
-            bestSource = source;
-            found = true;
-        }
-    }
-    if (!found) return false;   // No teleporter helps; the bot walks.
-
-    const Vec2 toward = bestSource - at;
-    const double dist = toward.length();
-    // Inside the pad's activation radius: hold still so the dwell timer fires.
-    // The teleporter pass runs for every flower, bots included.
-    if (dist < kTeleporterRadius * 0.6) {
-        botHold(bot);
-        return true;
-    }
-    if (botFollowPath(bot, nowMillis, bestSource, 1.0, 1.0)) return true;
-    const Vec2 steered = botSteerAroundWalls(at, toward / std::max(1e-6, dist));
-    botDriveMove(bot, steered, 1.0, 1.0);
-    return true;
+    // Teleporters are NOT part of a bot's route any more, so there is no
+    // shortcut left to take: bots walk.
+    //
+    // A pad leads to another MAP now, not to a corner of this one. Hopping one
+    // would move the bot into a realm it was never meant to populate, and the
+    // boss it was routing toward would not be there when it arrived. Kept as a
+    // function rather than deleted at the call site because the decision --
+    // "is there a faster way to the far side of the world?" -- is one a future
+    // map with in-map pads could answer yes to again.
+    (void)bot;
+    (void)nowMillis;
+    (void)anchor;
+    (void)distToAnchor;
+    return false;
 }
 
 // ---------------------------------------------------------------------------

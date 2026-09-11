@@ -97,7 +97,7 @@ struct ButtonStyle {
     /// Off, because `drawGardnButton` never measures its label: a name too
     /// long for its box overflows both ends of it there, and a button that
     /// quietly shrank instead would read as a different type scale beside its
-    /// siblings ("Computer Lab" in the 90px biome row). Opt in per call site
+    /// siblings ("Computer Lab" in the spawn picker's tab row). Opt in per call site
     /// only where a panel is measured to need it.
     bool shrinkToFit = false;
 };

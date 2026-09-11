@@ -40,13 +40,13 @@ constexpr double kMinProjectileSpeed = 1e-3;
 /// anything drawable and far above any residual the arithmetic can leave.
 constexpr double kSpentRangeEpsilon = 1e-6;
 
-Vec2 sanitizePosition(Vec2 p, Realm realm) {
+Vec2 sanitizePosition(const Terrain& terrain, Vec2 p, Realm realm) {
     // A body that arrived here non-finite has already lost its place in the
     // world; putting it at the centre of its realm is recoverable, propagating
     // NaN is not.
     if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
-        const double half = Terrain::realmSize(realm) * 0.5;
-        return {half, half};
+        const Vec2 extent = terrain.realmExtent(realm);
+        return {extent.x * 0.5, extent.y * 0.5};
     }
     return p;
 }
@@ -101,22 +101,22 @@ bool segmentTouchesRect(Vec2 a, Vec2 b, double left, double top, double right, d
 /// on the other side of the wall. Accepting that is a teleport through solid,
 /// which is why the caller refuses any ejection this reports.
 ///
-/// The raw tile rects, not the jagged outline: this asks whether the path
-/// crossed the WALL, and the jagged edge is a detail of where it rests.
-bool centerPathCrossesWall(const Terrain& terrain, Vec2 a, Vec2 b) {
+/// The raw tile rects of `realm`'s grid: this asks whether the path crossed
+/// the WALL. Edge masks are art only and never enter into it.
+bool centerPathCrossesWall(const Terrain& terrain, Vec2 a, Vec2 b, Realm realm) {
     const double eps = kCenterPathEpsilon;
     // Clamped to the grid for the same reason the collision scan is: off-grid
     // tiles read as wall, and an unclamped index is an unbounded loop.
     const int minTx = std::max(0, Terrain::toTileCoord(std::min(a.x, b.x) - eps));
-    const int maxTx = std::min(Terrain::tilesPerAxis() - 1,
+    const int maxTx = std::min(terrain.tileCols(realm) - 1,
                                Terrain::toTileCoord(std::max(a.x, b.x) + eps));
     const int minTy = std::max(0, Terrain::toTileCoord(std::min(a.y, b.y) - eps));
-    const int maxTy = std::min(Terrain::tilesPerAxis() - 1,
+    const int maxTy = std::min(terrain.tileRows(realm) - 1,
                                Terrain::toTileCoord(std::max(a.y, b.y) + eps));
 
     for (int tileY = minTy; tileY <= maxTy; ++tileY) {
         for (int tileX = minTx; tileX <= maxTx; ++tileX) {
-            if (!tileBlocks(terrain.atTile(tileX, tileY))) continue;
+            if (!tileBlocks(terrain.atTile(tileX, tileY, realm))) continue;
             if (segmentTouchesRect(a, b,
                                    tileX * kTileSize - eps, tileY * kTileSize - eps,
                                    (tileX + 1) * kTileSize + eps, (tileY + 1) * kTileSize + eps)) {
@@ -185,7 +185,7 @@ StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec
     StepOutcome out;
     const double r = sanitizeCollisionRadius(radius);
     const double hull = r > kMinCollisionRadius ? r : kMinCollisionRadius;
-    const Vec2 start = sanitizePosition(position, realm);
+    const Vec2 start = sanitizePosition(terrain, position, realm);
     position = start;
 
     Vec2 delta = sanitizeMovementVelocity(velocity) * (dt > 0.0 ? dt : 0.0);
@@ -213,23 +213,25 @@ StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec
         const Vec2 want = from + stepDelta;
         Vec2 got = collideTerrain ? terrain.resolveCircle(want, hull, realm) : want;
 
-        // The containment guard is a TILE question, so it is only asked of the
-        // overworld: the maze's resolver slides along its own geometry and the
-        // arena has nothing to cross.
-        if (refuseWallCrossing && collideTerrain && realm == Realm::Overworld
+        // The containment guard is a TILE question, so it is asked of every
+        // authored map -- each world realm has a grid of its own -- and of
+        // nothing else: the maze's resolver slides along its own geometry and
+        // the arena has nothing to cross. Same geometry, same physics,
+        // whichever realm id the map was loaded into.
+        if (refuseWallCrossing && collideTerrain && isWorldRealm(realm)
             && distanceSq(got, want) > kContactEpsilon * kContactEpsilon
             // A centre already inside a blocking tile is exempt: the
             // resolver's output is its only way out, arbitrary as the
             // direction may be.
             && !terrain.blocked(from, realm)
-            && centerPathCrossesWall(terrain, from, got)) {
+            && centerPathCrossesWall(terrain, from, got, realm)) {
             // The ejection would carry the centre across solid. Refuse it and
             // end the tick's movement where this substep started.
             out.blocked = true;
             break;
         }
 
-        got = Terrain::clampInside(got, hull, realm);
+        got = terrain.clampInside(got, hull, realm);
         if (distanceSq(got, want) > kContactEpsilon * kContactEpsilon) out.blocked = true;
         position = got;
     }
@@ -276,7 +278,10 @@ void MovementSystem::runPlayerPhase(World& world, const Terrain& terrain,
     // what makes the suction able to beat a shove: the reference runs them at
     // the very end of its per-player pipeline, on the coordinates it is about
     // to commit.
-    if (mapData) stepTeleporters(world, nowMillis, dt);
+    if (worldMaps != nullptr) {
+        teleportTerrain_ = &terrain;
+        stepTeleporters(world, nowMillis, dt);
+    }
 }
 
 void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
@@ -356,20 +361,45 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
     });
 
     for (const Entity e : teleportPlayers_) {
+        // A flower the server keeps off the pads -- its bots -- is not even
+        // pulled by one: the suction is the pad's first act, and a bot half
+        // dragged onto a pad it can never take would stand there forever.
+        if (takesTeleporters && !takesTeleporters(e)) continue;
         Transform* transform = world.tryGet<Transform>(e);
         if (!transform) continue;
-        // The pads are map annotations, and the map is the overworld.
-        if (transform->realm != Realm::Overworld) continue;
+        // Every world map has its own pads. The arena and the maze have none:
+        // they are generated rather than authored, so there is nothing there
+        // to stand on.
+        const MapData* map = worldMaps->forRealm(transform->realm);
+        if (map == nullptr) continue;
         // The state is per flower and starts empty, so it is created on the
         // first tick this runs for a player rather than by the prefab -- one
-        // more component on every flower for a feature eight pads use.
+        // more component on every flower for a feature a handful of pads use.
         TeleporterState& state = world.ensure<TeleporterState>(e);
         const MapData::TeleportStep step =
-            mapData->stepTeleporters(transform->position, dt, nowMillis, state);
-        // Committed raw, with no wall resolution and no world clamp, exactly
-        // as the reference commits it: the pull is small and every pad and
-        // destination is authored on open ground.
+            map->stepTeleporters(transform->position, dt, nowMillis, state);
+        // The suction is committed raw, with no wall resolution and no world
+        // clamp, exactly as the reference commits it: the pull is small and
+        // every pad is authored on open ground.
         transform->position = step.position;
+
+        if (step.fired < 0) continue;
+        // A pad that fired leads to ANOTHER map, which means a realm change --
+        // a new tile grid on the wire and a cleared view on the client. Only
+        // the connection layer can do that, so it is handed up rather than
+        // done here. Without a handler the pad is inert, which is what a
+        // focused movement test gets and what it should get: a test with no
+        // server has nowhere to send anyone.
+        if (!onTeleport) continue;
+        const MapElement& pad = map->elements()[static_cast<std::size_t>(step.fired)];
+        WorldMaps::Destination destination;
+        // No mob list: the arrival is a player being put down on authored
+        // ground, and refusing to send them because a mob is standing on the
+        // pad would leave them charging it forever.
+        if (!worldMaps->resolveTeleporter(pad, teleportRng_, *teleportTerrain_, destination)) {
+            continue;   // reported at load; nothing to do per tick
+        }
+        onTeleport(e, destination.realm, destination.position);
     }
 }
 

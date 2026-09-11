@@ -9,6 +9,96 @@ import { MapElement, TileTypeConfig } from './constants';
 export const MAP_ELEMENTS: MapElement[] = [
   {
     "type": "spawn",
+    "x": 0,
+    "y": 0,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "garden"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 20000,
+    "y": 0,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "desert"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 40000,
+    "y": 0,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "hel"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 0,
+    "y": 20000,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "ocean"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 20000,
+    "y": 20000,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "ant_hell"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 0,
+    "y": 40000,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "sewers"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 20000,
+    "y": 40000,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "computer"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 40000,
+    "y": 20000,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "jungle"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 40000,
+    "y": 40000,
+    "width": 20000,
+    "height": 20000,
+    "properties": {
+      "mobs": "computer 50% hel 50%"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 103.515625,
     "y": 6225.078125,
     "width": 3830,
@@ -4236,1633 +4326,960 @@ export const MAP_ELEMENTS: MapElement[] = [
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 18265.46875,
     "y": 1405.078125,
     "width": 1270,
     "height": 4140,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 5,
-          "mobType": "hornet"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "hornet"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 17935.46875,
     "y": 275.078125,
     "width": 1350,
     "height": 2770,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 5,
-          "mobType": "hornet"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "hornet"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 17665.46875,
     "y": 215.078125,
     "width": 500,
     "height": 1960,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 5,
-          "mobType": "hornet"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "hornet"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 17365.46875,
     "y": 855.078125,
     "width": 380,
     "height": 690,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 5,
-          "mobType": "hornet"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "hornet"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 335.46875,
     "y": 9765.078125,
     "width": 1400,
     "height": 470,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 5,
-          "mobType": "target_dummy"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 5,
-          "mobType": "target_dummy"
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "target_dummy"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 335.46875,
+    "y": 9765.078125,
+    "width": 1400,
+    "height": 470,
+    "properties": {
+      "spawnType": "uncommon",
+      "mobs": "target_dummy"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 1475.46875,
     "y": 7295.078125,
     "width": 400,
     "height": 530,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "rare",
-          "weight": 5,
-          "mobType": "target_dummy"
-        },
-        {
-          "tier": "epic",
-          "weight": 5,
-          "mobType": "target_dummy"
-        }
-      ]
+      "spawnType": "rare",
+      "mobs": "target_dummy"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 1475.46875,
+    "y": 7295.078125,
+    "width": 400,
+    "height": 530,
+    "properties": {
+      "spawnType": "epic",
+      "mobs": "target_dummy"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 2695.46875,
     "y": 9635.078125,
     "width": 290,
     "height": 330,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 5,
-          "mobType": "target_dummy"
-        },
-        {
-          "tier": "mythic",
-          "weight": 5,
-          "mobType": "target_dummy"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "target_dummy"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 2695.46875,
+    "y": 9635.078125,
+    "width": 290,
+    "height": 330,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "target_dummy"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 235.46875,
     "y": 6565.078125,
     "width": 910,
     "height": 2620,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "ultra",
-          "weight": 5,
-          "mobType": "target_dummy"
-        },
-        {
-          "tier": "super",
-          "weight": 5,
-          "mobType": "target_dummy"
-        },
-        {
-          "tier": "unique",
-          "weight": 5,
-          "mobType": "target_dummy"
-        }
-      ]
+      "spawnType": "ultra",
+      "mobs": "target_dummy"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 235.46875,
+    "y": 6565.078125,
+    "width": 910,
+    "height": 2620,
+    "properties": {
+      "spawnType": "super",
+      "mobs": "target_dummy"
+    }
+  },
+  {
+    "type": "spawn",
+    "x": 235.46875,
+    "y": 6565.078125,
+    "width": 910,
+    "height": 2620,
+    "properties": {
+      "spawnType": "unique",
+      "mobs": "target_dummy"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 15875.46875,
     "y": 18800.078125,
     "width": 1010,
     "height": 520,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "soldier_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_ant"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 16445.46875,
     "y": 17280.078125,
     "width": 3400,
     "height": 1680,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "soldier_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_ant"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 17075.46875,
     "y": 18890.078125,
     "width": 2820,
     "height": 1050,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "soldier_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_ant"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 16485.46875,
     "y": 15530.078125,
     "width": 3140,
     "height": 1700,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "soldier_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_ant"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 16775.46875,
     "y": 17190.078125,
     "width": 2780,
     "height": 190,
     "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "soldier_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_ant"
     }
   },
   {
-    "type": "biome",
-    "x": 7175.46875,
-    "y": 13160.078125,
-    "width": 0,
-    "height": 0,
-    "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "legendary",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
-    }
-  },
-  {
-    "type": "biome",
-    "x": 7165.46875,
-    "y": 13200.078125,
-    "width": 0,
-    "height": 0,
-    "properties": {
-      "biomeName": "garden",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "legendary",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
-    }
-  },
-  {
-    "type": "biome",
+    "type": "spawn",
     "x": 7175.46875,
     "y": 13180.078125,
     "width": 2460,
     "height": 360,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "legendary",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 7175.46875,
+    "y": 13180.078125,
+    "width": 2460,
+    "height": 360,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 7435.46875,
     "y": 12810.078125,
     "width": 2120,
     "height": 1630,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "legendary",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 7435.46875,
+    "y": 12810.078125,
+    "width": 2120,
+    "height": 1630,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 7995.46875,
     "y": 11850.078125,
     "width": 2080,
     "height": 1420,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "legendary",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 7995.46875,
+    "y": 11850.078125,
+    "width": 2080,
+    "height": 1420,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 11505.46875,
     "y": 14300.078125,
     "width": 2410,
     "height": 1800,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "legendary",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 11505.46875,
+    "y": 14300.078125,
+    "width": 2410,
+    "height": 1800,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 10055.46875,
     "y": 11930.078125,
     "width": 1650,
     "height": 1300,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "mythic",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 10055.46875,
+    "y": 11930.078125,
+    "width": 1650,
+    "height": 1300,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 10715.46875,
     "y": 11670.078125,
     "width": 1050,
     "height": 490,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "mythic",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 10715.46875,
+    "y": 11670.078125,
+    "width": 1050,
+    "height": 490,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 11045.46875,
     "y": 13190.078125,
     "width": 3100,
     "height": 1110,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "mythic",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 11045.46875,
+    "y": 13190.078125,
+    "width": 3100,
+    "height": 1110,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 11505.46875,
     "y": 11360.078125,
     "width": 2070,
     "height": 1850,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "mythic",
-          "weight": 7,
-          "mobType": "bee"
-        },
-        {
-          "tier": "ultra",
-          "weight": 3,
-          "mobType": "bee"
-        }
-      ]
+      "spawnType": "mythic",
+      "mobs": "bee"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 11505.46875,
+    "y": 11360.078125,
+    "width": 2070,
+    "height": 1850,
+    "properties": {
+      "spawnType": "ultra",
+      "mobs": "bee"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 13905.46875,
     "y": 17045.078125,
     "width": 1020,
     "height": 2460,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 13905.46875,
+    "y": 17045.078125,
+    "width": 1020,
+    "height": 2460,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 14375.46875,
     "y": 16745.078125,
     "width": 1370,
     "height": 2180,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 14375.46875,
+    "y": 16745.078125,
+    "width": 1370,
+    "height": 2180,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 14685.46875,
     "y": 15695.078125,
     "width": 1560,
     "height": 2700,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 14685.46875,
+    "y": 15695.078125,
+    "width": 1560,
+    "height": 2700,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 14335.46875,
     "y": 14805.078125,
     "width": 2200,
     "height": 1770,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 14335.46875,
+    "y": 14805.078125,
+    "width": 2200,
+    "height": 1770,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 14685.46875,
     "y": 13135.078125,
     "width": 2330,
     "height": 1720,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 14685.46875,
+    "y": 13135.078125,
+    "width": 2330,
+    "height": 1720,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 16425.46875,
     "y": 14775.078125,
     "width": 3140,
     "height": 950,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 16425.46875,
+    "y": 14775.078125,
+    "width": 3140,
+    "height": 950,
+    "properties": {
+      "spawnType": "legendary",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 14975.46875,
     "y": 11630.078125,
     "width": 2130,
     "height": 1540,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "mythic",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 14975.46875,
+    "y": 11630.078125,
+    "width": 2130,
+    "height": 1540,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 16975.46875,
     "y": 11730.078125,
     "width": 2760,
     "height": 3170,
     "properties": {
-      "biomeName": "unnamed_biome",
-      "backgroundTexture": "land.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 5,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "mythic",
-          "weight": 4,
-          "mobType": "ladybug"
-        },
-        {
-          "tier": "legendary",
-          "weight": 1
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "ladybug"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 16975.46875,
+    "y": 11730.078125,
+    "width": 2760,
+    "height": 3170,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "ladybug"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 35385.46875,
     "y": 16755.078125,
     "width": 4600,
     "height": 2800,
     "properties": {
-      "biomeName": "desert",
-      "backgroundTexture": "desert.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 5,
-          "mobType": "cactus"
-        },
-        {
-          "tier": "common",
-          "weight": 5,
-          "mobType": "sandstorm"
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "cactus 50% sandstorm 50%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 35635.46875,
     "y": 13515.078125,
     "width": 4340,
     "height": 3420,
     "properties": {
-      "biomeName": "desert",
-      "backgroundTexture": "desert.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 5,
-          "mobType": "cactus"
-        },
-        {
-          "tier": "common",
-          "weight": 5,
-          "mobType": "sandstorm"
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "cactus 50% sandstorm 50%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 24535.46875,
     "y": 6525.078125,
     "width": 8130,
     "height": 2550,
     "properties": {
-      "biomeName": "desert",
-      "backgroundTexture": "desert.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 8,
-          "mobType": "sandstorm"
-        },
-        {
-          "tier": "mythic",
-          "weight": 2,
-          "mobType": "sandstorm"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "sandstorm"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 24535.46875,
+    "y": 6525.078125,
+    "width": 8130,
+    "height": 2550,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "sandstorm"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 30055.46875,
     "y": 8775.078125,
     "width": 2630,
     "height": 1800,
     "properties": {
-      "biomeName": "desert",
-      "backgroundTexture": "desert.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 8,
-          "mobType": "sandstorm"
-        },
-        {
-          "tier": "mythic",
-          "weight": 2,
-          "mobType": "sandstorm"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "sandstorm"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
+    "x": 30055.46875,
+    "y": 8775.078125,
+    "width": 2630,
+    "height": 1800,
+    "properties": {
+      "spawnType": "mythic",
+      "mobs": "sandstorm"
+    }
+  },
+  {
+    "type": "spawn",
     "x": 50835.46875,
     "y": 5265.078125,
     "width": 740,
     "height": 830,
     "properties": {
-      "biomeName": "hel",
-      "backgroundTexture": "hel.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 10,
-          "mobType": "hel_beetle"
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "hel_beetle"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 28445.46875,
     "y": 37180.078125,
     "width": 2330,
     "height": 2800,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 1
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "ant_hell"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 32965.46875,
     "y": 30165.078125,
     "width": 1670,
     "height": 1350,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 33705.46875,
     "y": 28315.078125,
     "width": 1860,
     "height": 2340,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 33605.46875,
     "y": 29895.078125,
     "width": 80,
     "height": 410,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 33505.46875,
     "y": 29865.078125,
     "width": 610,
     "height": 500,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 32035.46875,
     "y": 25745.078125,
     "width": 3430,
     "height": 2770,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "rare",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "rare",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "rare",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "rare",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 34645.46875,
     "y": 19905.078125,
     "width": 1170,
     "height": 3020,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "rare",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "rare",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "rare",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "rare",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 34135.46875,
     "y": 22205.078125,
     "width": 1530,
     "height": 1310,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "rare",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "rare",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "rare",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "rare",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 37115.46875,
     "y": 19465.078125,
     "width": 850,
     "height": 710,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "uncommon",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "uncommon",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 36455.46875,
     "y": 20005.078125,
     "width": 1270,
     "height": 1100,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "uncommon",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "uncommon",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 36155.46875,
     "y": 20735.078125,
     "width": 1210,
     "height": 2720,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "uncommon",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "uncommon",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 35845.46875,
     "y": 23265.078125,
     "width": 1190,
     "height": 1100,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "uncommon",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "uncommon",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 34355.46875,
     "y": 23485.078125,
     "width": 1980,
     "height": 1930,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "uncommon",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "uncommon",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 32435.46875,
     "y": 24235.078125,
     "width": 3200,
     "height": 1550,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "uncommon",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "uncommon",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "uncommon",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 30865.46875,
     "y": 25580.078125,
     "width": 1280,
     "height": 1470,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 29955.46875,
     "y": 20480.078125,
     "width": 1770,
     "height": 6340,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
-    "x": 31725.46875,
-    "y": 20480.078125,
-    "width": 0,
-    "height": 10,
-    "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
-    }
-  },
-  {
-    "type": "biome",
+    "type": "spawn",
     "x": 29635.46875,
     "y": 23060.078125,
     "width": 570,
     "height": 3130,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 29395.46875,
     "y": 23850.078125,
     "width": 370,
     "height": 800,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 29325.46875,
     "y": 20620.078125,
     "width": 830,
     "height": 2860,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 26325.46875,
     "y": 20560.078125,
     "width": 3390,
     "height": 1120,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "epic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "epic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "epic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 24465.46875,
     "y": 21520.078125,
     "width": 2920,
     "height": 1100,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 21725.46875,
     "y": 21760.078125,
     "width": 4750,
     "height": 1090,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 20835.46875,
     "y": 22650.078125,
     "width": 5130,
     "height": 680,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 20835.46875,
     "y": 23170.078125,
     "width": 3850,
     "height": 300,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "legendary",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "legendary",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "legendary",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 20915.46875,
     "y": 23405.078125,
     "width": 2230,
     "height": 4660,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "mythic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "mythic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "mythic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "mythic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 20095.46875,
     "y": 27755.078125,
     "width": 2460,
     "height": 3890,
     "properties": {
-      "biomeName": "ant_hell",
-      "backgroundTexture": "ant_hell.svg",
-      "spawnTable": [
-        {
-          "tier": "mythic",
-          "weight": 60,
-          "mobType": "soldier_fire_ant"
-        },
-        {
-          "tier": "mythic",
-          "weight": 30,
-          "mobType": "worker_fire_ant"
-        },
-        {
-          "tier": "mythic",
-          "weight": 10,
-          "mobType": "baby_fire_ant"
-        }
-      ]
+      "spawnType": "mythic",
+      "mobs": "soldier_fire_ant 60% worker_fire_ant 30% baby_fire_ant 10%"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 1215.46875,
     "y": 59085.078125,
     "width": 610,
     "height": 900,
     "properties": {
-      "biomeName": "sewers",
-      "backgroundTexture": "sewers.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 10,
-          "mobType": "garbage"
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "garbage"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 1175.46875,
     "y": 51175.078125,
     "width": 690,
     "height": 8790,
     "properties": {
-      "biomeName": "sewers",
-      "backgroundTexture": "sewers.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 10,
-          "mobType": "garbage"
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "garbage"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 6607.96875,
     "y": 20062.578125,
     "width": 7790,
     "height": 2800,
     "properties": {
-      "biomeName": "ocean",
-      "backgroundTexture": "ocean.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 10
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "ocean"
     }
   },
   {
-    "type": "biome",
+    "type": "spawn",
     "x": 37685.46875,
     "y": 42255.078125,
     "width": 240,
     "height": 210,
     "properties": {
-      "biomeName": "computer",
-      "backgroundTexture": "blank.svg",
-      "spawnTable": [
-        {
-          "tier": "common",
-          "weight": 1
-        }
-      ]
+      "spawnType": "common",
+      "mobs": "computer"
     }
   },
   {
@@ -5872,6 +5289,7 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
+      "targetMap": "world",
       "teleportTo": {
         "x": 29479,
         "y": 38705
@@ -5885,6 +5303,7 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
+      "targetMap": "world",
       "teleportTo": {
         "x": 19000,
         "y": 19000
@@ -5898,10 +5317,8 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
-      "teleportTo": {
-        "x": 11000,
-        "y": 10000
-      }
+      "targetMap": "sewers",
+      "targetSpawn": "sewers_entrance"
     }
   },
   {
@@ -5911,6 +5328,7 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
+      "targetMap": "world",
       "teleportTo": {
         "x": 1500,
         "y": 59000
@@ -5924,6 +5342,7 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
+      "targetMap": "world",
       "teleportTo": {
         "x": 37479,
         "y": 42872
@@ -5937,6 +5356,7 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
+      "targetMap": "world",
       "teleportTo": {
         "x": 32459,
         "y": 13810
@@ -5950,6 +5370,7 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
+      "targetMap": "world",
       "teleportTo": {
         "x": 27500,
         "y": 54998
@@ -5963,10 +5384,110 @@ export const MAP_ELEMENTS: MapElement[] = [
     "width": 0,
     "height": 0,
     "properties": {
+      "targetMap": "world",
       "teleportTo": {
         "x": 17688,
         "y": 47690
       }
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 6450,
+    "y": 6750,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "garden_1",
+      "targetSpawn": "garden_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 37650,
+    "y": 14850,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "desert_1",
+      "targetSpawn": "desert_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 48450,
+    "y": 7650,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "hel_1",
+      "targetSpawn": "hel_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 9750,
+    "y": 28650,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "ocean_1",
+      "targetSpawn": "ocean_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 29250,
+    "y": 31650,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "ant_hell_1",
+      "targetSpawn": "ant_hell_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 50250,
+    "y": 28650,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "jungle_1",
+      "targetSpawn": "jungle_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 1350,
+    "y": 48750,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "sewers_1",
+      "targetSpawn": "sewers_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 31050,
+    "y": 48450,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "computer_1",
+      "targetSpawn": "computer_1"
+    }
+  },
+  {
+    "type": "teleporter",
+    "x": 48450,
+    "y": 48450,
+    "width": 0,
+    "height": 0,
+    "properties": {
+      "targetMap": "unknown_1",
+      "targetSpawn": "unknown_1"
     }
   }
 ];

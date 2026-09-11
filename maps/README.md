@@ -68,6 +68,59 @@ land exactly where they did: a ground tile's centre is at least 200 units from
 a section boundary, and the 300-unit cell containing it has its own centre
 within 150 units, so the two never end up on opposite sides.
 
+## Tile skins
+
+`terrain.tsj` holds four families of wall / water art. Ids 0–35 are the
+**default** family: the six builtin tiles (air, wall, water, bridge, sewage,
+block) and the default wall's and water's 15 edge variants each. After that come
+three biome **skins**, 35 ids apiece — a wall base, its 15 edge variants, a
+water base, its 15 edge variants, and three floor decorations:
+
+| skin | name | ids | classes |
+| --- | --- | --- | --- |
+| 0 | default | 0–35 | `wall`, `wall_edge_<sides>`, `water`, `water_edge_<sides>` |
+| 1 | sewers | 36–70 | `wall_sewers[_edge_<sides>]`, `water_sewers[_edge_<sides>]`, `floor_sewers_<0-2>` |
+| 2 | computer | 71–105 | `wall_computer[_edge_<sides>]`, … |
+| 3 | unknown | 106–140 | `wall_unknown[_edge_<sides>]`, … |
+
+`tilecount` is 141, so `ground.tsj` sits at firstgid 142 in every map. An edge
+variant's `<sides>` lists its exposed sides in the fixed order n, e, s, w
+(`wall_edge_ne`); `scripts/edgeTiles.js --apply` picks the variant for every
+cell, so a map is authored with the base tiles and the lips follow.
+
+A skinned tile is still plain air, wall or water to the game (`tileId` 0–2);
+the skin and edge mask travel as a per-cell style byte the C++ side reads off
+the tileset (`skin`, `edges`, `variant` properties). A wall or water cell of
+the default family takes its look from the ground beneath it: on sewers,
+computer or unknown ground it is drawn with that skin, on any other ground it is
+the default brown wall / flat water (`skinForGround()` in `constants.h`). That
+is how the overworld's three skinned thirds get their walls without the map
+naming a skin, and why the garden, desert, hel, ocean, ant_hell and jungle
+sublevels are painted with the default `wall` and `water` and carry no floor
+decorations.
+
+The art is generated, not drawn by hand. `scripts/lib/tileArt.js` owns the
+geometry every family shares (lip and shoreline profiles, corner joins, the
+tileset entry, the id layout) and `scripts/tileArt/<skin>.js` owns one family's
+look. To add a family:
+
+1. append its name to `SKIN_NAMES` and its colours to `SKIN_PALETTE` in
+   `scripts/lib/tileArt.js` — the next 35 ids are its block;
+2. write `scripts/tileArt/<name>.js` (copy `sewers.js`; it must export `name`,
+   `wall`, `water` and exactly three `floors` stamps);
+3. add the name to `kTileSkinNames` in `cpp/shared/game/constants.h` at the same
+   index, and map its ground to it in `skinForGround()`;
+4. if the generator should paint sublevels with it, add the biome to `SKINNED`
+   in `scripts/generateBiomeMaps.js` and give it a `skin` and `floors`;
+5. `node scripts/edgeTiles.js --art` (writes `tiles/*.svg` and `terrain.tsj`),
+   then `npm run build:map` — the ground tileset's firstgid moves with
+   `tilecount`, and every map is remapped for you.
+
+`node scripts/edgeTiles.js --art --skin <name> --out <dir>` previews one family
+without touching the tileset. The renderer draws a wall or water cell whose skin
+has no art file with the default family's art for the same mask, so a partly
+drawn family never leaves holes.
+
 ## Layers
 
 | layer | holds |

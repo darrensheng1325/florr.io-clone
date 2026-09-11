@@ -235,7 +235,7 @@ int main(int argc, char** argv) {
                 emit(prefix + "/visual-scale", stats.visualScale);
                 emit(prefix + "/spawn-weight", stats.spawnWeight);
                 emit(prefix + "/ai", std::string(aiName(stats.ai)));
-                emit(prefix + "/section-mask", static_cast<double>(stats.sectionMask));
+                emit(prefix + "/ambient", stats.ambient ? 1.0 : 0.0);
             }
         }
 

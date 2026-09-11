@@ -27,6 +27,7 @@ namespace flix {
 class ContentRegistry;
 class MapData;
 class Terrain;
+class WorldMaps;
 struct MobConfig;
 
 /// One piece of an explosion's debris. Velocity and life are per second here;
@@ -163,9 +164,17 @@ public:
     /// plain biome ground rather than nothing.
     void setTerrain(const Terrain* terrain) { terrain_ = terrain; }
 
-    /// The map's annotation layer, which is where teleporters and the spawn
-    /// zones the rarity glow paints come from. Optional in the same way the
-    /// terrain is: without it those two overlays simply do not draw.
+    /// Every world map's annotation layer and background, which is where the
+    /// ground artwork, the teleporters and the spawn zones the rarity glow
+    /// paints come from. The renderer picks the map of whichever realm the
+    /// view is in, frame by frame. Optional in the same way the terrain is:
+    /// without it the ground falls back to the section grid and the two
+    /// overlays simply do not draw.
+    void setWorldMaps(const WorldMaps* maps) { worldMaps_ = maps; }
+
+    /// A single map, taken as the OVERWORLD's. What a tool or a test that
+    /// assembled one map in memory hands over; setWorldMaps() wins when both
+    /// are set.
     void setMapData(const MapData* map) { map_ = map; }
 
     /// What the settings menu switches off. Presentation only: nothing here
@@ -208,16 +217,23 @@ public:
     const SectionTiming& sectionTiming() const { return timing_; }
 
 private:
-    void drawTerrain(Canvas&, const Camera&) const;
-    /// The biome artwork, tiled every 400 world units from the world origin.
-    void drawGround(Canvas&, const Camera&) const;
-    /// The tiling itself, over `area`. A negative `fixedSection` reads each
-    /// tile's biome off the map; the maze hands over the one section whose
-    /// ground it borrows.
+    /// A world realm's tile grid over its ground: every skinned air cell's
+    /// floor decoration, then every wall and water tile as the artwork its
+    /// style byte names (its own skin, or constants.h's skinForGround() of
+    /// the ground under it, and its edge mask), the other kinds as their own
+    /// art or flat colour.
+    void drawTerrain(Canvas&, const Camera&, Realm realm) const;
+    /// The biome artwork, tiled every 400 world units from the realm's origin
+    /// and cut off at its extent.
+    void drawGround(Canvas&, const Camera&, Realm realm) const;
     /// Paints ground over `area`. `fixedGround` pins every tile to one ground
-    /// type (what the maze wants); -1 asks the map, cell by cell.
-    void drawGroundTiles(Canvas&, const Camera&, Rect area, int fixedGround) const;
-    int groundIndexAt(Vec2 at) const;
+    /// type (what the maze wants); -1 asks the realm's map, cell by cell.
+    void drawGroundTiles(Canvas&, const Camera&, Rect area, Realm realm, int fixedGround) const;
+    int groundIndexAt(Vec2 at, Realm realm) const;
+    /// The annotations of a realm: its entry in the catalogue, or the single
+    /// map for the overworld when only that was handed over. Null for the
+    /// arena, the maze and any realm nothing was staged for.
+    const MapData* mapFor(Realm realm) const;
     /// The maze realm: its biome's ground under rrolf-style walls, every
     /// corridor junction rounded by a quarter-circle fillet, and the void
     /// beyond its square left black.
@@ -225,10 +241,9 @@ private:
     /// The arena realm: a grey gridded floor inside the ring, dark void
     /// outside it, and the red boundary the server clamps bodies to.
     void drawArena(Canvas&, const Camera&) const;
-    /// The shoreline a water tile grows where it meets air.
-    void drawSmoothedTileEdge(Canvas&, const Camera&, int tileX, int tileY, int edge) const;
-    /// Teleporters, and the spawn-zone tints while the rarity glow is held.
-    void drawMapElements(Canvas&, const Camera&, double timeSeconds) const;
+    /// Teleporters, and the spawn-zone tints while the rarity glow is held,
+    /// off the realm's own map.
+    void drawMapElements(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
     void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawFlower(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawDefaultFlower(Canvas&, const RemoteEntity&, double timeSeconds) const;
@@ -334,6 +349,7 @@ private:
     const ContentRegistry* content_ = nullptr;
     const SpriteCache* sprites_ = nullptr;
     const Terrain* terrain_ = nullptr;
+    const WorldMaps* worldMaps_ = nullptr;
     const MapData* map_ = nullptr;
     std::vector<Effect> effects_;
 
@@ -342,12 +358,17 @@ private:
     /// once and would evict every damage number on screen.
     std::vector<LightningBolt> bolts_;
 
-    /// The drop shimmer, kept apart from the effect pool. It emits a steady
-    /// trickle rather than periodic bursts, so its grains have no shared
+    /// Every grain a drop throws -- the steady shimmer and the burst it lands
+    /// with -- kept apart from the effect pool. The grains have no shared
     /// birth, no shared death, and nothing to group them by: one flat pool of
-    /// independent particles is what that is. Putting them in `effects_` would
-    /// also starve it -- a single drop keeps roughly a hundred grains alive,
-    /// and the pool holds 256 effects for the whole screen.
+    /// independent particles is what that is. Putting them in `effects_` also
+    /// starved them twice over -- a single drop keeps roughly a hundred grains
+    /// alive against a 256-effect pool for the whole screen, and the landing
+    /// burst arrives in the same tick as a dying mob's damage numbers, which
+    /// is exactly when that pool is fullest.
+    ///
+    /// Drawn at the head of the drop layer, not with the effects: they belong
+    /// under the loot they come off.
     std::vector<EffectParticle> dropSparkles_;
 
     /// The drops on screen, by net id, and what each was last seen holding. A

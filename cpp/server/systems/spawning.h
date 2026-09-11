@@ -250,6 +250,11 @@ public:
     /// reference's defaults, which is the 1920x1080 flower it assumes.
     struct Viewer {
         Vec2 position;
+        /// The realm this flower is standing in. Spawn bands only serve
+        /// viewers in their OWN map: two maps' coordinates overlap
+        /// numerically, and a band that ignored this would stock the sewers
+        /// because somebody was standing at the same numbers in the garden.
+        Realm realm = Realm::Overworld;
         /// Half the reported viewport plus the spawn buffer, per axis: the box
         /// a mob has to be inside to count as seen, the rectangle this
         /// player's spawns are sampled from, and the area the target is
@@ -275,13 +280,20 @@ public:
     /// possible failure.
     NetIdAllocator* netIds = nullptr;
 
-    /// The map's annotation layer, or null.
+    /// Every staged map's annotation layer, or null.
     ///
-    /// Spawn rectangles are geography: without them every square of the world
-    /// rolls the same tier spread and the map has no progression at all. Null
-    /// in a unit test and in any harness that has no bundle to read, which
-    /// leaves the neighbourhood fill running alone over the whole map.
-    const MapData* mapData = nullptr;
+    /// Spawn bands are geography: without them every square of the world rolls
+    /// the same spread and the map has no progression at all. Null in a unit
+    /// test and in any harness with no map to read, which leaves the
+    /// neighbourhood fill running alone over the overworld.
+    ///
+    /// The DENSITY FILL is the overworld's alone -- it is built out of the
+    /// nine sections, the border band and the ant-hell throttle, all of which
+    /// are properties of that one map. Every other map is populated entirely
+    /// by the bands its author drew, which is the whole point of authoring
+    /// them: a second map with no bands has no mobs, visibly and immediately,
+    /// rather than quietly inheriting the garden's.
+    const WorldMaps* worldMaps = nullptr;
 
     /// A boss the last pass admitted, for whoever owns the chat channel.
     ///
@@ -317,11 +329,28 @@ public:
                     std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                     double nowMillis, Rng& rng);
 
-    /// The weighted type roll for one section: spawn_weight over the mobs whose
-    /// `section` list contains it. kInvalidIndex when the section has none.
-    std::uint16_t chooseMobType(const ContentRegistry& content, int section, Rng& rng);
-    std::uint16_t chooseMobType(const ContentRegistry& content, int section,
-                                Rarity rarity, Rng& rng);
+    /// The weighted type roll over ONE mob group: each member's weight, over
+    /// the members that exist at this tier.
+    ///
+    /// kInvalidIndex when the group is empty, unknown, or admits nothing at
+    /// this tier -- all three are "no spawn this attempt" rather than a
+    /// fallback, because a fallback here would put garden mobs in the sewers.
+    std::uint16_t chooseGroupMob(const ContentRegistry& content, std::uint16_t group,
+                                 Rarity rarity, Rng& rng) const;
+
+    /// The mob an AMBIENT spawn at `at` should be.
+    ///
+    /// Three answers, in order: the spawn band covering the point, when it
+    /// declares a distribution of its own; the mob REGION covering it, which
+    /// is the map saying "this is the desert" over a shape an author drew; and
+    /// failing both, the map's `defaultMobGroup`.
+    ///
+    /// This is what replaced "whichever of the nine sections the mob landed
+    /// in". The geography is still geography -- it is just written in the map
+    /// now, in a shape that can be moved, rather than being a corner of a
+    /// fixed 3x3 grid.
+    std::uint16_t chooseAmbientMobAt(const ContentRegistry& content, Realm realm, Vec2 at,
+                                     Rarity rarity, Rng& rng);
 
     /// Natural tier roll plus the reference's upgrade-first/downgrade-second
     /// drift, then raised for a direct spawn of a min-rarity mob.
@@ -355,10 +384,27 @@ private:
         /// does not own.
         std::vector<Vec2> polygon;
         Rarity tier = Rarity::Common;
-        /// What this zone spawns: weighted rows of section presets and named
-        /// mobs. Empty means the ambient roll of whichever section the mob
-        /// lands in, which is what every zone did before distributions existed.
+        /// Which map this band belongs to. Bands are gathered from every
+        /// staged map, so this is what keeps one map's band from stocking
+        /// another's identical coordinates.
+        Realm realm = Realm::Overworld;
+        /// What this band spawns: weighted rows of group names and mob ids,
+        /// already resolved against the content. Empty means the map's own
+        /// `defaultMobGroup`.
         std::vector<ZoneMobEntry> mobs;
+        /// `mobs` resolved to indices, in the same order: a group index when
+        /// the name is a group, a mob index when it is a mob, and
+        /// kInvalidIndex when the content defines neither.
+        ///
+        /// Resolved once when the zones are built rather than per spawn: the
+        /// lookup is a hash probe per row and a busy band rolls several times
+        /// a second.
+        struct ResolvedRow {
+            std::uint16_t group = kInvalidIndex;
+            std::uint16_t mob = kInvalidIndex;
+            double weight = 1.0;
+        };
+        std::vector<ResolvedRow> resolved;
         /// The 3x3 sections this rectangle touches. The density fill asks
         /// "am I in a zone?" of every candidate point it samples, and with 148
         /// rectangles on the map that test is worth reducing to one integer
@@ -400,22 +446,6 @@ private:
                        const SpawnZone& zone, const std::vector<Viewer>& viewers, Rng& rng,
                        double nowMillis);
 
-    /// Tier and mob from a biome's own spawn table, mirroring the reference's
-    /// selectBiomeSpawn (src/server/enemySpawner.ts:477).
-    ///
-    /// A biome that declares a table OVERRIDES both the section roll and the
-    /// spawn rectangle it sits in -- the reference tests the biome first in
-    /// both of its spawn paths -- and a row that names a mob pins the spawn to
-    /// it. That naming is the whole reason the target dummy exists: it is
-    /// `neverAmbient`, so the section roll will never produce one, and the
-    /// map's four dummy biomes are the only thing that ever asks for it.
-    ///
-    /// False when the table names a mob the content does not have, or when the
-    /// section admits nothing at the rolled tier -- both "no spawn this
-    /// attempt" rather than a fallback, as the reference has them.
-    bool chooseBiomeSpawn(const ContentRegistry& content, const MapElement& biome, int section,
-                          double luck, Rng& rng, std::uint16_t& typeOut, Rarity& rarityOut);
-
     /// True when this section already holds a mob of this type and tier that
     /// nothing will ever clear away.
     ///
@@ -423,7 +453,12 @@ private:
     /// never despawns and is effectively unkillable, so a duplicate that slips
     /// through is permanent. One of each rarity per section, checked against
     /// the FINAL tier after any drift (src/server/enemySpawner.ts:112).
-    bool permanentFixtureExists(World& world, std::uint16_t mobIndex, Rarity rarity, int section);
+    /// True when a `neverAmbient` fixture of this type and tier already
+    /// stands in `realm` -- in `section` of it when the realm is the
+    /// overworld, anywhere on the map otherwise (the section grid is the
+    /// overworld's alone).
+    bool permanentFixtureExists(World& world, std::uint16_t mobIndex, Rarity rarity, Realm realm,
+                                int section);
 
     /// Keeps the world's boss population topped up: one ultra, one super per
     /// section, and a unique rolled for whenever a super is out.
@@ -441,23 +476,33 @@ private:
     /// Queues one boss for whoever owns the chat channel.
     void announceBoss(std::uint16_t mobIndex, Rarity rarity, Vec2 position);
 
-    void rebuildZones();
+    void rebuildZones(const ContentRegistry& content);
 
     /// Mobs the last census saw inside `bounds`, inclusive on every edge as
     /// the reference's own count is.
     bool sampleZonePoint(const SpawnZone& zone, Rng&, Vec2& out) const;
-    /// The mob a zone fill should place: its distribution when it declares one,
-    /// and otherwise the ambient roll for `section`.
-    /// Not const: it defers to chooseMobType, which lazily rebuilds the
-    /// per-section candidate table.
-    std::uint16_t chooseZoneMobType(const ContentRegistry&, const SpawnZone&, int section,
-                                    Rarity, Rng&);
+    /// The mob a band fill should place: the band's own distribution when it
+    /// declares one, and otherwise whatever `at` would grow anyway -- the
+    /// region under it, then the map's default.
+    std::uint16_t chooseZoneMobType(const ContentRegistry&, const SpawnZone&, Vec2 at, Rarity,
+                                    Rng&);
+
+    /// The distribution `at` grows, ignoring tier bands: the mob region
+    /// covering it, or the map's `defaultMobGroup`. kInvalidIndex when neither
+    /// names anything the content has.
+    std::uint16_t chooseRegionMobAt(const ContentRegistry&, Realm, Vec2 at, Rarity, Rng&);
+
+    /// One weighted roll over already-resolved rows, shared by bands and
+    /// regions: both hold the same table and mean the same thing by it.
+    std::uint16_t rollResolvedRows(const ContentRegistry&,
+                                   const std::vector<SpawnZone::ResolvedRow>& rows, Rarity,
+                                   Rng&) const;
     int countMobsInZone(const SpawnZone& zone) const;
 
     /// True when a body of `halfSize` at `position` would touch a mob the last
     /// census saw, with `extraGap` of clearance on top. One scan behind the
     /// spacing test, the finalizer's re-test and the boss's own check.
-    bool crowdedAt(Vec2 position, double halfSize, double extraGap) const;
+    bool crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap) const;
 
     bool inAnySpawnZone(Vec2 position, int section) const;
 
@@ -491,15 +536,6 @@ private:
                        std::uint16_t childIndex, Rarity nestRarity, Vec2 at, Realm realm,
                        Entity parent, double nowMillis, Rng& rng, int depth);
 
-    void rebuildCandidates(const ContentRegistry& content);
-
-    /// Mobs potentially eligible in one section. Rarity-dependent section
-    /// overrides are applied by chooseMobType after the tier has been rolled.
-    struct SectionCandidates {
-        std::vector<std::uint16_t> mobs;
-        std::vector<double> cumulative;
-    };
-
     World* boundWorld_ = nullptr;
     std::optional<Query<MobTag, Transform, Body, MobType, AmbientMob>> ambient_;
     std::optional<Query<AmbientMob, Lifetime>> escorts_;
@@ -512,19 +548,22 @@ private:
     /// not carry.
     std::optional<Query<PlayerTag, Transform>> playerBodies_;
 
-    std::array<SectionCandidates, kSectionCount> candidates_;
-    const ContentRegistry* candidateContent_ = nullptr;
-    std::uint32_t candidateHash_ = 0;
-
     Census census_;
     double nextPopulationMillis_ = 0;
 
-    /// Rebuilt when `mapData` changes, which in the server is once.
+    /// Rebuilt when `worldMaps` or the content changes, which in the server is
+    /// once. Bands from EVERY staged map, each tagged with its realm.
     std::vector<SpawnZone> zones_;
-    /// Mob names a zone asked for that the content does not define, so each is
-    /// reported once rather than on every attempt.
+    /// The mob regions, in map order. Same shape as a band and rebuilt beside
+    /// them, but kept apart because they own no population and the density
+    /// fill must NOT stay out of one -- which is the whole difference between
+    /// "this ground is dangerous" and "this ground is the desert".
+    std::vector<SpawnZone> regions_;
+    /// Names a band asked for that the content defines neither a group nor a
+    /// mob for, so each is reported once rather than on every attempt.
     std::set<std::string> unknownZoneMobs_;
-    const MapData* zoneMap_ = nullptr;
+    const WorldMaps* zoneMaps_ = nullptr;
+    std::uint32_t zoneContentHash_ = 0;
     /// Both start due, so the first tick stocks the zones a player can already
     /// see and puts the world's ultra out rather than waiting a minute for it.
     double nextZoneMillis_ = 0;
@@ -541,9 +580,9 @@ private:
     /// Whether anyone at all stands in each realm this pass. What keeps an
     /// arena or maze mob alive: those realms are populated whole, so "near a
     /// player" there means "someone is in here".
-    std::array<bool, kRealmCount> realmOccupied_{};
+    std::array<bool, kMaxRealms> realmOccupied_{};
     std::vector<int> neighbours_;
-    struct MobPlacement { Vec2 position; double radius = 0; };
+    struct MobPlacement { Vec2 position; double radius = 0; Realm realm = Realm::Overworld; };
     std::vector<MobPlacement> mobPlacements_;
     std::vector<Entity> doomed_;
     std::vector<Entity> scratchChildren_;

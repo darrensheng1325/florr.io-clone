@@ -75,19 +75,32 @@ bool parseNumber(const std::string& text, double& out) {
     return true;
 }
 
-/// The map is exactly kWorldSize on a side and nothing outside it is
-/// meaningful: the terrain has no tiles there, the section lookup returns -1,
-/// and a body parked past the edge is invisible to the spawner's whole
+/// A coordinate has to fit the rectangle of the realm the body is in, and
+/// nothing outside it is meaningful: the terrain has no tiles there, and a
+/// body parked past the edge is invisible to the spawner's whole
 /// neighbourhood pass. Refusing is better than clamping, because a typo'd
 /// coordinate should be reported rather than silently turned into a corner.
-bool saneCoordinate(double v) {
-    return std::isfinite(v) && v >= 0.0 && v <= kWorldSize;
+///
+/// THAT realm's rectangle -- a world map's own size, the arena square, the
+/// maze -- never the overworld's: the arena and the maze are smaller than the
+/// overworld and every other world map may be, so the overworld number would
+/// admit a point the realm has no tiles for.
+bool saneCoordinateIn(const Terrain& terrain, Realm realm, double x, double y) {
+    const Vec2 extent = terrain.realmExtent(realm);
+    return std::isfinite(x) && std::isfinite(y) && x >= 0.0 && y >= 0.0 && x <= extent.x &&
+           y <= extent.y;
 }
 
-/// The reference prints "Max is ±1000000" from its own anti-hang guard; this
-/// build's guard is the map itself, so the same sentence carries this number.
-std::string maxCoordinateText() {
-    return std::to_string(static_cast<long>(kWorldSize));
+/// "0..W x 0..H", the span the refusal above is measured against.
+std::string realmExtentText(const Terrain& terrain, Realm realm) {
+    const Vec2 extent = terrain.realmExtent(realm);
+    return "0.." + std::to_string(static_cast<long>(extent.x)) + " x 0.." +
+           std::to_string(static_cast<long>(extent.y));
+}
+
+Realm realmOf(const World& world, Entity entity) {
+    const Transform* transform = world.tryGet<Transform>(entity);
+    return transform != nullptr ? transform->realm : Realm::Overworld;
 }
 
 /// Rarity by name, strictly -- unlike parseRarity(), which reads unknown text
@@ -510,11 +523,15 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     if (verb == "/biome") {
         // Every flower counts, bots included: the question is where the world
         // is busy, and a section full of bots is a section full of fights.
+        // The OVERWORLD's flowers, that is: the nine biomes are that map's
+        // sections, and a flower in the arena, the maze or a biome sublevel
+        // is not standing in any of them whatever its numbers say.
         std::array<int, kSectionCount> counts{};
         int total = 0;
         Query<PlayerTag, Transform> flowers{world_};
         flowers.each([&](Entity entity, PlayerTag&, Transform& transform) {
             if (world_.has<Dead>(entity)) return;
+            if (transform.realm != Realm::Overworld) return;
             const int section = sectionAt(transform.position);
             if (section < 0) return;
             ++counts[static_cast<std::size_t>(section)];
@@ -1138,15 +1155,24 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         // Coordinates are present only when BOTH slots 3 and 4 parse as
         // numbers. `spawn bee rare 10 stack` has a stack word in slot 4, so
         // slot 3 there is an amount, not an x.
+        // Into the realm the admin is standing in: a spawn typed from inside
+        // the maze lands in the maze, in maze coordinates -- so an explicit
+        // point is judged against THAT realm's rectangle, not the overworld's.
+        Realm spawnRealm = Realm::Overworld;
+        if (session.playing()) {
+            if (const Transform* mine = world_.tryGet<Transform>(session.entity)) {
+                spawnRealm = mine->realm;
+            }
+        }
         double x = 0;
         double y = 0;
         bool hasCoords = false;
         std::size_t amountAt = 3;
         if (words.size() >= 5 && !isStackFlag(words[4]) && parseNumber(words[3], x) &&
             parseNumber(words[4], y)) {
-            if (!saneCoordinate(x) || !saneCoordinate(y)) {
+            if (!saneCoordinateIn(*terrain_, spawnRealm, x, y)) {
                 out("Coordinates out of range: (" + words[3] + ", " + words[4] +
-                    "). Max is \xC2\xB1" + maxCoordinateText() + ".");
+                    "). Your realm spans " + realmExtentText(*terrain_, spawnRealm) + ".");
                 return;
             }
             hasCoords = true;
@@ -1209,16 +1235,8 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
                     const double radius = rng_.range(0.0, 40.0 + 8.0 * static_cast<double>(i));
                     at = {x + std::cos(angle) * radius, y + std::sin(angle) * radius};
                 }
-                // Into the realm the admin is standing in: a spawn typed from
-                // inside the maze lands in the maze, in maze coordinates.
-                Realm realm = Realm::Overworld;
-                if (session.playing()) {
-                    if (const Transform* mine = world_.tryGet<Transform>(session.entity)) {
-                        realm = mine->realm;
-                    }
-                }
-                spawning_->spawnMob(world_, *terrain_, content(), mobIndex, rarity, at, realm,
-                                    monotonicMillis(), rng_);
+                spawning_->spawnMob(world_, *terrain_, content(), mobIndex, rarity, at,
+                                    spawnRealm, monotonicMillis(), rng_);
             }
         }
         out("Spawned " + (count > 1 ? std::to_string(count) + "x " : std::string()) + words[2] +
@@ -1244,15 +1262,17 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
             out("Invalid coordinates. Usage: teleport <playerId/name> <x> <y>");
             return;
         }
-        if (!saneCoordinate(x) || !saneCoordinate(y)) {
-            out("Coordinates out of range: (" + words[2] + ", " + words[3] + "). Max is \xC2\xB1" +
-                maxCoordinateText() + ".");
-            return;
-        }
         CommandTarget target;
         if (!resolveCommandTarget(words[1], target)) {
             out("Player \"" + words[1] + "\" not found. Use list-players to see available "
                 "players.");
+            return;
+        }
+        // Judged against the realm the target is in, which is where it stays.
+        const Realm realm = realmOf(world_, target.entity);
+        if (!saneCoordinateIn(*terrain_, realm, x, y)) {
+            out("Coordinates out of range: (" + words[2] + ", " + words[3] + "). " +
+                target.name + "'s realm spans " + realmExtentText(*terrain_, realm) + ".");
             return;
         }
         teleportEntity(target.entity, {x, y});
@@ -1281,30 +1301,59 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
             out("Invalid coordinates. Usage: " + name + " <x> <y>");
             return;
         }
-        if (!saneCoordinate(x) || !saneCoordinate(y)) {
-            out("Coordinates out of range: (" + words[1] + ", " + words[2] + "). Max is \xC2\xB1" +
-                maxCoordinateText() + ".");
+        if (!std::isfinite(x) || !std::isfinite(y)) {
+            out("Invalid coordinates. Usage: " + name + " <x> <y>");
             return;
         }
+        // Everyone is judged against their own realm: a flower in the arena
+        // and one on a world map do not share a rectangle, so one point can
+        // be inside for some and past the edge for others. Those it does not
+        // fit are left where they are and counted, rather than the whole
+        // command refused for one body that happens to be elsewhere.
         int movedBots = 0;
+        int left = 0;
         for (const Bot& bot : bots_) {
             if (bot.entity == NULL_ENTITY || !world_.isAlive(bot.entity)) continue;
+            if (!saneCoordinateIn(*terrain_, realmOf(world_, bot.entity), x, y)) {
+                ++left;
+                continue;
+            }
             teleportEntity(bot.entity, {x, y});
             ++movedBots;
         }
+        const auto leftText = [&] {
+            return left == 0 ? std::string()
+                             : " (" + plural(left, "body", "bodies") + " left in place: (" +
+                                   words[1] + ", " + words[2] + ") is outside their realm)";
+        };
         if (botsOnly) {
+            if (movedBots == 0 && left > 0) {
+                out("Coordinates out of range: (" + words[1] + ", " + words[2] +
+                    ") is outside every bot's realm.");
+                return;
+            }
             out("Teleported " + plural(movedBots, "bot", "bots") + " to (" + words[1] + ", " +
-                words[2] + ")");
+                words[2] + ")" + leftText());
             return;
         }
         int moved = 0;
         for (auto& entry : sessions_) {
             if (!entry.second.playing()) continue;
+            if (!saneCoordinateIn(*terrain_, realmOf(world_, entry.second.entity), x, y)) {
+                ++left;
+                continue;
+            }
             teleportEntity(entry.second.entity, {x, y});
             ++moved;
         }
+        if (moved == 0 && movedBots == 0 && left > 0) {
+            out("Coordinates out of range: (" + words[1] + ", " + words[2] +
+                ") is outside every player's realm.");
+            return;
+        }
         out("Teleported " + plural(moved, "player", "players") + " and " +
-            plural(movedBots, "bot", "bots") + " to (" + words[1] + ", " + words[2] + ")");
+            plural(movedBots, "bot", "bots") + " to (" + words[1] + ", " + words[2] + ")" +
+            leftText());
         return;
     }
 

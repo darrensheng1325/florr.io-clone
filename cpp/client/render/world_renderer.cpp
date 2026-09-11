@@ -141,8 +141,15 @@ constexpr double kSparkleChance = 0.1;
 constexpr int kSparkleCount = 8;
 constexpr double kSparkleLifeSeconds = 3.0;
 /// A drop throws a shorter, faster burst of the same particles when it lands.
+/// The burst goes into the flat drop pool with the shimmer rather than into
+/// the effect pool: wrapped in an Effect it competed with the damage numbers a
+/// dying mob produces in the same tick, and the burst -- which is the one that
+/// arrives exactly when the mob dies -- was the half that got dropped.
 constexpr int kDropBurstCount = 7;
-constexpr double kDropBurstLifeSeconds = 0.7;
+constexpr double kDropBurstSpeed = 3.0;
+constexpr double kDropBurstSpeedSpread = 3.0;
+constexpr double kDropBurstLifeMs = 500.0;
+constexpr double kDropBurstLifeSpreadMs = 250.0;
 /// A petal's shimmer is the rarity colour blended halfway to white. A drop's
 /// is the rarity colour itself -- only its alpha moves, so the grains read as
 /// the drop's own rarity rather than as a wash of white.
@@ -166,6 +173,10 @@ constexpr double kDropSparkleLifeSpreadMs = 1000.0;
 /// A drop keeps roughly rate x life grains alive, so a screen of them is
 /// bounded here rather than by the effect pool it no longer shares.
 constexpr std::size_t kMaxDropSparkles = 512;
+/// The trickle stops short of the cap so a landing burst always has room: the
+/// shimmer is continuous and would otherwise hold the whole pool, and a burst
+/// silently swallowed is the thing a player notices.
+constexpr std::size_t kDropShimmerBudget = kMaxDropSparkles * 3 / 4;
 constexpr double kDropSparkleSize = 5.0;
 constexpr double kDropSparkleSizeSpread = 10.0;
 constexpr double kDropBurstSize = 7.5;
@@ -176,14 +187,14 @@ constexpr double kDropBurstSizeSpread = 15.0;
 /// jitter -- because that is what the shipped build looks like. A drop's
 /// scatter instead: with only a handful in flight at a time, evenly spaced
 /// angles read as spokes rather than as a burst, so each grain picks its own
-/// direction and its own facing.
+/// direction and its own facing. That scatter lives in pushDropGrain, which is
+/// the only emitter drops use; what is left here is the petal path's.
 struct SparkleStyle {
     double whiten = 0;
     bool square = false;
-    bool scatter = false;
 };
-constexpr SparkleStyle kPetalSparkleStyle{kSparkleWhiten, false, false};
-constexpr SparkleStyle kDropSparkleStyle{kDropSparkleWhiten, true, true};
+constexpr SparkleStyle kPetalSparkleStyle{kSparkleWhiten, false};
+constexpr SparkleStyle kDropSparkleStyle{kDropSparkleWhiten, true};
 /// A grain never paints solid: the shimmer sits over the body it came off.
 constexpr double kSparkleAlpha = 0.6;
 
@@ -277,8 +288,9 @@ constexpr std::uint32_t kGroundFallback[kSectionCount] = {
 constexpr double kGroundTileSize = 400.0;
 constexpr double kGroundOverlap = 2.0;
 
+/// The fill of maps/tiles/water.svg: a water tile with no exposed side is this
+/// flat colour, and one with edges wears the matching water_edge_* artwork.
 constexpr std::uint32_t kWaterFill = 0x4169E1u;
-constexpr std::uint32_t kWaterBorder = 0x2A4FA0u;
 
 constexpr std::uint32_t kTileColor(Tile tile) {
     switch (tile) {
@@ -400,56 +412,13 @@ double hash01(std::uint32_t a, std::uint32_t b) {
     return static_cast<double>(h ^ (h >> 16)) / 4294967296.0;
 }
 
-// The TypeScript wall texture is a 124-unit SVG rasterised into every
-// 300-unit tile. Keeping the source coordinates here preserves the texture's
-// global phase on both normal cells and their jagged edge protrusions.
-constexpr double kWallTextureViewBox = 124.0;
+/// The colour a wall tile falls back to when its artwork could not be read:
+/// the fill of maps/tiles/wall.svg.
 constexpr std::uint32_t kWallFill = 0x99550Cu;
-constexpr std::uint32_t kWallDotColor = 0x783F01u;
-constexpr double kWallDotRadius = 5.1641;
-constexpr std::array<Vec2, 5> kWallDots = {{
-    {25.2109, 51.5391}, {105.5341, 25.5207}, {51.5308, 85.3607},
-    {64.5341, 15.5207}, {103.5341, 102.5207},
-}};
-constexpr double kWallOverlap = 1.5;
-
-enum class WallEdge { Top = 0, Bottom = 1, Left = 2, Right = 3 };
-
-/// The outline this tile edge is DRAWN with, which is by construction the one
-/// the server collides against: flix::jaggedEdge is the only generator, and
-/// terrain.cpp's wall push-out calls the same function.
-const JaggedEdge& jaggedPoints(int tileX, int tileY, WallEdge edge) {
-    return jaggedEdge(tileX, tileY, static_cast<int>(edge));
-}
-
-/// Which sides this tile shows, from the same shared answer the server's wall
-/// push-out uses. It must not be re-derived here: a local copy once tested
-/// tileBlocks(), which counts water as blocking because water stops movement,
-/// and so ruled every lake into 300-unit tiles with a shoreline drawn along
-/// each interior seam.
-bool tileEdgeExposed(const Terrain& terrain, int tileX, int tileY, WallEdge edge) {
-    return jaggedEdgeExposed(terrain, tileX, tileY, static_cast<int>(edge));
-}
-
-Vec2 edgeBasePoint(double worldX, double worldY, WallEdge edge, double t) {
-    switch (edge) {
-        case WallEdge::Top: return {worldX + t, worldY};
-        case WallEdge::Bottom: return {worldX + t, worldY + kTileSize};
-        case WallEdge::Left: return {worldX, worldY + t};
-        case WallEdge::Right: return {worldX + kTileSize, worldY + t};
-    }
-    return {};
-}
-
-Vec2 edgePoint(double worldX, double worldY, WallEdge edge, const JaggedEdgePoint& point) {
-    switch (edge) {
-        case WallEdge::Top: return {worldX + point.t, worldY - point.offset};
-        case WallEdge::Bottom: return {worldX + point.t, worldY + kTileSize + point.offset};
-        case WallEdge::Left: return {worldX - point.offset, worldY + point.t};
-        case WallEdge::Right: return {worldX + kTileSize + point.offset, worldY + point.t};
-    }
-    return {};
-}
+/// Every solid tile is drawn 1.5 units oversized on each side, so the software
+/// rasteriser's anti-aliased edges never leave a hairline seam between two
+/// tiles of one wall.
+constexpr double kTileOverlap = 1.5;
 
 void moveToScreen(Canvas& canvas, const Camera& camera, Vec2 world) {
     const Vec2 screen = camera.worldToScreen(world);
@@ -459,13 +428,6 @@ void moveToScreen(Canvas& canvas, const Camera& camera, Vec2 world) {
 void lineToScreen(Canvas& canvas, const Camera& camera, Vec2 world) {
     const Vec2 screen = camera.worldToScreen(world);
     canvas.lineTo(static_cast<float>(screen.x), static_cast<float>(screen.y));
-}
-
-void quadToScreen(Canvas& canvas, const Camera& camera, Vec2 control, Vec2 world) {
-    const Vec2 c = camera.worldToScreen(control);
-    const Vec2 p = camera.worldToScreen(world);
-    canvas.quadraticCurveTo(static_cast<float>(c.x), static_cast<float>(c.y),
-                            static_cast<float>(p.x), static_cast<float>(p.y));
 }
 
 /// Clips to a world rectangle. Every tiled draw needs one: the artwork inside
@@ -488,102 +450,6 @@ Rect intersection(Rect a, Rect b) {
     const double x1 = std::min(a.right(), b.right());
     const double y1 = std::min(a.bottom(), b.bottom());
     return {x0, y0, std::max(0.0, x1 - x0), std::max(0.0, y1 - y0)};
-}
-
-/// Paint a globally-phased copy of TypeScript's wall pattern inside the
-/// caller's clip. The clip makes this work for a rectangle and for a jagged
-/// extension without restarting the dot pattern at every exposed edge.
-void paintWallPattern(Canvas& canvas, const Camera& camera, Rect worldBounds) {
-    const Vec2 topLeft = camera.worldToScreen({worldBounds.x, worldBounds.y});
-    const double zoom = camera.zoom();
-    ui::setFill(canvas, kWallFill);
-    canvas.fillRect(static_cast<float>(topLeft.x), static_cast<float>(topLeft.y),
-                    static_cast<float>(worldBounds.w * zoom),
-                    static_cast<float>(worldBounds.h * zoom));
-
-    const int tileX0 = static_cast<int>(std::floor(worldBounds.left() / kTileSize));
-    const int tileY0 = static_cast<int>(std::floor(worldBounds.top() / kTileSize));
-    const int tileX1 = static_cast<int>(std::floor(worldBounds.right() / kTileSize));
-    const int tileY1 = static_cast<int>(std::floor(worldBounds.bottom() / kTileSize));
-    const double textureScale = kTileSize / kWallTextureViewBox;
-    ui::setFill(canvas, kWallDotColor);
-    for (int ty = tileY0; ty <= tileY1; ++ty) {
-        for (int tx = tileX0; tx <= tileX1; ++tx) {
-            for (const Vec2 dot : kWallDots) {
-                const Vec2 screen = camera.worldToScreen({
-                    tx * kTileSize + dot.x * textureScale,
-                    ty * kTileSize + dot.y * textureScale,
-                });
-                canvas.fillCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
-                                  static_cast<float>(kWallDotRadius * textureScale * zoom));
-            }
-        }
-    }
-}
-
-template <typename TraceShape>
-void fillWallShape(Canvas& canvas, const Camera& camera, Rect bounds, TraceShape&& traceShape) {
-    canvas.save();
-    canvas.beginPath();
-    traceShape();
-    canvas.clip();
-    paintWallPattern(canvas, camera, bounds);
-    canvas.restore();
-}
-
-void drawWallTile(Canvas& canvas, const Camera& camera, int tileX, int tileY) {
-    const Rect bounds{tileX * kTileSize - kWallOverlap, tileY * kTileSize - kWallOverlap,
-                      kTileSize + kWallOverlap * 2.0, kTileSize + kWallOverlap * 2.0};
-    fillWallShape(canvas, camera, bounds, [&] {
-        const Vec2 topLeft = camera.worldToScreen({bounds.x, bounds.y});
-        canvas.rect(static_cast<float>(topLeft.x), static_cast<float>(topLeft.y),
-                    static_cast<float>(bounds.w * camera.zoom()),
-                    static_cast<float>(bounds.h * camera.zoom()));
-    });
-}
-
-void drawJaggedWallEdge(Canvas& canvas, const Camera& camera, int tileX, int tileY,
-                        WallEdge edge) {
-    // drawJaggedEdge() in TypeScript saves its canvas state, so its texture
-    // and stroke settings never leak into later world rendering.
-    canvas.save();
-    const double worldX = tileX * kTileSize;
-    const double worldY = tileY * kTileSize;
-    const JaggedEdge& points = jaggedPoints(tileX, tileY, edge);
-
-    Rect bounds{worldX, worldY, 0, 0};
-    double minX = worldX, maxX = worldX, minY = worldY, maxY = worldY;
-    const auto include = [&](Vec2 p) {
-        minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
-        minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
-    };
-    for (const JaggedEdgePoint& point : points) {
-        include(edgeBasePoint(worldX, worldY, edge, point.t));
-        include(edgePoint(worldX, worldY, edge, point));
-    }
-    bounds = {minX, minY, maxX - minX, maxY - minY};
-
-    const auto traceFill = [&] {
-        moveToScreen(canvas, camera, edgeBasePoint(worldX, worldY, edge, points.front().t));
-        for (const JaggedEdgePoint& point : points) {
-            lineToScreen(canvas, camera, edgePoint(worldX, worldY, edge, point));
-        }
-        lineToScreen(canvas, camera, edgeBasePoint(worldX, worldY, edge, points.back().t));
-        canvas.closePath();
-    };
-    fillWallShape(canvas, camera, bounds, traceFill);
-
-    ui::setStroke(canvas, kWallDotColor);
-    canvas.setLineWidth(static_cast<float>(3.0 * camera.zoom()));
-    canvas.setLineCap("butt");
-    canvas.setLineJoin("round");
-    canvas.beginPath();
-    moveToScreen(canvas, camera, edgePoint(worldX, worldY, edge, points.front()));
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        lineToScreen(canvas, camera, edgePoint(worldX, worldY, edge, points[i]));
-    }
-    canvas.stroke();
-    canvas.restore();
 }
 
 } // namespace
@@ -640,8 +506,7 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         const std::uint32_t color = mixWithWhite(rarityColor(rarity), style.whiten);
         e.particles.reserve(static_cast<std::size_t>(count));
         for (int i = 0; i < count; ++i) {
-            const double angle =
-                style.scatter ? randomUnit() * kTau : kTau * i / count + randomUnit() * 0.3;
+            const double angle = kTau * i / count + randomUnit() * 0.3;
             const double speed = (speedBase + randomUnit() * speedSpread) * kFramesPerSecond;
             const double life = (lifeBase + randomUnit() * lifeSpread) / 1000.0;
             EffectParticle particle;
@@ -657,21 +522,25 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         effects_.push_back(std::move(e));
     };
 
-    // One grain of a drop's shimmer. Emitted singly and continuously rather
-    // than a burst at a time, so it goes straight into the flat pool with no
-    // effect wrapping it: it shares nothing with the grains around it.
-    const auto pushDropSparkle = [this](Vec2 at, Rarity rarity) {
-        if (dropSparkles_.size() >= kMaxDropSparkles) return;
+    // One grain of a drop's glitter, shimmer or landing burst alike. Both go
+    // straight into the flat pool with no effect wrapping them: every grain
+    // lives on its own clock and shares nothing with the ones around it, and
+    // the pool is the drops' own, so a screenful of damage numbers can never
+    // silence it. `budget` is how much of that pool the caller may take -- the
+    // continuous shimmer stops short of the cap, a burst may fill it.
+    const auto pushDropGrain = [this](Vec2 at, Rarity rarity, double speedBase,
+                                      double speedSpread, double lifeMs, double lifeSpreadMs,
+                                      double sizeBase, double sizeSpread, std::size_t budget) {
+        if (dropSparkles_.size() >= budget) return;
         const double angle = randomUnit() * kTau;
-        const double speed =
-            (kDropSparkleSpeed + randomUnit() * kDropSparkleSpeedSpread) * kFramesPerSecond;
+        const double speed = (speedBase + randomUnit() * speedSpread) * kFramesPerSecond;
         EffectParticle particle;
         particle.position = {at.x + (randomUnit() - 0.5) * 4.0,
                              at.y + (randomUnit() - 0.5) * 4.0};
         particle.velocity = {std::cos(angle) * speed, std::sin(angle) * speed};
         particle.lifeSeconds = particle.maxLifeSeconds =
-            (kDropSparkleLifeMs + randomUnit() * kDropSparkleLifeSpreadMs) / 1000.0;
-        particle.size = kDropSparkleSize + randomUnit() * kDropSparkleSizeSpread;
+            (lifeMs + randomUnit() * lifeSpreadMs) / 1000.0;
+        particle.size = sizeBase + randomUnit() * sizeSpread;
         particle.rotation = randomUnit() * kTau;
         particle.color = mixWithWhite(rarityColor(rarity), kDropSparkleStyle.whiten);
         dropSparkles_.push_back(particle);
@@ -833,9 +702,11 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         spawn.distance = kDropSpawnNear + randomUnit() * kDropSpawnSpread;
         spawn.rotation = (randomUnit() - 0.5) * kTau;
         dropSpawns_[entity.netId] = spawn;
-        pushSparkle(entity.position, entity.rarity, kDropBurstCount, 3.0, 3.0, 500.0, 250.0,
-                    kDropBurstSize, kDropBurstSizeSpread, kDropBurstLifeSeconds,
-                    kDropSparkleStyle);
+        for (int i = 0; i < kDropBurstCount; ++i) {
+            pushDropGrain(entity.position, entity.rarity, kDropBurstSpeed, kDropBurstSpeedSpread,
+                          kDropBurstLifeMs, kDropBurstLifeSpreadMs, kDropBurstSize,
+                          kDropBurstSizeSpread, kMaxDropSparkles);
+        }
     }
     for (auto it = knownDrops_.begin(); it != knownDrops_.end();) {
         if (it->second.seenThisFrame) {
@@ -876,7 +747,10 @@ void WorldRenderer::ingestEvents(WorldView& view) {
             credit += kDropSparkleRate * sinceLast;
             while (credit >= 1.0) {
                 credit -= 1.0;
-                pushDropSparkle(entity.position, entity.rarity);
+                pushDropGrain(entity.position, entity.rarity, kDropSparkleSpeed,
+                              kDropSparkleSpeedSpread, kDropSparkleLifeMs,
+                              kDropSparkleLifeSpreadMs, kDropSparkleSize,
+                              kDropSparkleSizeSpread, kDropShimmerBudget);
             }
             continue;
         }
@@ -969,23 +843,35 @@ void WorldRenderer::update(double dt) {
     if (mobEyes_.size() > kMaxMobShadows) mobEyes_.clear();
 }
 
-void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera) const {
-    drawGroundTiles(canvas, camera, Rect{0, 0, kWorldSize, kWorldSize}, -1);
+void WorldRenderer::drawGround(Canvas& canvas, const Camera& camera, Realm realm) const {
+    // The realm's own rectangle, not the default world's: a corridor map is a
+    // fraction of the overworld's size, and ground painted past its edge would
+    // show through where the file has no tiles at all.
+    const Vec2 extent = terrain_ ? terrain_->realmExtent(realm) : Vec2{kWorldSize, kWorldSize};
+    drawGroundTiles(canvas, camera, Rect{0, 0, extent.x, extent.y}, realm, -1);
 }
 
-/// Which ground artwork covers a point.
+const MapData* WorldRenderer::mapFor(Realm realm) const {
+    if (worldMaps_ != nullptr) return worldMaps_->forRealm(realm);
+    // No catalogue: the single map handed over by setMapData() is the
+    // overworld's, and it has nothing to say about any other realm.
+    return realm == Realm::Overworld ? map_ : nullptr;
+}
+
+/// Which ground artwork covers a point of a realm.
 ///
-/// The map's `background` layer, when it has one. A map that predates the layer
-/// -- the TypeScript bundle has no way to carry it -- falls back to the 3x3
-/// section grid the layer replaced, so an old data directory still draws the
-/// world it always did rather than a black one.
-int WorldRenderer::groundIndexAt(Vec2 at) const {
-    if (map_ != nullptr && map_->hasBackground()) return map_->groundAt(at);
+/// The realm's map's `background` layer, when it has one. A map that predates
+/// the layer -- the TypeScript bundle has no way to carry it -- falls back to
+/// the 3x3 section grid the layer replaced, so an old data directory still
+/// draws the world it always did rather than a black one.
+int WorldRenderer::groundIndexAt(Vec2 at, Realm realm) const {
+    const MapData* map = mapFor(realm);
+    if (map != nullptr && map->hasBackground()) return map->groundAt(at);
     return sectionAt(at);
 }
 
 void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect world,
-                                    int fixedGround) const {
+                                    Realm realm, int fixedGround) const {
     const Rect visible = camera.visibleWorld(0);
     const double zoom = camera.zoom();
 
@@ -1006,7 +892,7 @@ void WorldRenderer::drawGroundTiles(Canvas& canvas, const Camera& camera, Rect w
             const int ground = fixedGround >= 0
                                    ? fixedGround
                                    : groundIndexAt({tileX + kGroundTileSize * 0.5,
-                                                    tileY + kGroundTileSize * 0.5});
+                                                    tileY + kGroundTileSize * 0.5}, realm);
             // Outside the map, and anywhere the map paints no ground, there is
             // none -- the void stays the black the frame was cleared to.
             if (ground < 0) continue;
@@ -1111,7 +997,7 @@ void WorldRenderer::drawMaze(Canvas& canvas, const Camera& camera) const {
     //    maze -- it has no background layer of its own, and every cell of it is
     //    the same biome anyway.
     const int ground = kMazeBiomeSections[static_cast<std::size_t>(maze.biome())];
-    drawGroundTiles(canvas, camera, square, ground);
+    drawGroundTiles(canvas, camera, square, Realm::Maze, ground);
 
     // 2. Walls: a single translucent black path, filled once. Filling cell by
     //    cell at partial alpha leaves antialiased hairline seams along every
@@ -1212,114 +1098,123 @@ void WorldRenderer::drawArena(Canvas& canvas, const Camera& camera) const {
     canvas.restore();
 }
 
-void WorldRenderer::drawSmoothedTileEdge(Canvas& canvas, const Camera& camera, int tileX,
-                                         int tileY, int edgeIndex) const {
-    const WallEdge edge = static_cast<WallEdge>(edgeIndex);
-    const JaggedEdge& points = jaggedPoints(tileX, tileY, edge);
-    const std::size_t count = points.size();
-    if (count < 3) return;
-
-    const double worldX = tileX * kTileSize;
-    const double worldY = tileY * kTileSize;
-    const auto at = [&](std::size_t i) { return edgePoint(worldX, worldY, edge, points[i]); };
-    const auto midpoint = [](Vec2 a, Vec2 b) { return Vec2{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5}; };
-    // Each point is its own control point and the curve lands halfway to the
-    // next one, which is what turns the shared jagged polyline into a shore.
-    const auto traceCurve = [&] {
-        for (std::size_t i = 1; i + 1 < count; ++i) {
-            quadToScreen(canvas, camera, at(i), midpoint(at(i), at(i + 1)));
-        }
-        lineToScreen(canvas, camera, at(count - 1));
-    };
-
-    canvas.save();
-    ui::setFill(canvas, kWaterFill);
-    canvas.beginPath();
-    moveToScreen(canvas, camera, edgeBasePoint(worldX, worldY, edge, points.front().t));
-    lineToScreen(canvas, camera, at(0));
-    traceCurve();
-    lineToScreen(canvas, camera, edgeBasePoint(worldX, worldY, edge, points.back().t));
-    canvas.closePath();
-    canvas.fill();
-
-    // The outline follows the curve only: closing it along the tile edge would
-    // draw a hard line through the middle of the water.
-    ui::setStroke(canvas, kWaterBorder);
-    canvas.setLineWidth(static_cast<float>(2.0 * camera.zoom()));
-    canvas.setLineJoin("round");
-    canvas.beginPath();
-    moveToScreen(canvas, camera, at(0));
-    traceCurve();
-    canvas.stroke();
-    canvas.restore();
-}
-
-void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera) const {
+void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm realm) const {
     // Everything outside the world is pure black: the browser build clears its
     // frame to it and simply skips any tile that falls off the map.
     ui::setFill(canvas, 0x000000u);
     canvas.fillRect(0, 0, static_cast<float>(camera.viewportWidth()),
                     static_cast<float>(camera.viewportHeight()));
 
-    drawGround(canvas, camera);
+    drawGround(canvas, camera, realm);
     if (!terrain_) return;
 
+    // The realm's own grid. Its dimensions are the map file's, not a
+    // constant: a smaller map has fewer tiles to walk, a larger one more.
     const Rect visible = camera.visibleWorld(kTileSize);
     const int x0 = std::max(0, static_cast<int>(std::floor(visible.left() / kTileSize)));
     const int y0 = std::max(0, static_cast<int>(std::floor(visible.top() / kTileSize)));
-    const int x1 = std::min(kTilesPerAxis - 1,
+    const int x1 = std::min(terrain_->tileCols(realm) - 1,
                             static_cast<int>(std::floor(visible.right() / kTileSize)));
-    const int y1 = std::min(kTilesPerAxis - 1,
+    const int y1 = std::min(terrain_->tileRows(realm) - 1,
                             static_cast<int>(std::floor(visible.bottom() / kTileSize)));
 
     const double zoom = camera.zoom();
 
-    for (int ty = y0; ty <= y1; ++ty) {
-        for (int tx = x0; tx <= x1; ++tx) {
-            const Tile tile = terrain_->atTile(tx, ty);
-            if (tile == Tile::Ground) continue;   // air: the ground shows through
-            if (tile == Tile::Wall) {
-                drawWallTile(canvas, camera, tx, ty);
-                continue;
-            }
-            // The same 1.5-unit bleed on all four sides the wall tiles use.
-            const Rect bounds{tx * kTileSize - kWallOverlap, ty * kTileSize - kWallOverlap,
-                              kTileSize + kWallOverlap * 2.0, kTileSize + kWallOverlap * 2.0};
-            const Vec2 at = camera.worldToScreen({bounds.x, bounds.y});
-            const SvgDocument* art = sprites_ ? sprites_->tileArt(tile) : nullptr;
-            if (art) {
-                canvas.save();
-                clipWorldRect(canvas, camera, bounds);
-                if (!drawCachedArt(canvas, *art, at.x, at.y, bounds.w * zoom, bounds.h * zoom)) {
-                    art->renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
-                                      static_cast<float>(bounds.w * zoom),
-                                      static_cast<float>(bounds.h * zoom), 0.0f);
-                }
-                canvas.restore();
-            } else {
-                ui::setFill(canvas, kTileColor(tile));
-                canvas.fillRect(static_cast<float>(at.x), static_cast<float>(at.y),
-                                static_cast<float>(bounds.w * zoom),
-                                static_cast<float>(bounds.h * zoom));
+    // One artwork fitted into one tile's box, clipped to it: the wall and
+    // water files draw exactly their 300-unit cell, and the bridge's planks
+    // are free to overflow theirs the way the ground artwork does.
+    const auto drawTileArt = [&](const SvgDocument& art, Rect bounds) {
+        const Vec2 at = camera.worldToScreen({bounds.x, bounds.y});
+        canvas.save();
+        clipWorldRect(canvas, camera, bounds);
+        if (!drawCachedArt(canvas, art, at.x, at.y, bounds.w * zoom, bounds.h * zoom)) {
+            art.renderFitted(canvas, static_cast<float>(at.x), static_cast<float>(at.y),
+                             static_cast<float>(bounds.w * zoom),
+                             static_cast<float>(bounds.h * zoom), 0.0f);
+        }
+        canvas.restore();
+    };
+    const auto fillTile = [&](std::uint32_t color, Rect bounds) {
+        const Vec2 at = camera.worldToScreen({bounds.x, bounds.y});
+        ui::setFill(canvas, color);
+        canvas.fillRect(static_cast<float>(at.x), static_cast<float>(at.y),
+                        static_cast<float>(bounds.w * zoom),
+                        static_cast<float>(bounds.h * zoom));
+    };
+
+    const auto tileBounds = [](int tx, int ty) {
+        return Rect{tx * kTileSize - kTileOverlap, ty * kTileSize - kTileOverlap,
+                    kTileSize + kTileOverlap * 2.0, kTileSize + kTileOverlap * 2.0};
+    };
+
+    // Which SKIN a wall or water cell wears (constants.h): its own when the
+    // map painted a skinned variant into it, else what skinForGround() says
+    // for the ground it stands on, read off the realm's background layer --
+    // so the overworld's plain walls in its sewers, computer and unknown
+    // thirds come out in those biomes' art without a single cell of the map
+    // being repainted, and everywhere else stay the default brown wall (the
+    // table maps the other six grounds to skin 0 on purpose). No background
+    // layer, or a void cell: the default family.
+    const MapData* map = mapFor(realm);
+    const bool groundKnown = map != nullptr && map->hasBackground();
+    const auto effectiveSkin = [&](std::uint8_t own, int tx, int ty) -> std::uint8_t {
+        if (own != 0 || !groundKnown) return own;
+        return skinForGround(map->groundAt(Terrain::tileCenter(tx, ty)));
+    };
+    // The artwork for a family x skin x mask, falling back to the default
+    // skin's when the biome's file is missing: the art for a skin may not have
+    // been drawn yet, and a wall that lost its texture to that would be a
+    // regression, not a fallback.
+    const auto edgeArtFor = [&](Tile tile, std::uint8_t skin, std::uint8_t mask) -> const SvgDocument* {
+        if (!sprites_) return nullptr;
+        const SvgDocument* art = sprites_->edgeArt(tile, skin, mask);
+        if (art == nullptr && skin != 0) art = sprites_->edgeArt(tile, 0, mask);
+        return art;
+    };
+
+    // Floor decorations first, in a pass of their own: an air cell whose map
+    // painted a skinned floor tile into it draws that stamp over the ground.
+    // Only the cell's OWN skin counts here -- the ground fallback above would
+    // otherwise stamp variant 0 onto every plain air cell of the world -- and
+    // the pass comes before the walls so a wall's overlap always lands on top
+    // of its neighbour's stamp rather than under it.
+    if (sprites_) {
+        for (int ty = y0; ty <= y1; ++ty) {
+            for (int tx = x0; tx <= x1; ++tx) {
+                if (terrain_->atTile(tx, ty, realm) != Tile::Ground) continue;
+                const std::uint8_t style = terrain_->styleAt(tx, ty, realm);
+                if (styleSkin(style) == 0) continue;
+                const SvgDocument* art = sprites_->floorArt(styleSkin(style), styleFloorVariant(style));
+                if (art) drawTileArt(*art, tileBounds(tx, ty));
             }
         }
     }
 
-    // The web client draws every exposed side after all tile fills. Repeating
-    // the order matters: protrusions are never hidden by a neighbouring fill.
     for (int ty = y0; ty <= y1; ++ty) {
         for (int tx = x0; tx <= x1; ++tx) {
-            const Tile tile = terrain_->atTile(tx, ty);
-            if (tile != Tile::Wall && tile != Tile::Water) continue;
-            for (const WallEdge edge : {WallEdge::Top, WallEdge::Bottom,
-                                        WallEdge::Left, WallEdge::Right}) {
-                if (!tileEdgeExposed(*terrain_, tx, ty, edge)) continue;
-                if (tile == Tile::Wall) {
-                    drawJaggedWallEdge(canvas, camera, tx, ty, edge);
-                } else {
-                    drawSmoothedTileEdge(canvas, camera, tx, ty, static_cast<int>(edge));
-                }
+            const Tile tile = terrain_->atTile(tx, ty, realm);
+            if (tile == Tile::Ground) continue;   // air: the ground (and its stamp) shows through
+            const Rect bounds = tileBounds(tx, ty);
+
+            // A wall or water tile's edges and skin are the MAP's choice,
+            // carried as a style byte beside the tile id: scripts/edgeTiles.js
+            // decided which sides face air and wrote the matching tileset
+            // variant, and the renderer only picks that variant's artwork.
+            // Nothing here looks at the neighbours, so what Tiled shows the
+            // author is what the player sees. Default-skin water with no
+            // edges is the flat fill -- its plain artwork is that colour and
+            // nothing else; a biome's plain water is that biome's base art.
+            if (tile == Tile::Wall || tile == Tile::Water) {
+                const std::uint8_t style = terrain_->styleAt(tx, ty, realm);
+                const std::uint8_t skin = effectiveSkin(styleSkin(style), tx, ty);
+                const SvgDocument* art = edgeArtFor(tile, skin, styleEdgeMask(style));
+                if (art) drawTileArt(*art, bounds);
+                else fillTile(tile == Tile::Wall ? kWallFill : kWaterFill, bounds);
+                continue;
             }
+            const SvgDocument* art = sprites_ ? sprites_->tileArt(tile) : nullptr;
+            if (art) drawTileArt(*art, bounds);
+            else fillTile(kTileColor(tile), bounds);
         }
     }
 }
@@ -2293,15 +2188,16 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
     }
 }
 
-void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera,
+void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm realm,
                                     double timeSeconds) const {
-    if (!map_) return;
+    const MapData* map = mapFor(realm);
+    if (!map) return;
     const double zoom = camera.zoom();
 
     if (options.rarityGlow) {
         // Under the walls, and only while the glow is held: this is a map the
         // player asks for, not a decoration.
-        for (const MapElement& element : map_->elements()) {
+        for (const MapElement& element : map->elements()) {
             if (element.kind != MapElementKind::Spawn || !element.hasSpawnTier) continue;
             ui::setFill(canvas, rarityColor(element.spawnTier), 0.25);
             // The OUTLINE, not the bounding box. Filling the box would show a
@@ -2328,7 +2224,7 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera,
     // build's MAP_COLORS are all fully transparent and its spawn points draw
     // nothing at all. Only the teleporters are visible.
     const Rect visible = camera.visibleWorld(kTeleporterCull);
-    for (const MapElement& element : map_->elements()) {
+    for (const MapElement& element : map->elements()) {
         if (element.kind != MapElementKind::Teleporter) continue;
         const Vec2 centre = element.centre();
         if (!visible.contains(centre)) continue;
@@ -2571,11 +2467,7 @@ void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
 void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
     const double zoom = camera.zoom();
 
-    // The drop shimmer first: it is ground-level glitter and must not sit over
-    // a damage number or an explosion that happens to share its patch.
-    for (const EffectParticle& p : dropSparkles_) drawSparkleGrain(canvas, camera, p, true);
-
-    // Then the bolts, UNDER the numbers: a strike into a pile draws an arm to
+    // The bolts first, UNDER the numbers: a strike into a pile draws an arm to
     // every mob in it, and a white mesh over the damage it just dealt would
     // hide the one part of the effect that carries information.
     drawLightning(canvas, camera);
@@ -2678,20 +2570,17 @@ void WorldRenderer::draw(Canvas& canvas, const WorldView& view, const Camera& ca
 
 void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera& camera,
                          Vec2 selfDrawn, double timeSeconds) const {
-    // What lies under the entities is the realm's business. The map's
-    // annotations -- teleporters, spawn-zone tints -- are the overworld's
-    // alone; the other two have no map.
-    switch (realm_) {
-        case Realm::Maze:
-            drawMaze(canvas, camera);
-            break;
-        case Realm::Arena:
-            drawArena(canvas, camera);
-            break;
-        case Realm::Overworld:
-            drawTerrain(canvas, camera);
-            drawMapElements(canvas, camera, timeSeconds);
-            break;
+    // What lies under the entities is the realm's business. The arena and
+    // the maze are generated and draw themselves; every other realm is an
+    // authored map with a tile grid and annotations -- teleporters, spawn-zone
+    // tints -- of its own.
+    if (realm_ == Realm::Maze) {
+        drawMaze(canvas, camera);
+    } else if (realm_ == Realm::Arena) {
+        drawArena(canvas, camera);
+    } else {
+        drawTerrain(canvas, camera, realm_);
+        drawMapElements(canvas, camera, realm_, timeSeconds);
     }
 
     const Rect visible = camera.visibleWorld(0);
@@ -2728,6 +2617,16 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
 
     mobLabels_.clear();
     for (const net::EntityKind kind : kOrder) {
+        // A drop's glitter opens the drop layer, so it lies UNDER every drop,
+        // live or dying, and over the flowers below. Drawn with the effects it
+        // covered the tile it came off -- the grains are five times a petal's
+        // and the burst a landing drop throws hid the icon it was announcing.
+        if (kind == net::EntityKind::Drop) {
+            for (const EffectParticle& p : dropSparkles_) {
+                drawSparkleGrain(canvas, camera, p, true);
+            }
+        }
+
         for (const auto& entry : entities) {
             const RemoteEntity& entity = entry.second;
             if (entity.kind != kind) continue;

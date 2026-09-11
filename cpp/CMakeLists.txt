@@ -209,14 +209,50 @@ flix_stage_font(Ubuntu-Bold.ttf
 # file changes. That is how an edited mobs.json could be staged correctly and
 # still never reach the shipped build -- the link was skipped as up to date and
 # the wasm kept the copy it was born with.
+# The maps, out of maps/maps.json. That file is the authority on which maps
+# exist and on the ORDER that decides which realm each one is; globbing *.tmj
+# would stage a map nobody listed and leave the order to the file system.
+#
+# Read at configure time. An edit to an existing map is picked up by the
+# staging command below, which depends on each file; a NEW entry in the
+# manifest is picked up because the manifest itself is a configure
+# dependency, so the next `make` re-runs cmake and stages it -- without this
+# a map added to the list stays unstaged, the server refuses to start on the
+# missing file, and every harness test fails on `h.ready`.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             ${CMAKE_CURRENT_SOURCE_DIR}/../maps/maps.json)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/../maps/maps.json FLIX_MAP_MANIFEST)
+string(REGEX MATCHALL "\"file\"[ \t]*:[ \t]*\"[^\"]+\"" FLIX_MAP_ENTRIES "${FLIX_MAP_MANIFEST}")
+set(FLIX_MAP_FILES)
+foreach(entry IN LISTS FLIX_MAP_ENTRIES)
+  string(REGEX REPLACE "^.*:[ \t]*\"([^\"]+)\"$" "\\1" name "${entry}")
+  list(APPEND FLIX_MAP_FILES ${CMAKE_CURRENT_SOURCE_DIR}/../maps/${name})
+endforeach()
+if(NOT FLIX_MAP_FILES)
+  message(FATAL_ERROR "maps/maps.json names no maps")
+endif()
+message(STATUS "flowrix: staging maps ${FLIX_MAP_FILES}")
+
+# The terrain tileset's tile art: the plain wall and water tiles and the thirty
+# wall_edge_* / water_edge_* variants scripts/edgeTiles.js --art generates.
+# Globbed, unlike the maps, because the set is defined by the tileset rather
+# than by a list anyone maintains by hand, and a variant the tileset names but
+# the directory lacks is a warning in the client rather than a broken build.
+file(GLOB FLIX_TILE_ART CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../maps/tiles/*.svg)
+
 set(FLIX_DATA_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/mobs.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/petals.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/mob_drops.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/map_bundle.ts
-    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/world.tmj
+    ${CMAKE_CURRENT_SOURCE_DIR}/../maps/maps.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../maps/terrain.tsj
     ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground.tsj
+    # Every map maps.json names. Read out of the manifest rather than globbed,
+    # so adding a map is one edit in one file and the build fails loudly if the
+    # manifest names one that is not there -- which is better than a server
+    # that boots with a realm missing.
+    ${FLIX_MAP_FILES}
     # The ground artwork the map's background layer names. From maps/, not from
     # src/: the browser build keeps its own copies of these because it is
     # frozen, and the map's art belongs with the map.
@@ -229,6 +265,8 @@ set(FLIX_DATA_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/jungle.svg
     ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/computer.svg
     ${CMAKE_CURRENT_SOURCE_DIR}/../maps/ground/unknown.svg
+    # The terrain tileset's tile art -- see the note below.
+    ${FLIX_TILE_ART}
     ${CMAKE_CURRENT_SOURCE_DIR}/data/mob_xp.json)
 
 set(FLIX_DATA_STAGED)
@@ -241,10 +279,14 @@ endforeach()
 # preserves. The ground art is staged flat too, which is how sprites.cpp finds
 # it by bare file name.
 #
-# The TERRAIN tileset's tile art is deliberately NOT staged: it is what Tiled
-# draws the palette with, and the engine paints those tiles from constants of
-# its own (world_renderer.cpp's kTileColor and the wall pattern), so shipping
-# those SVGs would put four kilobytes in the wasm that nothing ever opens.
+# The TERRAIN tileset's tile art is staged flat for the same reason. It used
+# not to be: the engine painted walls from a pattern of its own and grew their
+# outlines at runtime, so the palette's SVGs were Tiled's business alone. The
+# outlines are TILES now -- a wall or water cell's exposed sides are chosen by
+# scripts/edgeTiles.js and written into the map as wall_edge_*/water_edge_*
+# variants -- and the client draws exactly the file Tiled shows, looked up by
+# bare name (sprites.cpp's edgeArt). What the author sees is what is drawn,
+# and that is only true if the same files ship.
 #
 # A plain `copy`, not `copy_if_different`: the outputs must come out strictly
 # newer than the inputs, or every build would see them as still out of date and

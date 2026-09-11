@@ -439,9 +439,76 @@ PetalModifiers parseModifiers(Ctx& ctx, const Json& owner) {
 // Entries
 // ---------------------------------------------------------------------------
 
+/// Reads one mob's `groups` and files it into the registry's group table.
+///
+/// The groups are the union of the names the mobs use, in first-mention order,
+/// which is why this both reads and WRITES: there is no separate list of legal
+/// group names to check against, and inventing one would mean a new group had
+/// to be declared in two places.
+///
+/// Two spellings, because they answer different questions:
+///
+///   "groups": ["garden", "jungle"]          -- in both, at `spawn_weight`
+///   "groups": {"garden": 1, "jungle": 0.4}  -- weighted per group
+///
+/// A weight of zero is meaningful and kept: a centipede's body segments belong
+/// to the garden -- tools and the editor should say so -- but are only ever
+/// spawned by the head, never rolled.
+void parseMobGroups(Ctx& ctx, MobConfig& m, std::uint16_t mobIndex, const Json& src,
+                    std::vector<MobGroup>& groups,
+                    std::unordered_map<std::string, std::uint16_t>& groupIds) {
+    if (!src.contains("groups")) return;
+    const Json& node = src["groups"];
+
+    const auto add = [&](const std::string& name, double weight) {
+        if (name.empty()) {
+            ctx.warn("has a group with no name; ignored");
+            return;
+        }
+        if (!std::isfinite(weight) || weight < 0.0) {
+            ctx.warn("group '" + name + "' has a weight of " + num(weight) + "; using 1");
+            weight = 1.0;
+        }
+        std::uint16_t index = 0;
+        const auto found = groupIds.find(name);
+        if (found != groupIds.end()) {
+            index = found->second;
+        } else {
+            if (groups.size() >= kInvalidIndex) {
+                ctx.warn("group '" + name + "' does not fit in the group table; ignored");
+                return;
+            }
+            index = static_cast<std::uint16_t>(groups.size());
+            groups.push_back(MobGroup{name, {}});
+            groupIds.emplace(name, index);
+        }
+        for (const MobGroupMember& existing : m.groups) {
+            if (existing.group == index) {
+                ctx.warn("is listed in group '" + name + "' twice; the first wins");
+                return;
+            }
+        }
+        const MobGroupMember member{index, mobIndex, weight};
+        m.groups.push_back(member);
+        groups[index].members.push_back(member);
+    };
+
+    if (node.isArray()) {
+        for (const Json& entry : node.items()) add(entry.asString(), m.spawnWeight);
+        return;
+    }
+    if (node.isObject()) {
+        for (const std::string& name : node.keys()) add(name, node[name].asDouble(m.spawnWeight));
+        return;
+    }
+    ctx.warn(std::string("groups is ") + typeName(node) + ", not a list or an object; the mob will not spawn");
+}
+
 MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
                    const std::unordered_map<std::string, std::uint16_t>& mobIds,
-                   const std::unordered_map<std::string, std::uint16_t>& petalIds) {
+                   const std::unordered_map<std::string, std::uint16_t>& petalIds,
+                   std::vector<MobGroup>& groups,
+                   std::unordered_map<std::string, std::uint16_t>& groupIds) {
     MobConfig m;
     m.id = id;
     m.name = ctx.text(src, "name", id);
@@ -459,24 +526,19 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
 
     m.ai = parseAi(ctx, ctx.text(src, "ai_type", "neutral"));
 
-    if (src.contains("section")) {
-        const Json& sections = src["section"];
-        if (!sections.isArray()) {
-            ctx.warn(std::string("section is ") + typeName(sections) + ", not a list; the mob will not spawn");
-        } else {
-            for (const Json& entry : sections.items()) {
-                const int index = entry.isNumber() ? entry.asInt(-1) : -1;
-                if (index < 0 || index >= kSectionCount) {
-                    ctx.warn("section " + (entry.isNumber() ? num(entry.asDouble()) : std::string(typeName(entry))) +
-                             " is outside the 3x3 biome grid; ignored");
-                    continue;
-                }
-                m.sectionMask |= static_cast<std::uint16_t>(1u << index);
-            }
-        }
-    }
+    // Before the groups: the array spelling of `groups` takes this as its
+    // weight, so it has to be read first.
     m.spawnWeight = ctx.range(src, "spawn_weight", 1.0, 0.0, 1000.0);
     m.minRarity = ctx.rarity(src, "min_rarity");
+    if (src.contains("section")) {
+        ctx.warn("still declares `section`, which the 3x3 grid used to index; "
+                 "spawning is by named `groups` now and the field is ignored");
+    }
+    {
+        const auto found = mobIds.find(id);
+        parseMobGroups(ctx, m, found == mobIds.end() ? std::uint16_t{0} : found->second, src,
+                       groups, groupIds);
+    }
 
     m.hideRotation = ctx.boolean(src, "hideRotation");
     m.noEggDrop = ctx.boolean(src, "noEggDrop");
@@ -782,10 +844,36 @@ double scaledMultiplier(double value, double scale) {
 // ---------------------------------------------------------------------------
 
 bool ContentRegistry::load(const std::string& dataDir, std::string& errorOut) {
-    return loadFiles(joinPath(dataDir, "mobs.json"),
-                     joinPath(dataDir, "petals.json"),
-                     joinPath(dataDir, "mob_xp.json"),
-                     errorOut);
+    if (!loadFiles(joinPath(dataDir, "mobs.json"),
+                   joinPath(dataDir, "petals.json"),
+                   joinPath(dataDir, "mob_xp.json"),
+                   errorOut)) {
+        return false;
+    }
+    foldMapsIntoHash(dataDir);
+    return true;
+}
+
+void ContentRegistry::foldMapsIntoHash(const std::string& dataDir) {
+    // The manifest's own bytes first -- its ORDER is the realm order -- then
+    // every map it names, in that order. Both sides stage the same files
+    // flat beside the manifest (CMake copies them by basename), so the same
+    // bytes are hashed on the client and the server. A map the manifest
+    // names but the directory lacks folds an empty string: still a
+    // difference from a directory that has it, which is the point.
+    std::string manifestText;
+    if (!readFile(joinPath(dataDir, "maps.json"), manifestText)) return;
+    hash_ = net::contentHash(manifestText, hash_);
+    Json manifest;
+    std::string parseError;
+    if (!Json::parse(manifestText, manifest, parseError) || !manifest.contains("maps")) return;
+    for (const Json& entry : manifest["maps"].items()) {
+        const std::string file = entry.isObject() ? entry["file"].asString() : entry.asString();
+        if (file.empty()) continue;
+        std::string mapText;
+        readFile(joinPath(dataDir, file.c_str()), mapText);
+        hash_ = net::contentHash(mapText, hash_);
+    }
 }
 
 bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& petalsPath,
@@ -876,12 +964,19 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
 
     std::vector<MobConfig> mobs;
     std::vector<PetalConfig> petals;
+    std::vector<MobGroup> mobGroups;
+    std::unordered_map<std::string, std::uint16_t> mobGroupIds;
     mobs.reserve(mobKeys.sorted.size());
     petals.reserve(petalIdList.size());
 
+    // Mobs are walked in SORTED key order, so the group table's order -- first
+    // mention wins -- is a function of the file's contents rather than of its
+    // key order. Two builds of the same data therefore number the groups
+    // identically, which matters because a group index is what a spawn band's
+    // resolved distribution holds.
     for (const std::string& key : mobKeys.sorted) {
         ctx.subject = "mob '" + key + "'";
-        mobs.push_back(parseMob(ctx, key, mobsRoot[key], mobIds, petalIds));
+        mobs.push_back(parseMob(ctx, key, mobsRoot[key], mobIds, petalIds, mobGroups, mobGroupIds));
     }
     for (const std::string& key : petalIdList) {
         if (std::binary_search(petalKeys.sorted.begin(), petalKeys.sorted.end(), key)) {
@@ -943,6 +1038,8 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
 
     mobs_ = std::move(mobs);
     petals_ = std::move(petals);
+    mobGroups_ = std::move(mobGroups);
+    mobGroupIds_ = std::move(mobGroupIds);
     mobIds_ = std::move(mobIds);
     petalIds_ = std::move(petalIds);
     petalOrder_ = std::move(petalOrder);
@@ -950,6 +1047,17 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
     hash_ = hash;
     errorOut.clear();
     return true;
+}
+
+std::uint16_t ContentRegistry::mobGroupIndex(const std::string& id) const {
+    const auto found = mobGroupIds_.find(id);
+    return found == mobGroupIds_.end() ? kInvalidIndex : found->second;
+}
+
+const MobGroup& ContentRegistry::mobGroup(std::uint16_t index) const {
+    static const MobGroup kMissing{"<unknown>", {}};
+    if (index >= mobGroups_.size()) return kMissing;
+    return mobGroups_[index];
 }
 
 const MobConfig& ContentRegistry::mob(std::uint16_t index) const {
@@ -1048,9 +1156,9 @@ MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
         tier >= rarityIndex(Rarity::Epic)) {
         s.ai = AiKind::Neutral;
     }
-    // min_rarity is enforced in exactly one place: below its tier the mob
-    // belongs to no section, and every spawner already filters on that.
-    s.sectionMask = tier < rarityIndex(c.minRarity) ? 0 : c.sectionMask;
+    // min_rarity is enforced in exactly one place: below its tier the mob is
+    // not ambient, and every spawner already filters on that.
+    s.ambient = tier >= rarityIndex(c.minRarity) && !c.groups.empty() && !c.neverAmbient;
     return s;
 }
 
