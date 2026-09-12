@@ -11,6 +11,7 @@
     "names. See maps/README.md."
   ],
   "maps": [
-    { "file": "garden.tmj" }
+    { "file": "garden.tmj" },
+    { "file": "desert.tmj" }
   ]
 }

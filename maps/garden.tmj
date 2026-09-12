@@ -598,6 +598,11 @@
                          "value":"garden"
                         }, 
                         {
+                         "name":"color",
+                         "type":"color",
+                         "value":"#ff00f900"
+                        }, 
+                        {
                          "name":"label",
                          "type":"string",
                          "value":"Garden"
