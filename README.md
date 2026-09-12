@@ -77,8 +77,9 @@ shapes when the artwork exceeds the 24-shape limit.
 - **Daily streak** rewards and a tutorial flow for new players
 - **Tiled maps** (`maps/*.tmj`, listed by `maps/maps.json`) for the world's art layers, doors and
   teleporters. Collision is the collision shapes each tile carries in Tiled's Tile Collision
-  Editor, placed per cell from every layer marked `has_collision` — so a flower walks up to the
-  edge of the drawn stone, not to the cell boundary. A spawn band carries a `difficulty` number
+  Editor, placed per cell from every layer marked `has_collision`, and cancelled where a layer
+  marked `negate_collision` decks over it (that is the bridge) — so a flower walks up to the
+  edge of the drawn stone, not to the cell boundary, and crosses the river on planks. A spawn band carries a `difficulty` number
   rather than a rarity: 0 is fully common, 100 ultra, 200 super, 300 unique. **A spawn band is
   the only thing that makes a mob** — ground no band covers grows nothing, ever, and a map with
   no band on it is empty and says `NO SPAWN BANDS` on its load line. A nest's escorts and a

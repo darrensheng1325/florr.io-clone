@@ -4,6 +4,7 @@
 #include "shared/game/spatial.h"
 #include "shared/game/terrain.h"
 #include "shared/game/tiled_map.h"
+#include "client/minimap.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1751,4 +1752,454 @@ TEST(a_shape_that_overhangs_its_tile_is_handed_back_once_per_cell_it_reaches) {
         }
     }
     CHECK_EQ(reached, 2);
+}
+
+// ---------------------------------------------------------------------------
+// A layer that REMOVES collision
+// ---------------------------------------------------------------------------
+//
+// `negate_collision` on a tile layer cancels, where that layer has a tile, the
+// collision the layers BELOW it contributed -- over the negating tile's own
+// shapes when it has any, and over the whole cell when it has none. That is a
+// bridge: a deck painted over a river you walk across on planks.
+//
+// These fixtures are written here rather than taken from the shipped map, so
+// they say what the RULE is and keep saying it while the author edits
+// maps/garden.tmj. The shipped bridge gets its own test at the end.
+
+namespace {
+
+/// A four-layer fixture: scenery, a colliding layer, a NEGATING layer, and
+/// (when `over` is non-empty) a second colliding layer above the deck.
+///
+/// Raw gids, so a caller may set Tiled's flip bits. `both` ticks
+/// `has_collision` on the deck as well, which is the incoherent case the
+/// reader has to resolve out loud.
+std::string deckMap(int cols, int rows, const std::vector<std::uint32_t>& under,
+                    const std::vector<std::uint32_t>& deck,
+                    const std::vector<std::uint32_t>& over = {}, bool both = false) {
+    const auto data = [&](const std::vector<std::uint32_t>& gids) {
+        std::string out;
+        for (int i = 0; i < cols * rows; ++i) {
+            if (i != 0) out += ",";
+            out += std::to_string(i < static_cast<int>(gids.size()) ? gids[i] : 0u);
+        }
+        return out;
+    };
+    const std::string size = std::to_string(cols);
+    const std::string tall = std::to_string(rows);
+    const auto layer = [&](int id, const char* name, const char* properties,
+                           const std::vector<std::uint32_t>& gids) {
+        return std::string(R"({ "type": "tilelayer", "id": )") + std::to_string(id) +
+               R"(, "name": ")" + name + R"(", "opacity": 1, "visible": true, )" + properties +
+               R"( "x": 0, "y": 0, "width": )" + size + R"(, "height": )" + tall +
+               R"(, "data": [)" + data(gids) + "] }";
+    };
+    const char* collides =
+        R"("properties": [ { "name": "has_collision", "type": "bool", "value": true } ],)";
+    const char* negates =
+        R"("properties": [ { "name": "negate_collision", "type": "bool", "value": true } ],)";
+    const char* conflicting =
+        R"("properties": [ { "name": "has_collision", "type": "bool", "value": true },
+                           { "name": "negate_collision", "type": "bool", "value": true } ],)";
+    std::vector<std::uint32_t> background(static_cast<std::size_t>(cols) * rows, 1u);
+    std::string layers = layer(1, "background", "", background) + "," +
+                         layer(2, "under", collides, under) + "," +
+                         layer(3, "deck", both ? conflicting : negates, deck);
+    if (!over.empty()) layers += "," + layer(4, "over", collides, over);
+    return R"({
+ "compressionlevel": -1, "infinite": false, "orientation": "orthogonal",
+ "renderorder": "right-down", "tiledversion": "1.10.1", "type": "map", "version": "1.10",
+ "tilewidth": 300, "tileheight": 300, "width": )" + size + R"(, "height": )" + tall + R"(,
+ "tilesets": [ { "firstgid": 1, "source": "shapes.tsj" } ],
+ "layers": [)" + layers + "] }";
+}
+
+/// The fixture on disk, as both views: the reader's (layer flags, coarse grid,
+/// counts) and the engine's (the exact shape store).
+bool loadDeckMap(TiledMap& map, Terrain& terrain, const std::string& name, int cols, int rows,
+                 const std::vector<std::uint32_t>& under, const std::vector<std::uint32_t>& deck,
+                 const std::vector<std::uint32_t>& over = {}, bool both = false) {
+    writeFixture("shapes.tsj", kShapeTileset);
+    const std::string path = writeFixture(name, deckMap(cols, rows, under, deck, over, both));
+    std::string error;
+    if (!map.load(path, error) || !terrain.loadTiledMap(path, error)) {
+        std::printf("  fixture %s did not load: %s\n", name.c_str(), error.c_str());
+        return false;
+    }
+    return true;
+}
+
+/// The nine cells of a 3x3 fixture, with `middle` at (1,1).
+std::vector<std::uint32_t> onlyMiddle(std::uint32_t middle) {
+    std::vector<std::uint32_t> gids(9, 0u);
+    gids[4] = middle;
+    return gids;
+}
+
+/// `count` empty cells with one gid at `at` -- a deck of exactly one cell
+/// somewhere in a wider fixture.
+std::vector<std::uint32_t> onlyAt(int count, int at, std::uint32_t gid) {
+    std::vector<std::uint32_t> gids(static_cast<std::size_t>(count) * 3, 0u);
+    gids[static_cast<std::size_t>(at)] = gid;
+    return gids;
+}
+
+}   // namespace
+
+TEST(an_unshaped_negating_tile_clears_its_whole_cell) {
+    // `plain` carries no collision shape at all, and on a NEGATING layer that
+    // means the whole cell -- the opposite of what it means on a colliding
+    // one, where it contributes nothing. A deck covers its square; that is
+    // what a deck is (see tiled_map.h).
+    TiledMap map;
+    Terrain t;
+    CHECK(loadDeckMap(map, t, "deck_whole.tmj", 3, 3, onlyMiddle(2u), onlyMiddle(1u)));
+
+    // The coarse grid, the exact test and the store all agree the cell is open.
+    CHECK(t.atTile(1, 1) == Tile::Ground);
+    for (double ly = 10.0; ly < kTileSize; ly += 40.0) {
+        for (double lx = 10.0; lx < kTileSize; lx += 40.0) {
+            CHECK(!t.blocked(inCell(1, 1, lx, ly), Realm::Overworld));
+        }
+    }
+    std::vector<Terrain::CellCollisionRing> rings;
+    t.collisionRingsAt(1, 1, Realm::Overworld, rings);
+    CHECK(rings.empty());
+    // And a body walks straight through it, which is the only thing a player
+    // ever notices.
+    CHECK(!t.segmentBlocked(inCell(1, 1, -50.0, 150.0), inCell(1, 1, 350.0, 150.0),
+                            Realm::Overworld));
+    const Terrain::WallResolution resolved =
+        t.resolveWall(inCell(1, 1, 150.0, 150.0), 25.0, Realm::Overworld);
+    CHECK(!resolved.collided);
+
+    CHECK_EQ(map.negatedCells(), 1);
+    CHECK_EQ(t.collisionDeckedCellCount(), 1);
+    CHECK_EQ(map.layers()[2].clearedCells, 1);
+    CHECK_EQ(map.layers()[2].paintedCells, 1);
+}
+
+TEST(a_shaped_negating_tile_clears_only_its_own_shape) {
+    // `corner` is a 128x64 rectangle in the top-left of a 256 tile, i.e. 150 x
+    // 75 units of a 300-unit cell. As a DECK it is a plank laid across one
+    // corner of the cell: that corner is walkable and the rest of the cell is
+    // still the wall the layer below painted.
+    TiledMap map;
+    Terrain t;
+    CHECK(loadDeckMap(map, t, "deck_partial.tmj", 3, 3, onlyMiddle(2u), onlyMiddle(3u)));
+
+    CHECK(!t.blocked(inCell(1, 1, 20.0, 20.0), Realm::Overworld));     // under the plank
+    CHECK(!t.blocked(inCell(1, 1, 140.0, 65.0), Realm::Overworld));    // still under it
+    CHECK(t.blocked(inCell(1, 1, 160.0, 65.0), Realm::Overworld));     // past its right edge
+    CHECK(t.blocked(inCell(1, 1, 20.0, 90.0), Realm::Overworld));      // past its bottom edge
+    CHECK(t.blocked(inCell(1, 1, 150.0, 150.0), Realm::Overworld));    // the middle of the cell
+
+    // ONE TILE PER CELL CANNOT SAY "HALF OF THIS CELL". The coarse grid keeps
+    // such a cell blocked and only the exact store cancels it -- the coarse
+    // view blocking a little more than the art does is what it has always
+    // done, and it is the safe direction to be wrong in.
+    CHECK(t.atTile(1, 1) == Tile::Wall);
+    CHECK_EQ(map.negatedCells(), 0);
+    CHECK_EQ(t.collisionDeckedCellCount(), 0);
+    // AND THE REPORT SAYS SO. A partial deck cleared no CELL -- it cancelled
+    // point tests inside one -- so it is counted apart from the cells a deck
+    // really opened, and the load report warns about it by name. Counting it
+    // as "1 of 1 cells cleared" told an author the box had taken effect while
+    // the minimap, the flow field, the wire and every swept test still saw the
+    // wall; that is the one thing the count exists to prevent.
+    CHECK_EQ(map.layers()[2].clearedCells, 0);
+    CHECK_EQ(map.layers()[2].partialDeckCells, 1);
+}
+
+TEST(a_partial_deck_that_overlaps_no_collision_is_reported_as_clearing_nothing) {
+    // THE COUNT IS OF WHAT WAS CANCELLED, NOT OF WHAT WAS THERE. Here the
+    // wall is `corner` turned a half turn -- the bottom-right of the cell --
+    // and the deck is `corner` as drawn, the top-left. The plank overlaps no
+    // collision whatsoever: the bottom-right is still blocked and the top-left
+    // was already open, so ticking the box achieved precisely nothing.
+    //
+    // Counting the cell as cleared because SOMETHING was blocked in it read
+    // "1 of 1 cells cleared" in the load report and told the author it had
+    // worked. The report's only job is to answer that question honestly.
+    TiledMap map;
+    Terrain t;
+    const std::uint32_t halfTurn = 3u | 0x80000000u | 0x40000000u;
+    CHECK(loadDeckMap(map, t, "deck_misses.tmj", 3, 3, onlyMiddle(halfTurn), onlyMiddle(3u)));
+
+    CHECK(!t.blocked(inCell(1, 1, 20.0, 20.0), Realm::Overworld));      // under the plank
+    CHECK(t.blocked(inCell(1, 1, 280.0, 280.0), Realm::Overworld));     // still the wall
+    CHECK_EQ(map.layers()[2].clearedCells, 0);
+    CHECK_EQ(map.layers()[2].partialDeckCells, 1);
+    CHECK_EQ(map.negatedCells(), 0);
+    CHECK_EQ(t.collisionDeckedCellCount(), 0);
+}
+
+TEST(a_deck_tile_that_covers_its_cell_is_the_same_deck_as_an_unshaped_one) {
+    // TWO SPELLINGS OF ONE DECK. An author may leave the bridge tile with no
+    // collision shape at all, or draw Tiled's "whole tile" rectangle on it.
+    // Both mean "this square is decked over", so both are resolved at load
+    // (tileDecksWholeCell) and every consumer has to give the same answer --
+    // otherwise the shaped one is a plank the coarse grid still calls a wall,
+    // which no body can walk onto and no minimap draws a channel through.
+    TiledMap shaped;
+    Terrain withShape;
+    CHECK(loadDeckMap(shaped, withShape, "deck_fullcell.tmj", 8, 3,
+                      std::vector<std::uint32_t>(24, 2u), onlyAt(8, 12u, 2u)));
+    TiledMap unshaped;
+    Terrain withNone;
+    CHECK(loadDeckMap(unshaped, withNone, "deck_fullcell_plain.tmj", 8, 3,
+                      std::vector<std::uint32_t>(24, 2u), onlyAt(8, 12u, 1u)));
+
+    for (const Terrain* t : {&withShape, &withNone}) {
+        // The coarse grid, the exact test, the store and the swept test all
+        // agree the decked cell is open ground and everything else is wall.
+        CHECK(t->atTile(4, 1) == Tile::Ground);
+        CHECK(!t->blocked(inCell(4, 1, 150.0, 150.0), Realm::Overworld));
+        CHECK(!t->inWater(inCell(4, 1, 150.0, 150.0), Realm::Overworld));
+        CHECK(!t->resolveWall(inCell(4, 1, 150.0, 150.0), 20.0, Realm::Overworld).collided);
+        std::vector<Terrain::CellCollisionRing> rings;
+        t->collisionRingsAt(4, 1, Realm::Overworld, rings);
+        CHECK(rings.empty());
+        CHECK(t->atTile(3, 1) == Tile::Wall);
+        CHECK(t->blocked(inCell(3, 1, 150.0, 150.0), Realm::Overworld));
+        int tx = -1, ty = -1;
+        CHECK(t->nearestOpenTile(inCell(4, 1, 150.0, 150.0), tx, ty, Realm::Overworld));
+        CHECK_EQ(tx, 4);
+        CHECK_EQ(ty, 1);
+    }
+    // And the numbers the load report prints are the same numbers.
+    CHECK_EQ(shaped.negatedCells(), 1);
+    CHECK_EQ(unshaped.negatedCells(), 1);
+    CHECK_EQ(withShape.collisionDeckedCellCount(), 1);
+    CHECK_EQ(withNone.collisionDeckedCellCount(), 1);
+    CHECK_EQ(shaped.layers()[2].clearedCells, 1);
+    CHECK_EQ(shaped.layers()[2].partialDeckCells, 0);
+}
+
+TEST(a_body_walks_onto_a_deck_whose_tile_carries_a_whole_cell_shape) {
+    // The same fixture, through the REAL movement step. A deck the queries call
+    // open but that a moving body cannot reach is not a bridge, and this is the
+    // failure a point test alone will not see: the cell either side is solid,
+    // so a body only ever arrives at the plank pressed against a wall.
+    TiledMap map;
+    Terrain t;
+    CHECK(loadDeckMap(map, t, "deck_walk.tmj", 8, 3, std::vector<std::uint32_t>(24, 2u),
+                      onlyAt(8, 12u, 2u)));
+
+    // Start in the middle of the decked cell and push west, then east: the
+    // deck's own cell is open, so a body standing on it is free to move within
+    // it and is stopped by the walls either side, not glued where it stands.
+    Vec2 west = inCell(4, 1, 150.0, 150.0);
+    Vec2 east = west;
+    const Vec2 start = west;
+    for (int tick = 0; tick < 200; ++tick) {
+        stepCollide(t, Realm::Overworld, west, {-400.0, 0.0}, 20.0, 0.04, true, true);
+        stepCollide(t, Realm::Overworld, east, {400.0, 0.0}, 20.0, 0.04, true, true);
+    }
+    // It reached the deck's own edges, a radius off the wall either side, and
+    // was neither frozen at the start nor pushed out of the cell.
+    CHECK(west.x < inCell(4, 1, 150.0, 0.0).x - 100.0);
+    CHECK(west.x > inCell(4, 1, 0.0, 0.0).x);
+    CHECK(east.x > inCell(4, 1, 150.0, 0.0).x + 100.0);
+    CHECK(east.x < inCell(5, 1, 0.0, 0.0).x);
+    CHECK(west.x != start.x);
+    CHECK(east.x != start.x);
+}
+
+TEST(a_negating_layer_does_not_cancel_a_colliding_layer_above_it) {
+    // THE LAYERS ARE A STACK. Negation reaches DOWN and no further, so a wall
+    // built on top of a bridge is still a wall. The shipped bridge happens to
+    // be the topmost layer of its map, which would make "cancel everything"
+    // pass every test the shipped data can write; this is the fixture that
+    // says it is not what the rule is.
+    TiledMap map;
+    Terrain t;
+    CHECK(loadDeckMap(map, t, "deck_under_wall.tmj", 3, 3, onlyMiddle(2u), onlyMiddle(1u),
+                      onlyMiddle(2u)));
+    CHECK(t.atTile(1, 1) == Tile::Wall);
+    CHECK(t.blocked(inCell(1, 1, 150.0, 150.0), Realm::Overworld));
+
+    // The same map without that upper layer is open, so it really is the layer
+    // above doing the blocking and not the deck failing to negate.
+    TiledMap without;
+    Terrain open;
+    CHECK(loadDeckMap(without, open, "deck_no_wall.tmj", 3, 3, onlyMiddle(2u), onlyMiddle(1u)));
+    CHECK(open.atTile(1, 1) == Tile::Ground);
+    CHECK(!open.blocked(inCell(1, 1, 150.0, 150.0), Realm::Overworld));
+}
+
+TEST(a_layer_with_both_collision_properties_is_reported_and_negates) {
+    // `has_collision` and `negate_collision` are opposites, so a layer with
+    // both says nothing coherent. NEGATION WINS -- and the reader records that
+    // it had to choose, so the load report can name the layer instead of the
+    // author finding out by walking through a wall.
+    //
+    // The deck's tile is `plain`, which has no shapes: had collision won, this
+    // cell would have been counted as one of the "looks solid, blocks nothing"
+    // cells the load report warns about, and nothing would have been cancelled.
+    TiledMap map;
+    Terrain t;
+    CHECK(loadDeckMap(map, t, "deck_both.tmj", 3, 3, onlyMiddle(2u), onlyMiddle(1u), {}, true));
+
+    CHECK_EQ(map.layers().size(), std::size_t{3});
+    if (map.layers().size() < 3) return;
+    const TiledLayer& deck = map.layers()[2];
+    CHECK(deck.negates);
+    CHECK(!deck.collides);
+    CHECK(deck.conflicting);
+    CHECK_EQ(map.unshapedBlockingCells(), 0);
+    CHECK_EQ(map.negatedCells(), 1);
+    CHECK(t.atTile(1, 1) == Tile::Ground);
+    CHECK(!t.blocked(inCell(1, 1, 150.0, 150.0), Realm::Overworld));
+}
+
+TEST(a_negated_water_cell_is_ground_and_is_not_water) {
+    // A bridge over a river is planks, not a river. The flower standing on it
+    // is not slowed, because inWater() answers from the same shapes blocked()
+    // does and there is nothing left in that cell to be water.
+    TiledMap map;
+    Terrain t;
+    std::vector<std::uint32_t> under(9, 0u);
+    under[4] = 6u;   // pond, tagged water, at (1,1)
+    under[1] = 6u;   // and an undecked one at (1,0) as the control
+    CHECK(loadDeckMap(map, t, "deck_water.tmj", 3, 3, under, onlyMiddle(1u)));
+
+    CHECK(t.atTile(1, 1) == Tile::Ground);
+    CHECK(!t.blocked(inCell(1, 1, 150.0, 150.0), Realm::Overworld));
+    CHECK(!t.inWater(inCell(1, 1, 150.0, 150.0), Realm::Overworld));
+
+    CHECK(t.atTile(1, 0) == Tile::Water);
+    CHECK(t.blocked(inCell(1, 0, 150.0, 150.0), Realm::Overworld));
+    CHECK(t.inWater(inCell(1, 0, 150.0, 150.0), Realm::Overworld));
+}
+
+TEST(the_coarse_grid_and_the_exact_queries_agree_on_a_negated_cell) {
+    // The coarse grid is what the minimap paints, what the bots' flow field
+    // walks, what spawn placement rejects against and the only thing that goes
+    // over the wire; the shapes are what a body collides with. A deck that
+    // reached one and not the other would be a bridge you can see and cannot
+    // walk on, or the reverse.
+    TiledMap map;
+    Terrain t;
+    std::vector<std::uint32_t> under(9, 2u);   // full, everywhere
+    CHECK(loadDeckMap(map, t, "deck_agree.tmj", 3, 3, under, onlyMiddle(1u)));
+
+    for (int ty = 0; ty < 3; ++ty) {
+        for (int tx = 0; tx < 3; ++tx) {
+            const bool coarse = tileBlocks(t.atTile(tx, ty));
+            CHECK_EQ(coarse, !(tx == 1 && ty == 1));
+            for (double ly = 10.0; ly < kTileSize; ly += 40.0) {
+                for (double lx = 10.0; lx < kTileSize; lx += 40.0) {
+                    CHECK_EQ(t.blocked(inCell(tx, ty, lx, ly), Realm::Overworld), coarse);
+                }
+            }
+        }
+    }
+    // And the wire carries the same answer, because it carries that grid.
+    CHECK_EQ(map.tiles()[4], static_cast<std::uint8_t>(Tile::Ground));
+}
+
+TEST(a_negating_layer_over_open_ground_cancels_nothing_and_says_so) {
+    // Negation only reaches the layers BELOW it, so a deck painted UNDER the
+    // river it meant to deck does nothing at all -- and does it silently,
+    // which is the whole reason the load report counts what each negating
+    // layer cleared. These are the numbers that warning is printed from.
+    TiledMap map;
+    Terrain t;
+    CHECK(loadDeckMap(map, t, "deck_nothing.tmj", 3, 3, {}, onlyMiddle(1u)));
+
+    CHECK_EQ(map.layers()[2].paintedCells, 1);
+    CHECK_EQ(map.layers()[2].clearedCells, 0);
+    CHECK_EQ(map.negatedCells(), 0);
+    CHECK_EQ(t.collisionDeckedCellCount(), 0);
+    // Nothing else changed: the cell was open before and is open now.
+    CHECK(t.atTile(1, 1) == Tile::Ground);
+    CHECK(!t.blocked(inCell(1, 1, 150.0, 150.0), Realm::Overworld));
+}
+
+TEST(the_shipped_bridge_is_a_walkable_channel_and_the_river_still_blocks) {
+    // THE SHIPPED MAP, and the reason any of this exists. maps/garden.tmj's
+    // `bridge` layer is 14 cells of deck at row 123, over a river that blocks.
+    //
+    // The RUN is derived from the file rather than typed here -- the author may
+    // move or lengthen the bridge -- and what is pinned is what it has to mean:
+    // every decked cell is open, and the water either side of the run is not.
+    TiledMap map;
+    std::string error;
+    if (!map.load(shippedMap(), error)) {
+        std::printf("  %s\n", error.c_str());
+        CHECK(false);
+        return;
+    }
+    Terrain t;
+    if (!t.loadTiledMap(shippedMap(), error)) {
+        std::printf("  %s\n", error.c_str());
+        CHECK(false);
+        return;
+    }
+    std::size_t deckLayer = map.layers().size();
+    for (std::size_t i = 0; i < map.layers().size(); ++i) {
+        if (map.layers()[i].negates) deckLayer = i;
+    }
+    CHECK(deckLayer < map.layers().size());
+    if (deckLayer >= map.layers().size()) return;
+    const TiledLayer& bridge = map.layers()[deckLayer];
+    CHECK_EQ(bridge.name, std::string("bridge"));
+    CHECK(bridge.paintedCells > 0);
+    // Every cell it paints had collision to cancel; a deck floating over dry
+    // land is the authoring mistake the load report warns about.
+    CHECK_EQ(bridge.clearedCells, bridge.paintedCells);
+    CHECK_EQ(map.negatedCells(), bridge.paintedCells);
+    CHECK_EQ(t.collisionDeckedCellCount(), bridge.paintedCells);
+
+    int deckCells = 0;
+    int minX = map.width(), maxX = -1, row = -1;
+    for (int ty = 0; ty < map.height(); ++ty) {
+        for (int tx = 0; tx < map.width(); ++tx) {
+            if (bridge.cells[static_cast<std::size_t>(ty) * map.width() + tx].type < 0) continue;
+            ++deckCells;
+            minX = std::min(minX, tx);
+            maxX = std::max(maxX, tx);
+            row = ty;
+            // Open in the coarse grid, open in the exact one, and dry.
+            CHECK(t.atTile(tx, ty) == Tile::Ground);
+            CHECK(!t.blocked(Terrain::tileCenter(tx, ty), Realm::Overworld));
+            CHECK(!t.inWater(Terrain::tileCenter(tx, ty), Realm::Overworld));
+            std::vector<Terrain::CellCollisionRing> rings;
+            t.collisionRingsAt(tx, ty, Realm::Overworld, rings);
+            CHECK(rings.empty());
+        }
+    }
+    CHECK_EQ(deckCells, bridge.paintedCells);
+    // A horizontal run, and walkable END TO END: the segment down the middle of
+    // it crosses nothing, which is the whole claim.
+    CHECK(row >= 0);
+    CHECK_EQ(maxX - minX + 1, deckCells);
+    if (row < 0) return;
+    CHECK(!t.segmentBlocked(Terrain::tileCenter(minX, row), Terrain::tileCenter(maxX, row),
+                            Realm::Overworld));
+
+    // EXACTLY THOSE CELLS. The river is a diagonal band and the deck is one row
+    // of it; the rows either side of the run are still water in every column
+    // the map painted water in.
+    int blockedAbove = 0;
+    int blockedBelow = 0;
+    for (int tx = minX; tx <= maxX; ++tx) {
+        if (tileBlocks(t.atTile(tx, row - 1))) ++blockedAbove;
+        if (tileBlocks(t.atTile(tx, row + 1))) ++blockedBelow;
+    }
+    CHECK_EQ(blockedAbove, maxX - minX + 1);
+    CHECK_EQ(blockedBelow, maxX - minX + 1);
+
+    // AND THE MINIMAP READS IT AS A CHANNEL. Its solids come from the same
+    // store, so a decked cell has nothing to fill -- no ring is filed there and
+    // the coarse fallback has no wall to draw.
+    int solidsOnTheDeck = 0;
+    eachMinimapSolid(t, Realm::Overworld, [&](const MinimapSolid& solid) {
+        const int tx = static_cast<int>(std::lround(solid.origin.x / kTileSize));
+        const int ty = static_cast<int>(std::lround(solid.origin.y / kTileSize));
+        if (ty == row && tx >= minX && tx <= maxX) ++solidsOnTheDeck;
+    });
+    CHECK_EQ(solidsOnTheDeck, 0);
 }

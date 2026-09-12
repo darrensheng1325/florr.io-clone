@@ -451,6 +451,48 @@ Rect orientedShapeBounds(const std::vector<TiledShape>& shapes, std::uint8_t fla
     return Rect{minX, minY, maxX - minX, maxY - minY};
 }
 
+bool tileDecksWholeCell(const std::vector<TiledShape>& shapes, std::uint8_t flags) {
+    // No shapes IS a whole-cell deck; see the declaration for why that is the
+    // opposite of what no shapes means on a colliding layer.
+    if (shapes.empty()) return true;
+    // A hair of slack, because the ring came through a scale (the tileset's
+    // tile space onto the cell) and a rotation. Both are exact for the shapes
+    // anyone actually draws, and a tenth of a world unit is far below anything
+    // an author can mean.
+    constexpr double kSlack = 0.1;
+    for (const TiledShape& turned : orientTileShapes(shapes, flags)) {
+        // Only a rectangle can be read off its bounding box. Four points, each
+        // on a different corner of the box they span -- which is how Tiled
+        // writes a rectangle object, in every one of the eight orientations.
+        if (turned.points.size() != 4) continue;
+        double minX = turned.points[0].x, maxX = minX;
+        double minY = turned.points[0].y, maxY = minY;
+        for (const Vec2& p : turned.points) {
+            minX = std::min(minX, p.x);
+            maxX = std::max(maxX, p.x);
+            minY = std::min(minY, p.y);
+            maxY = std::max(maxY, p.y);
+        }
+        const Rect box{minX, minY, maxX - minX, maxY - minY};
+        int corners = 0;
+        bool onBox = true;
+        for (const Vec2& p : turned.points) {
+            const bool left = std::abs(p.x - box.left()) <= kSlack;
+            const bool right = std::abs(p.x - box.right()) <= kSlack;
+            const bool top = std::abs(p.y - box.top()) <= kSlack;
+            const bool bottom = std::abs(p.y - box.bottom()) <= kSlack;
+            if (!(left || right) || !(top || bottom)) { onBox = false; break; }
+            corners |= 1 << ((right ? 1 : 0) | (bottom ? 2 : 0));
+        }
+        if (!onBox || corners != 0b1111) continue;
+        if (box.left() <= kSlack && box.top() <= kSlack && box.right() >= kTileSize - kSlack &&
+            box.bottom() >= kTileSize - kSlack) {
+            return true;
+        }
+    }
+    return false;
+}
+
 ShapeReach shapeReach(const Rect& bounds) {
     ShapeReach reach;
     if (bounds.w < 0.0 || bounds.h < 0.0) return reach;
@@ -498,6 +540,7 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
     paintedOnBlocker_.clear();
     paintedOnScenery_.clear();
     unshapedBlockingCells_ = 0;
+    negatedCells_ = 0;
     width_ = height_ = 0;
     wallCells_ = waterCells_ = groundCells_ = 0;
 
@@ -679,6 +722,9 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
     // solid and are not", and a number that grew with the layer count could
     // not be compared with the map's size at all.
     std::vector<std::uint8_t> unshapedCell(cellCount, 0);
+    // Cells a negating layer took collision away from. Counted once per cell
+    // however many decks are stacked over it, for the same reason as above.
+    std::vector<std::uint8_t> negatedCell(cellCount, 0);
     // A shape the author dragged or turned out of its tile blocks in a cell
     // its tile was never painted in (shapeReach). Those writes are collected
     // per layer and applied after it, so that a cell's OWN tile on a layer
@@ -719,7 +765,15 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
         // The whole of the collision rule, read once per layer. Tiled writes
         // the property only when the author has touched it, and an absent
         // property is a layer that does not block.
-        out.collides = propertiesOf(*layer)[kLayerCollisionProperty].asBool();
+        const Json layerProperties = propertiesOf(*layer);
+        const bool ticked = layerProperties[kLayerCollisionProperty].asBool();
+        out.negates = layerProperties[kLayerNegateProperty].asBool();
+        // The two properties are opposites. A layer carrying both is incoherent
+        // and NEGATION WINS -- it is the property an author has to go looking
+        // for, so it is the one they meant -- but the choice is recorded rather
+        // than made quietly, and the load report names the layer.
+        out.conflicting = ticked && out.negates;
+        out.collides = ticked && !out.negates;
         out.cells.resize(cellCount);
         ++layerStamp;
         overhangs.clear();
@@ -744,7 +798,39 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
             if (raw & kGidFlipVertical) cell.flags |= kTileFlipVertical;
             if (raw & kGidFlipDiagonal) cell.flags |= kTileFlipDiagonal;
             if (type.coversEverything) cell.flags |= kTileCoversEverything;
+            ++out.paintedCells;
             (out.collides ? paintedOnBlocker_ : paintedOnScenery_)[typeIndex] = 1;
+            if (out.negates) {
+                // A DECK. It cancels what the layers BELOW it put here, which
+                // in this coarse view is simply whatever has accumulated so
+                // far; layers above are read after this one and block again.
+                //
+                // Over the negating tile's OWN shapes when it has any, over
+                // the WHOLE CELL when it has none -- the opposite of the
+                // blocking rule, and deliberately so: see tiled_map.h. A tile
+                // whose shapes COVER the cell is the same whole-cell deck said
+                // explicitly (tileDecksWholeCell), and is resolved here so that
+                // the two spellings behave identically everywhere.
+                if (tileDecksWholeCell(type.shapes, cell.flags)) {
+                    // Counted from what was CANCELLED, not from what was
+                    // there: a deck over open ground clears nothing, and the
+                    // load report's whole job is to say so.
+                    if (blockedCell[i] != 0) {
+                        ++out.clearedCells;
+                        negatedCell[i] = 1;
+                    }
+                    blockedCell[i] = 0;
+                    waterCell[i] = 0;
+                    continue;
+                }
+                // A PARTIAL deck. One Tile per cell cannot say "half of this
+                // cell", so the coarse cell stays blocked and only the exact
+                // store cancels anything -- and only for the point tests. That
+                // is the half-supported case the load report warns about; it
+                // is NOT counted as cleared, because from here nothing was.
+                ++out.partialDeckCells;
+                continue;
+            }
             if (!out.collides) continue;
             // A tile with no authored shape contributes no collision, even
             // here. Counted, because it is the one way a map can look solid in
@@ -786,6 +872,7 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
     }
     for (std::size_t i = 0; i < cellCount; ++i) {
         if (unshapedCell[i] != 0) ++unshapedBlockingCells_;
+        if (negatedCell[i] != 0) ++negatedCells_;
     }
     tiles_.resize(cellCount);
     for (std::size_t i = 0; i < cellCount; ++i) {

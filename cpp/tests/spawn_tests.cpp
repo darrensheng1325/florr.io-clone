@@ -9,6 +9,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <set>
 
 using namespace flix;
 using flix::testsupport::connectClient;
@@ -127,11 +128,17 @@ const MapData& overworld(const Harness& h) {
 
 } // namespace
 
-TEST(the_shipped_map_loads_and_resolves_its_defaults) {
-    // The new truth: maps/maps.json names ONE map, garden.tmj, and that map is
-    // the overworld. It declares no map properties at all, so this is also the
-    // test of the defaults that make an unedited Tiled file work -- `biome`
-    // falls back to the map id and `defaultMobGroup` falls back to `biome`.
+TEST(the_shipped_catalogue_loads_and_resolves_its_defaults) {
+    // THE INVARIANT IS DERIVED FROM THE FILES, NOT PINNED TO THEM.
+    //
+    // maps/maps.json is the author's to grow -- it named one map, it names
+    // garden.tmj and desert.tmj today, and it will name more -- so nothing
+    // here counts maps, layers, bands or doors. What is pinned is that the
+    // catalogue is non-empty and SELF-CONSISTENT: every map the manifest names
+    // loads without a warning, realm i is the manifest's i'th entry both ways
+    // round, and each map resolves the defaults that make an unedited Tiled
+    // file work -- `biome` falls back to the map id and `defaultMobGroup`
+    // falls back to `biome`, neither of which the shipped files write.
     WorldMaps maps;
     std::string error;
     CHECK(maps.load(dataDir(), nullptr, error));
@@ -143,157 +150,209 @@ TEST(the_shipped_map_loads_and_resolves_its_defaults) {
     }
     CHECK(maps.warnings().empty());
 
-    CHECK_EQ(maps.count(), 1);
-    CHECK(maps.forRealm(Realm::Overworld) != nullptr);
-    CHECK(maps.forRealm(worldRealm(1)) == nullptr);
+    // A catalogue with no map in it is a game with nowhere to be.
+    CHECK(maps.count() >= 1);
+    CHECK(!maps.empty());
+    CHECK_EQ(maps.count(), static_cast<int>(maps.maps().size()));
+    // Realm i IS the manifest's i'th entry, and there is no realm past the
+    // last one. That order is the contract between client and server (see
+    // maps/maps.json), so it is worth asserting both directions of.
+    for (int i = 0; i < maps.count(); ++i) {
+        const MapData* map = maps.forRealm(worldRealm(i));
+        CHECK(map != nullptr);
+        if (map == nullptr) continue;
+        CHECK_EQ(map->id(), maps.maps()[static_cast<std::size_t>(i)].id());
+        bool found = false;
+        CHECK(maps.realmOfId(map->id(), found) == worldRealm(i));
+        CHECK(found);
+    }
+    CHECK(maps.forRealm(worldRealm(maps.count())) == nullptr);
     CHECK(maps.forRealm(Realm::Arena) == nullptr);
     CHECK(maps.forRealm(Realm::Maze) == nullptr);
-    bool found = false;
-    CHECK(maps.realmOfId("garden", found) == Realm::Overworld);
-    CHECK(found);
+    // Realm 0 is the overworld, whatever map is parked there.
+    CHECK(maps.forRealm(Realm::Overworld) != nullptr);
 
-    const MapData& world = *maps.forRealm(Realm::Overworld);
-    CHECK_EQ(world.id(), std::string("garden"));
-    // None of these is written anywhere in garden.tmj.
-    CHECK_EQ(world.biome(), std::string("garden"));
-    CHECK_EQ(world.defaultMobGroup(), std::string("garden"));
-    // There is no map-wide difficulty to resolve any more: difficulty belongs
-    // to a band, and a band is the only thing that spawns anything. What a
-    // flower walking out of the one door meets is the band drawn over that
-    // door, which the door test below pins.
-    //
-    // And the load line reports what the shipped map resolved to: how many
-    // bands and the range they span. The COUNT is not written down here (the
-    // author draws bands as the map grows), but the shape of the sentence is,
-    // because its other branch -- the one a bandless map prints -- is the only
-    // warning an author gets that their world will be empty.
-    const std::string summary = world.bandSummary();
-    if (summary.find(" band") == std::string::npos || summary.find("difficulty ") == std::string::npos) {
-        ::testing::reportFailure(__FILE__, __LINE__,
-                                 "the shipped map's load line does not report its bands: " + summary);
-    }
-    CHECK(summary.find("NO SPAWN BANDS") == std::string::npos);
-    //
-    // Square, and big enough to be a world. The SIZE is not pinned -- the
-    // author resizes the canvas in Tiled as the map is drawn, and a test that
-    // wrote the number down would fail every time they did.
-    CHECK(world.width() >= 32);
-    CHECK_EQ(world.width(), world.height());
-    CHECK(!world.artFiles().empty());
+    for (const MapData& world : maps.maps()) {
+        // None of these is written in any shipped .tmj: they are the fallbacks.
+        CHECK(!world.id().empty());
+        CHECK_EQ(world.biome(), world.id());
+        CHECK_EQ(world.defaultMobGroup(), world.biome());
 
-    // The layer count is NOT pinned: the author adds and removes layers as the
-    // map is drawn, and a test that counted them would fail every time they
-    // did. What is pinned is the shape the engine needs -- every layer is a
-    // full grid, and the map has both kinds of layer, because a map with no
-    // colliding layer is one a player walks straight off and a map with no
-    // scenery layer means the collision rule has collapsed into "everything
-    // painted is a wall".
-    CHECK(world.layers().size() >= 2);
-    int collidingLayers = 0, sceneryLayers = 0;
-    for (const TiledLayer& layer : world.layers()) {
-        CHECK_EQ(layer.cells.size(), std::size_t(world.width()) * std::size_t(world.height()));
-        (layer.collides ? collidingLayers : sceneryLayers) += 1;
-    }
-    CHECK(collidingLayers > 0);
-    CHECK(sceneryLayers > 0);
-    // Every non-empty cell names an artwork the map actually carries.
-    for (const TiledLayer& layer : world.layers()) {
-        for (const TiledCell& cell : layer.cells) {
-            CHECK(cell.art < static_cast<int>(world.artFiles().size()));
+        // The load line reports what the map resolved to: how many bands and
+        // the range they span. The COUNT is not written down here (the author
+        // draws bands as the map grows), but the shape of the sentence is,
+        // because its other branch -- the one a bandless map prints -- is the
+        // only warning an author gets that their world will be empty.
+        const std::string summary = world.bandSummary();
+        if (summary.find(" band") == std::string::npos &&
+            summary.find("NO SPAWN BANDS") == std::string::npos) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "the load line for " + world.id() +
+                                         " does not report its bands: " + summary);
         }
-    }
-    // Off the map is an empty cell rather than a read past the end.
-    CHECK_EQ(world.cellAt(0, -1, 0).art, -1);
-    CHECK_EQ(world.cellAt(0, world.width(), 0).art, -1);
-    CHECK_EQ(world.cellAt(world.layers().size(), 0, 0).art, -1);
 
-    // One door and no pads. The BAND COUNT IS NOT PINNED: the author draws
-    // difficulty onto the map as it is balanced, and a test that counted bands
-    // would fail on every edit. What is pinned is that each band the file
-    // carries is one the engine can act on -- a difficulty at or above zero (a
-    // negative one would clamp and read as a mistake nobody was told about),
-    // an area that can contain a point, and either its own mob group that the
-    // content actually defines or none at all, which falls back to the map's.
-    int bands = 0, regions = 0, doors = 0, teleporters = 0;
-    for (const MapElement& element : world.elements()) {
-        if (element.isSpawnBand()) {
-            ++bands;
-            CHECK(element.difficulty >= 0.0);
-            CHECK(element.bounds.w > 0.0);
-            CHECK(element.bounds.h > 0.0);
-            for (const ZoneMobEntry& row : element.mobDistribution) {
-                CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
-                      content().mobIndex(row.name) != kInvalidIndex);
+        // Big enough to be a world, and no SHAPE pinned: a map is whatever
+        // rectangle the author sized the canvas to, and two maps in one
+        // catalogue need not be the same size as each other (see terrain.h).
+        CHECK(world.width() >= 32);
+        CHECK(world.height() >= 32);
+        CHECK(!world.artFiles().empty());
+
+        // The layer count is NOT pinned: the author adds and removes layers as
+        // the map is drawn. What is pinned is the shape the engine needs --
+        // every layer is a full grid, and the map has both kinds of layer,
+        // because a map with no colliding layer is one a player walks straight
+        // off and a map with no scenery layer means the collision rule has
+        // collapsed into "everything painted is a wall".
+        CHECK(world.layers().size() >= 2);
+        int collidingLayers = 0, sceneryLayers = 0;
+        for (const TiledLayer& layer : world.layers()) {
+            CHECK_EQ(layer.cells.size(),
+                     std::size_t(world.width()) * std::size_t(world.height()));
+            (layer.collides ? collidingLayers : sceneryLayers) += 1;
+            // A layer cannot both add and remove collision; the reader forces
+            // negation to win, and that resolution is what the rest of the
+            // engine reads.
+            CHECK(!(layer.collides && layer.negates));
+        }
+        CHECK(collidingLayers > 0);
+        CHECK(sceneryLayers > 0);
+        // Every non-empty cell names an artwork the map actually carries.
+        for (const TiledLayer& layer : world.layers()) {
+            for (const TiledCell& cell : layer.cells) {
+                CHECK(cell.art < static_cast<int>(world.artFiles().size()));
             }
         }
-        if (element.isMobRegion()) {
-            ++regions;
-            for (const ZoneMobEntry& row : element.mobDistribution) {
-                CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
-                      content().mobIndex(row.name) != kInvalidIndex);
+        // Off the map is an empty cell rather than a read past the end.
+        CHECK_EQ(world.cellAt(0, -1, 0).art, -1);
+        CHECK_EQ(world.cellAt(0, world.width(), 0).art, -1);
+        CHECK_EQ(world.cellAt(world.layers().size(), 0, 0).art, -1);
+
+        // The BAND COUNT IS NOT PINNED either: the author draws difficulty
+        // onto a map as it is balanced. What is pinned is that each band the
+        // file carries is one the engine can act on -- a difficulty at or
+        // above zero (a negative one would clamp and read as a mistake nobody
+        // was told about), an area that can contain a point, and either its
+        // own mob group that the content actually defines or none at all,
+        // which falls back to the map's.
+        int bands = 0, regions = 0, doors = 0, teleporters = 0;
+        for (const MapElement& element : world.elements()) {
+            if (element.isSpawnBand()) {
+                ++bands;
+                CHECK(element.difficulty >= 0.0);
+                CHECK(element.bounds.w > 0.0);
+                CHECK(element.bounds.h > 0.0);
+                for (const ZoneMobEntry& row : element.mobDistribution) {
+                    CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                          content().mobIndex(row.name) != kInvalidIndex);
+                }
             }
+            if (element.isMobRegion()) {
+                ++regions;
+                for (const ZoneMobEntry& row : element.mobDistribution) {
+                    CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                          content().mobIndex(row.name) != kInvalidIndex);
+                }
+            }
+            if (element.kind == MapElementKind::PlayerSpawn) ++doors;
+            if (element.kind == MapElementKind::Teleporter) ++teleporters;
         }
-        if (element.kind == MapElementKind::PlayerSpawn) ++doors;
-        if (element.kind == MapElementKind::Teleporter) ++teleporters;
+        // Every map has somewhere to arrive: a door of its own, or a pad that
+        // leads to it. A map with neither cannot be reached at all.
+        if (doors == 0 && teleporters == 0) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     world.id() + " has no door and no teleporter, so nothing "
+                                                  "can ever arrive in it");
+        }
+        // Bands and regions are two readings of one `spawn` object, and no
+        // object is ever both: a `spawn` with a difficulty is a band, one
+        // without is a region.
+        int spawnObjects = 0;
+        for (const MapElement& element : world.elements()) {
+            if (element.kind == MapElementKind::Spawn) ++spawnObjects;
+            CHECK(!(element.isSpawnBand() && element.isMobRegion()));
+        }
+        CHECK_EQ(bands + regions, spawnObjects);
+        // A pad still has to say where it leads.
+        for (const MapElement& element : world.elements()) {
+            if (element.kind != MapElementKind::Teleporter) continue;
+            CHECK(!element.targetMap.empty());
+        }
     }
-    CHECK_EQ(doors, 1);
-    CHECK_EQ(teleporters, 0);
-    // At least ONE band, though. Bands are the only source of ambient mobs
-    // there is, so a map with none grows nothing at all -- the game would ship
-    // a silent, empty world, and that is not something an edit should be able
-    // to do quietly.
-    if (bands == 0) {
+
+    // AT LEAST ONE BAND IN THE OVERWORLD. Bands are the only source of ambient
+    // mobs there is, so the map a new player lands in has to carry one or the
+    // game ships a silent, empty world. It is asked of realm 0 only: a map the
+    // author is still drawing may legitimately have none yet, and failing on
+    // that would make every work-in-progress map a red suite.
+    const MapData* overworld = maps.forRealm(Realm::Overworld);
+    CHECK(overworld != nullptr);
+    int overworldBands = 0;
+    if (overworld != nullptr) {
+        for (const MapElement& element : overworld->elements()) {
+            if (element.isSpawnBand()) ++overworldBands;
+        }
+    }
+    if (overworldBands == 0) {
         ::testing::reportFailure(__FILE__, __LINE__,
-                                 "garden.tmj carries no spawn band, so the shipped world would "
-                                 "grow no mobs anywhere");
-    }
-    // Bands and regions are two readings of one `spawn` object, and no object
-    // is ever both: a `spawn` with a difficulty is a band, one without is a
-    // region.
-    int spawnObjects = 0;
-    for (const MapElement& element : world.elements()) {
-        if (element.kind == MapElementKind::Spawn) ++spawnObjects;
-        CHECK(!(element.isSpawnBand() && element.isMobRegion()));
-    }
-    CHECK_EQ(bands + regions, spawnObjects);
-    // A pad, if the map ever grows one, still has to say where it leads.
-    for (const MapElement& element : world.elements()) {
-        if (element.kind != MapElementKind::Teleporter) continue;
-        CHECK(!element.targetMap.empty());
+                                 "the overworld carries no spawn band, so the world a new "
+                                 "player lands in would grow no mobs anywhere");
     }
 }
 
-TEST(the_shipped_door_is_named_by_its_label_and_is_pickable) {
-    // garden.tmj's one door has an EMPTY Tiled name and no `spawnId` property.
-    // All it says is `label: "Garden"`, and that is enough: the id falls back
-    // to a slug of the label, so the door is `garden` and the picker offers
-    // it. Before that fallback this object was dropped at load and the map had
-    // no doors at all.
+TEST(every_shipped_door_is_named_by_its_label_and_is_offered) {
+    // Doors are DERIVED FROM THE FILES too. Not one shipped door has a Tiled
+    // name or a `spawnId`; all each says is a `label`, and that is enough,
+    // because the id falls back to a slug of the label. Before that fallback
+    // such an object was dropped at load and its map had no doors at all.
+    //
+    // So what is pinned is the round trip, for however many doors the
+    // catalogue has: every player-spawn rectangle on every map resolves to a
+    // non-empty id, that id is unique across the catalogue, doors() finds it,
+    // and a PICKABLE one is also offered by the picker under its map's biome.
     WorldMaps maps;
     std::string error;
     CHECK(maps.load(dataDir(), nullptr, error));
-    const MapData* world = maps.forRealm(Realm::Overworld);
-    CHECK(world != nullptr);
-    if (world == nullptr) return;
 
-    CHECK_EQ(world->playerSpawns().size(), std::size_t{1});
-    if (world->playerSpawns().empty()) return;
-    const MapElement& door = *world->playerSpawns().front();
-    CHECK_EQ(door.spawnId, std::string("garden"));
-    CHECK_EQ(door.label, std::string("Garden"));
-    CHECK(door.pickable);
-
-    // And it is offered, under its map's biome tab, with its label on it.
-    CHECK_EQ(maps.spawnChoices().size(), std::size_t{1});
-    CHECK_EQ(maps.doors().size(), std::size_t{1});
-    const SpawnChoice* choice = maps.choice("garden");
-    CHECK(choice != nullptr);
-    if (choice == nullptr) return;
-    CHECK_EQ(choice->label, std::string("Garden"));
-    CHECK_EQ(choice->biome, std::string("garden"));
-    CHECK(choice->pickable);
-    CHECK(choice->realm == Realm::Overworld);
-    CHECK(maps.door("garden") != nullptr);
+    std::set<std::string> ids;
+    std::size_t doorCount = 0;
+    std::size_t pickableCount = 0;
+    for (int i = 0; i < maps.count(); ++i) {
+        const MapData* world = maps.forRealm(worldRealm(i));
+        CHECK(world != nullptr);
+        if (world == nullptr) continue;
+        for (const MapElement* spawn : world->playerSpawns()) {
+            ++doorCount;
+            CHECK(!spawn->spawnId.empty());
+            CHECK(!spawn->label.empty());
+            CHECK(ids.insert(spawn->spawnId).second);   // unique across the catalogue
+            const SpawnChoice* door = maps.door(spawn->spawnId);
+            CHECK(door != nullptr);
+            if (door == nullptr) continue;
+            CHECK_EQ(door->label, spawn->label);
+            CHECK_EQ(door->biome, world->biome());
+            CHECK(door->realm == worldRealm(i));
+            CHECK_EQ(door->pickable, spawn->pickable);
+            if (!spawn->pickable) {
+                // Not offered, still reachable through a pad.
+                CHECK(maps.choice(spawn->spawnId) == nullptr);
+                continue;
+            }
+            ++pickableCount;
+            const SpawnChoice* choice = maps.choice(spawn->spawnId);
+            CHECK(choice != nullptr);
+            if (choice == nullptr) continue;
+            CHECK_EQ(choice->label, spawn->label);
+            CHECK_EQ(choice->biome, world->biome());
+            CHECK(choice->realm == worldRealm(i));
+            CHECK(choice->pickable);
+        }
+    }
+    // A catalogue nobody can join is the one failure mode worth naming.
+    CHECK(doorCount >= 1);
+    CHECK(pickableCount >= 1);
+    CHECK_EQ(maps.doors().size(), doorCount);
+    CHECK_EQ(maps.spawnChoices().size(), pickableCount);
 }
 
 TEST(the_shipped_door_stands_on_open_ground) {

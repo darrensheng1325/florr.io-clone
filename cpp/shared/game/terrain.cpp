@@ -685,19 +685,80 @@ bool Terrain::loadTiledMap(const std::string& path, std::string& errorOut, Realm
     // tile they never drew a shape on, should read it here rather than discover
     // it by walking through a castle.
     std::string collides;
+    std::string negates;
     std::string scenery;
     for (const TiledLayer& layer : map.layers()) {
-        std::string& list = layer.collides ? collides : scenery;
+        std::string& list = layer.negates ? negates : layer.collides ? collides : scenery;
         if (!list.empty()) list += ", ";
         list += layer.name;
+        // A negating layer is only worth ticking if it took something away, so
+        // the count travels with the name: an author who ticks the box reads
+        // here whether it did anything. `cleared` counts only cells this layer
+        // actually opened, so a deck over dry land reads "0 of 14" rather than
+        // claiming a success it did not have; a deck tile that covers part of
+        // its cell is counted apart, because it only cancels the point tests.
+        if (layer.negates) {
+            list += " (" + std::to_string(layer.clearedCells) + " of " +
+                    std::to_string(layer.paintedCells) + " cells cleared";
+            if (layer.partialDeckCells > 0) {
+                list += ", " + std::to_string(layer.partialDeckCells) + " partial";
+            }
+            list += ")";
+        }
     }
     std::fprintf(stderr,
-                 "[map] %s: collision from %s; scenery %s; %d wall, %d water, %d ground cells; "
-                 "%d shape sets over %d shaped cells\n",
+                 "[map] %s: collision from %s; negated by %s; scenery %s; %d wall, %d water, "
+                 "%d ground cells; %d shape sets over %d shaped cells, %d cells decked over\n",
                  path.c_str(), collides.empty() ? "no layer" : collides.c_str(),
+                 negates.empty() ? "no layer" : negates.c_str(),
                  scenery.empty() ? "(none)" : scenery.c_str(), map.wallCells(), map.waterCells(),
                  map.groundCells(), collisionShapeSetCount(realm),
-                 collisionShapeCellCount(realm));
+                 collisionShapeCellCount(realm), collisionDeckedCellCount(realm));
+    for (const TiledLayer& layer : map.layers()) {
+        // The two properties are opposites, so a layer with both says nothing
+        // coherent. Negation wins -- said out loud, because the alternative is
+        // an author whose wall layer quietly stopped being one.
+        if (layer.conflicting) {
+            std::fprintf(stderr,
+                         "[map] WARNING %s: layer \"%s\" has both \"%s\" and \"%s\" set; they "
+                         "are opposites, so negation wins and that layer blocks nothing of its "
+                         "own; untick one of them\n",
+                         path.c_str(), layer.name.c_str(), kLayerCollisionProperty,
+                         kLayerNegateProperty);
+        }
+        // A deck under the river it meant to deck. The layers are a stack and
+        // negation only reaches DOWN, so a negating layer that cancels nothing
+        // is nearly always in the wrong place in the layer panel.
+        if (layer.negates && layer.paintedCells > 0 && layer.clearedCells == 0 &&
+            layer.partialDeckCells == 0) {
+            std::fprintf(stderr,
+                         "[map] WARNING %s: layer \"%s\" has \"%s\" set but cancels no "
+                         "collision in any of its %d painted cells; negation only reaches the "
+                         "layers BELOW it, so check it is not under what it means to cancel\n",
+                         path.c_str(), layer.name.c_str(), kLayerNegateProperty,
+                         layer.paintedCells);
+        }
+        // A DECK TILE THAT COVERS PART OF ITS CELL is the half-supported case,
+        // and the one place this rule is not resolved at load: cancelling half
+        // a cell would mean subtracting one authored ring from another. What
+        // such a tile actually does is cancel the POINT tests over its own
+        // shape; the coarse grid keeps the cell blocked, so the minimap, the
+        // flow field, spawn placement, the wire and the swept tests all still
+        // see the blocker, and a body may be unable to reach the plank at all.
+        // Said out loud with the count, because the author's fix is one click:
+        // give the deck tile a whole-tile shape, or none.
+        if (layer.negates && layer.partialDeckCells > 0) {
+            std::fprintf(stderr,
+                         "[map] WARNING %s: layer \"%s\" negates, but in %d of its %d painted "
+                         "cells the tile carries collision shapes that cover only PART of the "
+                         "cell; those cancel the point tests over that shape and nothing else "
+                         "-- the coarse grid, the minimap and the swept tests still see the "
+                         "blocker, and a body may not be able to stand there. Give the deck "
+                         "tile a whole-tile shape, or no shape at all\n",
+                         path.c_str(), layer.name.c_str(), layer.partialDeckCells,
+                         layer.paintedCells);
+        }
+    }
     // A shape that leaves its tile still collides -- it is filed in every cell
     // it reaches into -- but it is nearly always a slip of the mouse in Tiled's
     // Tile Collision Editor rather than a decision, and nothing in the editor
@@ -756,6 +817,10 @@ int Terrain::collisionShapeCellCount(Realm realm) const {
     return shapeGrid(realm).cellsWithShapes;
 }
 
+int Terrain::collisionDeckedCellCount(Realm realm) const {
+    return shapeGrid(realm).deckedCells;
+}
+
 double Terrain::collisionOverhangUnits(Realm realm) const {
     return shapeGrid(realm).overhangUnits;
 }
@@ -776,6 +841,10 @@ void Terrain::collisionRingsAt(int tx, int ty, Realm realm,
     out.reserve(to - from);
     for (std::uint32_t i = from; i < to; ++i) {
         const ShapeGrid::Ref& ref = store.refs[i];
+        // A negating ref is a hole, not a solid: it is not a ring anything
+        // draws or walks into. Its whole effect is on the refs below it, and
+        // callers here want the collision that SURVIVED it.
+        if (ref.negates) continue;
         // Where the ring's own cell is: the queries subtract this shift from
         // the point, so the geometry is offset by it. See ShapeGrid::Ref.
         const Vec2 origin{(tx + ref.dx) * kTileSize, (ty + ref.dy) * kTileSize};
@@ -844,6 +913,53 @@ bool Terrain::setCollisionShapes(const TiledMap& map, Realm realm) {
         return at;
     };
 
+    // A layer's number, as a ref carries it. One byte, and it is only ever
+    // compared: a map with more than 255 layers has its deepest ones share a
+    // number rather than wrapping round to the bottom of the stack.
+    const auto layerNumber = [](std::size_t index) {
+        return static_cast<std::uint8_t>(std::min<std::size_t>(index, 255));
+    };
+
+    // NEGATION IS RESOLVED HERE, ONCE, WHEN THE STORE IS BUILT.
+    //
+    // `deckedBelow[cell]` is the highest layer that decks that cell over
+    // completely -- a `negate_collision` layer whose tile there covers the
+    // whole cell, which is a tile with no shapes at all (what a bridge deck
+    // is; tiled_map.h says why an unshaped NEGATING tile means the whole cell
+    // where an unshaped BLOCKING one means nothing) or one whose own shapes
+    // cover the cell, which is the same deck drawn out. tileDecksWholeCell()
+    // is the one place those two are recognised, and the coarse grid in
+    // TiledMap::load asks it the same question, so the two views cannot drift.
+    // Every contribution from a lower layer is then simply never filed, so
+    // nothing downstream -- not a query, not the minimap, not collisionRingsAt
+    // -- has a second rule to keep in step with the first, and a map with no
+    // decks builds exactly the store it always did.
+    //
+    // A negating tile whose shapes cover only PART of its cell cannot be
+    // resolved away like that: it cancels part of a cell, and subtracting one
+    // authored ring from another is a polygon boolean this does not want to
+    // be. Such a tile is filed as a NEGATING REF instead -- it is geometry,
+    // and it lives in the same store as the geometry it cancels -- and only
+    // the point tests read it. It is a half-supported authoring case and the
+    // load report warns about it by name. See ShapeGrid::Ref::negates.
+    std::vector<std::int16_t> deckedBelow(cellCount, -1);
+    {
+        std::size_t layerIndex = 0;
+        for (const TiledLayer& layer : map.layers()) {
+            const std::uint8_t thisLayer = layerNumber(layerIndex++);
+            if (!layer.negates) continue;
+            for (std::size_t i = 0; i < cellCount && i < layer.cells.size(); ++i) {
+                const TiledCell& cell = layer.cells[i];
+                if (cell.type < 0) continue;
+                const std::size_t typeIndex = static_cast<std::size_t>(cell.type);
+                if (typeIndex >= map.palette().size()) continue;
+                // Partial deck; see above. It goes in as a negating ref below.
+                if (!tileDecksWholeCell(map.palette()[typeIndex].shapes, cell.flags)) continue;
+                deckedBelow[i] = static_cast<std::int16_t>(thisLayer);
+            }
+        }
+    }
+
     // Two passes over the layers: count the refs per cell, then fill them. The
     // second pass runs bottom layer first, so a cell's refs come out in LAYER
     // ORDER and the last one to contain a point is the topmost -- which is what
@@ -856,26 +972,44 @@ bool Terrain::setCollisionShapes(const TiledMap& map, Realm realm) {
     // cell that owns the geometry, which is (0, 0) for every shape drawn inside
     // its tile.
     std::vector<std::uint32_t> counts(cellCount + 1, 0);
+    // Cells a deck actually took something away from, for the load report.
+    // Marked rather than counted, because eachContributingCell runs twice and
+    // both passes reach the same cells.
+    std::vector<std::uint8_t> cleared(cellCount, 0);
     const auto eachContributingCell = [&](const auto& visit) {
         std::size_t layerIndex = 0;
         for (const TiledLayer& layer : map.layers()) {
-            // A ref's layer is one byte, and it is only ever compared: a map
-            // with more than 255 layers has its deepest ones share a number
-            // rather than wrapping round to the bottom of the stack.
-            const std::uint8_t thisLayer =
-                static_cast<std::uint8_t>(std::min<std::size_t>(layerIndex++, 255));
-            if (!layer.collides) continue;
+            const std::uint8_t thisLayer = layerNumber(layerIndex++);
+            if (!layer.collides && !layer.negates) continue;
+            const bool negating = layer.negates;
             for (std::size_t i = 0; i < cellCount && i < layer.cells.size(); ++i) {
                 const TiledCell& cell = layer.cells[i];
                 if (cell.type < 0) continue;
                 const std::size_t typeIndex = static_cast<std::size_t>(cell.type);
                 if (typeIndex >= map.palette().size()) continue;
                 const TiledTileType& type = map.palette()[typeIndex];
-                if (type.shapes.empty()) continue;   // contributes nothing; see tiled_map.h
+                // A blocking tile with no shapes contributes nothing (see
+                // tiled_map.h), and a negating tile that decks its WHOLE cell
+                // -- no shapes, or shapes covering the cell -- was folded into
+                // deckedBelow above. Either way there is no ring to file here;
+                // filing the whole-cell deck's own rectangle as a negating ref
+                // as well would leave two rules describing one cell.
+                if (type.shapes.empty()) continue;
+                if (negating && tileDecksWholeCell(type.shapes, cell.flags)) continue;
                 const std::uint32_t set = setFor(cell, type);
                 const ShapeReach& reach = reachOfSet[set];
+                // A deck above this layer cancels what it puts in THAT cell --
+                // the cell the ref would be filed in, which for an overhang is
+                // not the cell the tile was painted in.
+                const auto fileIn = [&](std::size_t at, int dx, int dy) {
+                    if (deckedBelow[at] > static_cast<std::int16_t>(thisLayer)) {
+                        cleared[at] = 1;
+                        return;
+                    }
+                    visit(at, set, type, thisLayer, dx, dy, negating);
+                };
                 if (reach.ownCellOnly()) {
-                    visit(i, set, type, thisLayer, 0, 0);
+                    fileIn(i, 0, 0);
                     continue;
                 }
                 const int tx = static_cast<int>(i % static_cast<std::size_t>(store.cols));
@@ -885,16 +1019,16 @@ bool Terrain::setCollisionShapes(const TiledMap& map, Realm realm) {
                         const int nx = tx + dx;
                         const int ny = ty + dy;
                         if (nx < 0 || ny < 0 || nx >= store.cols || ny >= store.rows) continue;
-                        visit(static_cast<std::size_t>(ny) * static_cast<std::size_t>(store.cols) +
-                                  static_cast<std::size_t>(nx),
-                              set, type, thisLayer, -dx, -dy);
+                        fileIn(static_cast<std::size_t>(ny) * static_cast<std::size_t>(store.cols) +
+                                   static_cast<std::size_t>(nx),
+                               -dx, -dy);
                     }
                 }
             }
         }
     };
     eachContributingCell([&](std::size_t i, std::uint32_t, const TiledTileType&, std::uint8_t, int,
-                             int) { ++counts[i]; });
+                             int, bool) { ++counts[i]; });
     store.firstRef.assign(cellCount + 1, 0);
     std::uint32_t total = 0;
     for (std::size_t i = 0; i < cellCount; ++i) {
@@ -906,15 +1040,20 @@ bool Terrain::setCollisionShapes(const TiledMap& map, Realm realm) {
     store.refs.assign(total, ShapeGrid::Ref());
     std::vector<std::uint32_t> cursor(store.firstRef.begin(), store.firstRef.end() - 1);
     eachContributingCell([&](std::size_t i, std::uint32_t set, const TiledTileType& type,
-                             std::uint8_t layerIndex, int dx, int dy) {
+                             std::uint8_t layerIndex, int dx, int dy, bool negates) {
         ShapeGrid::Ref ref;
         ref.set = set;
         ref.dx = static_cast<std::int16_t>(dx);
         ref.dy = static_cast<std::int16_t>(dy);
         ref.layer = layerIndex;
-        ref.water = type.water;
+        ref.water = type.water && !negates;
+        ref.negates = negates;
+        store.negating = store.negating || negates;
         store.refs[cursor[i]++] = ref;
     });
+    for (std::size_t i = 0; i < cellCount; ++i) {
+        if (cleared[i] != 0) ++store.deckedCells;
+    }
 
     // How far any shape reaches outside its own cell, in world units. Zero for
     // every shape drawn inside its tile. Nothing in a query uses it -- the refs
@@ -1246,6 +1385,11 @@ int Terrain::cellLayerAt(int tx, int ty, Vec2 p, Realm realm, bool& water) const
     const ShapeGrid& store = shapeGrid(realm);
     const Vec2 base{p.x - tx * kTileSize, p.y - ty * kTileSize};
     int best = -1;
+    // The topmost NEGATING shape containing the point, or -1. A blocking layer
+    // below it is decked over there and does not count. Nearly always -1 and
+    // usually not even looked for: a whole-cell deck was resolved when the
+    // store was built, so only a partially-decked cell carries such a ref.
+    int negated = -1;
     if (store.cols == g.cols && store.rows == g.rows && !store.firstRef.empty()) {
         const std::size_t cell = static_cast<std::size_t>(index(g, tx, ty));
         const std::uint32_t from = store.firstRef[cell];
@@ -1269,7 +1413,9 @@ int Terrain::cellLayerAt(int tx, int ty, Vec2 p, Realm realm, bool& water) const
                 }
                 // Refs are in layer order, so this is a running maximum; the
                 // topmost shape containing the point names the KIND.
-                if (static_cast<int>(ref.layer) >= best) {
+                if (ref.negates) {
+                    negated = std::max(negated, static_cast<int>(ref.layer));
+                } else if (static_cast<int>(ref.layer) >= best) {
                     best = static_cast<int>(ref.layer);
                     water = ref.water;
                 }
@@ -1278,7 +1424,16 @@ int Terrain::cellLayerAt(int tx, int ty, Vec2 p, Realm realm, bool& water) const
         }
         // The cell HAS authored shapes: they are the whole answer, including
         // when the point is in none of them.
-        if (from != to) return best;
+        //
+        // A blocker survives only if it is ABOVE every deck containing the
+        // point; one below it is cancelled, and a cancelled cell is GROUND --
+        // not wall, and not water either, so a flower on a bridge over a river
+        // is on planks (see inWater()).
+        if (from != to) {
+            if (best > negated) return best;
+            water = false;
+            return -1;
+        }
     }
     // The whole-cell fallback answers for THIS CELL'S 300-unit square, and only
     // for points in it. Its two siblings below get that for free -- they test a
@@ -1310,6 +1465,15 @@ bool Terrain::cellTouchesSegment(int tx, int ty, Vec2 a, Vec2 b, double eps, Rea
         const std::uint32_t to = store.firstRef[cell + 1];
         for (std::uint32_t i = from; i < to; ++i) {
             const ShapeGrid::Ref& ref = store.refs[i];
+            // A PARTIAL deck does not open a swept path. Whether a segment
+            // crossed a ring tells you nothing about WHERE it crossed it, so
+            // subtracting a hole from the answer would need the two clipped
+            // against each other; this reports the un-decked geometry instead,
+            // which blocks a little more than the art does and never less.
+            // A whole-cell deck needs none of that -- what it cancels is not
+            // in the store at all (setCollisionShapes) -- and that is every
+            // deck any shipped map has.
+            if (ref.negates) continue;
             const CollisionShapeSet& set = store.sets[ref.set];
             // Into the owning cell's coordinates; see ShapeGrid::Ref.
             const Vec2 shift{ref.dx * kTileSize, ref.dy * kTileSize};
@@ -1349,8 +1513,36 @@ bool Terrain::cellPushCircle(int tx, int ty, Vec2 p, double radius, Realm realm,
         const std::size_t cell = static_cast<std::size_t>(index(g, tx, ty));
         const std::uint32_t from = store.firstRef[cell];
         const std::uint32_t to = store.firstRef[cell + 1];
+        // WHICH DECK THE BODY IS STANDING ON. A partial deck is a hole in the
+        // geometry below it, and what decides whether this body is in that
+        // hole is where its CENTRE is -- a flower whose middle is on the
+        // planks is not shoved by the river under them. Refs are in layer
+        // order bottom-first and a deck cancels what is BELOW it, so the decks
+        // above a given ref are not known until the list has been walked once;
+        // hence a pre-pass, skipped outright for a store with no partial deck
+        // in it, which is every shipped map.
+        int decked = -1;
+        if (store.negating) {
+            for (std::uint32_t i = from; i < to; ++i) {
+                const ShapeGrid::Ref& ref = store.refs[i];
+                if (!ref.negates || static_cast<int>(ref.layer) <= decked) continue;
+                const CollisionShapeSet& set = store.sets[ref.set];
+                const Vec2 refLocal{local.x - ref.dx * kTileSize, local.y - ref.dy * kTileSize};
+                if (!rectHolds(set.bounds, refLocal)) continue;
+                for (const CollisionShape& shape : set.shapes) {
+                    if (!rectHolds(shape.bounds, refLocal)) continue;
+                    if (!shape.rectangle &&
+                        !pointInRing(Ring{shape.points.data(), shape.points.size()}, refLocal)) {
+                        continue;
+                    }
+                    decked = static_cast<int>(ref.layer);
+                    break;
+                }
+            }
+        }
         for (std::uint32_t i = from; i < to; ++i) {
             const ShapeGrid::Ref& ref = store.refs[i];
+            if (ref.negates || static_cast<int>(ref.layer) < decked) continue;
             const CollisionShapeSet& set = store.sets[ref.set];
             // Into the owning cell's coordinates, and back out again for the
             // answer; see ShapeGrid::Ref.

@@ -42,6 +42,45 @@
 //     So the author decides WHICH cells can collide by the layer they paint
 //     on, and WHERE inside those cells by the shapes they drew on the tile.
 //
+//   - A LAYER MAY ALSO *REMOVE* COLLISION. A tile layer carrying the boolean
+//     `negate_collision` cancels, where it has a tile, the collision the
+//     layers BELOW it contributed. That is what a bridge is: a deck painted
+//     over a river, on which the flower walks on planks and not in water.
+//
+//         cancelled over the negating tile's OWN shapes when it has any,
+//         and over the WHOLE CELL when it has none
+//
+//     THAT ASYMMETRY WITH THE BLOCKING RULE IS DELIBERATE. An unshaped tile
+//     on a COLLIDING layer is nearly always a mistake -- it looks solid and is
+//     not -- so it contributes nothing and is counted as a warning. An
+//     unshaped tile on a NEGATING layer is the ordinary way to say "this whole
+//     square is decked over", because a deck covers its cell; asking every
+//     bridge tile in the tileset to carry a 256-square rectangle nobody would
+//     ever draw differently would be ceremony, not safety.
+//
+//     BELOW IT, NOT EVERYWHERE. The layers are a stack: a wall layer added
+//     ABOVE a bridge still blocks on it. The shipped garden's `bridge` layer
+//     happens to be the topmost one, so today it cancels water, dirt and
+//     castle alike, but the rule is written as the stack it is.
+//
+//     A negated cell is GROUND: not Wall, not Water, so inWater() is false on
+//     a bridge deck. `has_collision` and `negate_collision` are independent
+//     properties and a layer carrying BOTH is incoherent -- the load report
+//     says so loudly and negation wins for that layer's cells.
+//
+//     WHOLE-CELL NEGATION IS THE SUPPORTED CASE, and tileDecksWholeCell()
+//     below is what decides whether a deck tile is one: no shapes at all, or
+//     shapes that cover the cell (Tiled's "whole tile" rectangle). Either of
+//     those is resolved away when the map loads, so the coarse grid, the
+//     shapes, the minimap, the wire and every query agree without any of them
+//     knowing negation exists. A deck tile whose shapes cover only PART of its
+//     cell cannot be: cancelling half a cell means subtracting one authored
+//     ring from another, which nothing here does. Such a tile still cancels
+//     the POINT tests over its own shape, the coarse grid keeps the cell
+//     blocked, and the load report warns about it by name -- see
+//     Terrain::ShapeGrid::Ref::negates for exactly what it does and does not
+//     reach.
+//
 //     The Tile grid below is the COARSE view of that: one value per cell,
 //     saying only whether the cell holds any blocking shape and what kind. It
 //     is what the minimap paints, what the bots' flow field walks, and what
@@ -109,6 +148,14 @@ inline constexpr std::uint8_t kTileCoversEverything = 8;
 /// who mistypes it gets a layer that silently stops blocking. See the load
 /// report in Terrain::loadTiledMap, which prints what it resolved to.
 inline constexpr const char* kLayerCollisionProperty = "has_collision";
+
+/// The layer property that makes a layer a bridge: it REMOVES the collision
+/// the layers below it contributed, over its own tiles' shapes or, for a tile
+/// with no shapes, over the whole cell. See the header note.
+///
+/// Named here for the same reason as its opposite: a mistyped property is a
+/// bridge you cannot walk on, and the load report prints what it resolved to.
+inline constexpr const char* kLayerNegateProperty = "negate_collision";
 
 /// One map cell's artwork orientation: the rotation to apply about the cell's
 /// centre, and whether the result is then mirrored across its own vertical
@@ -179,6 +226,30 @@ std::vector<TiledShape> orientTileShapes(const std::vector<TiledShape>& shapes,
 /// The box a tile's shapes span once turned by `flags`, in cell-local world
 /// units. A zero-size box for a tile with no shapes.
 Rect orientedShapeBounds(const std::vector<TiledShape>& shapes, std::uint8_t flags);
+
+/// Does this tile, turned by `flags`, cover its WHOLE cell?
+///
+/// The question a `negate_collision` layer asks of every tile it paints, and
+/// the only two answers a deck can have that are resolvable at load (see the
+/// header note):
+///
+///   - NO SHAPES AT ALL is a whole-cell deck. That is the asymmetry with the
+///     blocking rule: an unshaped tile on a colliding layer contributes
+///     nothing, an unshaped tile on a negating layer decks its square.
+///   - SHAPES THAT COVER THE CELL are the same thing said explicitly -- the
+///     rectangle Tiled draws when an author picks "whole tile" in the Tile
+///     Collision Editor, in any of the eight orientations. Folded into the
+///     whole-cell case so the two spellings of one deck behave identically.
+///
+/// Anything else is false: a plank across a corner covers part of its cell,
+/// and no amount of bookkeeping here can subtract it from the ring below.
+///
+/// Covering is tested per ring, not as a union: a single ring that IS its own
+/// bounding box (which is what a rectangle arrives as) and whose box contains
+/// the cell. Two half-cell rectangles that happen to tile the cell between
+/// them read as partial, which is the safe direction -- it warns rather than
+/// silently opening a cell.
+bool tileDecksWholeCell(const std::vector<TiledShape>& shapes, std::uint8_t flags);
 
 /// WHICH CELLS a shape box touches, as offsets from the cell that owns it.
 ///
@@ -259,9 +330,34 @@ struct TiledCell {
 /// never what decides anything.
 struct TiledLayer {
     std::string name;
-    /// The layer's `has_collision` property. False when the property is
-    /// absent, so a layer nobody ticked is scenery.
+    /// The layer's `has_collision` property, AS IT TOOK EFFECT. False when the
+    /// property is absent, so a layer nobody ticked is scenery -- and false on
+    /// a layer that also negates, because negation wins (see `conflicting`).
     bool collides = false;
+    /// The layer's `negate_collision` property: where this layer has a tile,
+    /// the collision from the layers below it is cancelled. See the header.
+    bool negates = false;
+    /// The file ticked BOTH properties on this layer. They are opposites, so
+    /// `collides` was forced false and `negates` kept; carried so the load
+    /// report can name the layer rather than silently picking one.
+    bool conflicting = false;
+    /// How many of this layer's cells hold a tile at all.
+    int paintedCells = 0;
+    /// For a negating layer: how many of its painted cells it ACTUALLY took
+    /// collision away from -- cells where this layer decks the whole cell
+    /// (tileDecksWholeCell) and there was something below it to cancel.
+    ///
+    /// Counted from what was cancelled, never from what was there: a cell that
+    /// was already open is not "cleared", and neither is one whose deck tile
+    /// covers only part of it (those are `partialDeckCells`). The load report
+    /// prints this number, and an author reads it to find out whether ticking
+    /// the box did anything -- so it must never say yes when the answer is no.
+    int clearedCells = 0;
+    /// For a negating layer: how many of its painted cells hold a tile whose
+    /// own shapes cover only PART of the cell. The half-supported case -- it
+    /// cancels the point tests over its shape and nothing else -- so the load
+    /// report warns with this count rather than folding it into `clearedCells`.
+    int partialDeckCells = 0;
     std::vector<TiledCell> cells;
 };
 
@@ -308,6 +404,17 @@ public:
     int unshapedBlockingCells() const { return unshapedBlockingCells_; }
     std::vector<std::string> unshapedBlockingTiles() const;
 
+    /// Cells a `negate_collision` layer cleared out of the COARSE grid: cells
+    /// that some layer below had blocked and that are Ground because a layer
+    /// above decked them over. The 14 bridge cells of the shipped garden.
+    ///
+    /// Only whole-cell negation can show up here -- a negating tile that
+    /// carries its own shapes cancels part of a cell, which one Tile per cell
+    /// cannot express, so the coarse view keeps such a cell blocked. That is
+    /// the coarse grid being conservative, which is what it is for; the exact
+    /// shape store answers the partial case exactly.
+    int negatedCells() const { return negatedCells_; }
+
     /// How many cells hold at least one collision shape. The coarse grid's
     /// wall + water count, by another route, and what tells a reader whether a
     /// map has authored shapes at all.
@@ -351,6 +458,7 @@ private:
     std::vector<std::uint8_t> paintedOnBlocker_;
     std::vector<std::uint8_t> paintedOnScenery_;
     int unshapedBlockingCells_ = 0;
+    int negatedCells_ = 0;
 };
 
 } // namespace flix

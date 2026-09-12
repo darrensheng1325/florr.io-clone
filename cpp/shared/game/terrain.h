@@ -32,6 +32,16 @@
 // old behaviour and is conservative: it blocks a little more than the art does,
 // never less.
 //
+// A layer may also REMOVE collision: `negate_collision` cancels, where it has
+// a tile, what the layers below it contributed (tiled_map.h). That is a
+// bridge, and it is RESOLVED WHEN THE STORE IS BUILT -- the cancelled shapes
+// are never filed -- so both views above answer it without knowing it
+// happened, and a decked cell is Ground in the coarse grid, empty in the shape
+// store and dry to inWater(). The one case that survives into a query is a
+// negating tile whose shapes cover only PART of its cell, which is the one
+// thing this cannot resolve away and the one the load report warns about; see
+// ShapeGrid::Ref::negates.
+//
 // What a cell LOOKS like is not here at all: the artwork is the map file's
 // layers (tiled_map.h), which the client reads for itself.
 
@@ -315,14 +325,21 @@ public:
     /// them. A map is a Tiled `.tmj` and nothing else; both are DERIVED from
     /// the layers the author painted, by the rule in shared/game/tiled_map.h --
     /// a tile layer whose `has_collision` property is set contributes the
-    /// collision shapes of every tile it paints, no other layer contributes
-    /// anything, and a tile carrying no shapes contributes nothing anywhere.
+    /// collision shapes of every tile it paints, a layer whose
+    /// `negate_collision` property is set takes away what the layers below it
+    /// contributed, no other layer contributes anything, and a tile carrying
+    /// no shapes contributes nothing anywhere (except on a negating layer,
+    /// where it decks its whole cell -- see tiled_map.h for why).
     ///
-    /// Prints what that rule resolved to -- which layers collide, the coarse
-    /// cell counts, how many distinct shape sets it built, and a WARNING for
-    /// any cell on a colliding layer whose tile has no shapes -- once per map,
-    /// because a tick box in the layer panel and a shape nobody drew are both
-    /// invisible until somebody walks through a wall.
+    /// Prints what that rule resolved to -- which layers collide, which negate
+    /// and how many cells each of them cleared, the coarse cell counts, how
+    /// many distinct shape sets it built, and a WARNING for any cell on a
+    /// colliding layer whose tile has no shapes, for a layer carrying both
+    /// properties, for a negating layer that cancelled nothing, and for a
+    /// negating tile that covers only part of its cell -- once per
+    /// map, because a tick box in the layer panel and a shape nobody drew are
+    /// both invisible until somebody walks through a wall, or fails to walk
+    /// over a bridge.
     ///
     /// `realm` says WHICH world this map is. Every world realm carries its own
     /// grid with its own dimensions, so a second map need not be the size of
@@ -367,6 +384,11 @@ public:
     /// and what a test asserts the sharing on.
     int collisionShapeSetCount(Realm realm = Realm::Overworld) const;
     int collisionShapeCellCount(Realm realm = Realm::Overworld) const;
+
+    /// How many cells a `negate_collision` layer actually took collision away
+    /// from when the store was built -- a deck over open ground clears nothing
+    /// and counts for nothing here. The 14 bridge cells of the shipped garden.
+    int collisionDeckedCellCount(Realm realm = Realm::Overworld) const;
 
     /// One ring of a cell's authored collision, as a query sees it.
     ///
@@ -471,7 +493,9 @@ public:
 
     /// Water slows; only a tile map has any. Exact too: the point must be
     /// inside a water-tagged SHAPE, and the topmost shape containing it decides,
-    /// so a bridge tile drawn over a pond is not water.
+    /// so a bridge tile drawn over a pond is not water -- neither when the
+    /// bridge is a blocking layer above it nor when it is a `negate_collision`
+    /// deck, which leaves nothing there to be water at all.
     bool inWater(Vec2 p, Realm realm) const;
 
     // -- realm geometry -------------------------------------------------------
@@ -707,6 +731,30 @@ private:
             std::int16_t dy = 0;
             std::uint8_t layer = 0;
             bool water = false;
+            /// This ref REMOVES collision rather than adding it: it is the
+            /// geometry of a `negate_collision` tile, and a blocking ref at a
+            /// LOWER layer does not count anywhere inside it.
+            ///
+            /// Only ever set for a negating tile whose own shapes cover PART
+            /// of its cell. Every WHOLE-cell deck -- a negating tile with no
+            /// shapes, which is the ordinary bridge, and one whose shapes
+            /// cover the cell (tileDecksWholeCell) -- is resolved at load
+            /// instead: the refs it cancels are never filed, so no query pays
+            /// for it and no consumer can disagree. See setCollisionShapes.
+            ///
+            /// A PARTIAL deck is the one half-supported authoring case, and
+            /// the load report warns about it by name. It reaches the POINT
+            /// tests -- blocked(), inWater(), resolveWall()/resolveCircle()
+            /// through cellLayerAt, hasLineOfSight -- and NOTHING ELSE: the
+            /// coarse Tile grid keeps the cell blocked, so the minimap, the
+            /// bots' flow field, spawn placement, the wire and the swept
+            /// segment tests all still see the geometry underneath, and a body
+            /// whose radius overlaps the un-negated part cannot necessarily
+            /// reach the plank. Cancelling half a cell properly means
+            /// subtracting one authored ring from another, which nothing here
+            /// does; the author's fix is to give the deck tile a whole-tile
+            /// shape or no shape at all.
+            bool negates = false;
         };
         int cols = 0;
         int rows = 0;
@@ -714,6 +762,16 @@ private:
         std::vector<Ref> refs;
         std::vector<std::uint32_t> firstRef;
         int cellsWithShapes = 0;
+        /// Cells a `negate_collision` layer actually took collision away
+        /// from: cells where a deck above dropped a lower layer's refs when
+        /// the store was built. What the load report prints. A deck painted
+        /// over open ground clears nothing and is counted nowhere, which is
+        /// the point of the warning the report prints beside this.
+        int deckedCells = 0;
+        /// True when any ref in this store negates. False for every map that
+        /// has no partially-decked cell -- which is every shipped map -- and
+        /// it is what keeps the negation pre-pass out of the query path there.
+        bool negating = false;
         /// The furthest any shape reaches outside its own cell, in world units.
         /// Reported at load so an author who nudged a vertex past a tile edge
         /// can see it; nothing in a query reads it, because the fan-out above
@@ -754,7 +812,8 @@ private:
     // for gameplay, air for the sight test) is the caller's rule, not a cell's.
 
     /// The topmost colliding layer whose shape contains `p`, or -1 when nothing
-    /// there does; `water` is that layer's kind.
+    /// there does; `water` is that layer's kind. A layer cancelled at `p` by a
+    /// negating shape above it does not count (ShapeGrid::Ref::negates).
     int cellLayerAt(int tx, int ty, Vec2 p, Realm realm, bool& water) const;
 
     /// True when the segment touches any of the cell's shapes, each grown by

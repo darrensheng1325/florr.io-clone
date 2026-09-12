@@ -52,8 +52,9 @@ objects. An infinite or non-orthogonal map is refused for the same reason.
 `background`, `water`, `dirt`, `castle` mean nothing to the game, there is no
 layer that "is" the terrain, and nothing reads a layer by name. The one thing
 the game does read off a layer is a custom boolean, `has_collision`, and that
-boolean says whether the layer collides at all — see below. Otherwise the layers
-are drawn bottom to top and that is all they do.
+boolean says whether the layer collides at all — see below. There is a second,
+`negate_collision`, which says the layer *removes* collision; that is what the
+bridge is. Otherwise the layers are drawn bottom to top and that is all they do.
 
 ### Flips
 
@@ -80,6 +81,11 @@ layer may carry one custom boolean in Tiled, under *Layer → Custom Properties*
 | property | meaning |
 | --- | --- |
 | `has_collision` | tiles painted on this layer block movement, in the shapes they draw |
+| `negate_collision` | tiles painted on this layer *cancel* the collision the layers **below** contributed — see below |
+
+They are opposites. A layer carrying **both** says nothing coherent: negation
+wins for that layer's cells, the layer blocks nothing of its own, and the load
+report names the layer rather than quietly picking one.
 
 **A tile's collision shapes say where inside its cell it blocks.** Those are the
 shapes you draw in Tiled's *Tile Collision Editor* (select the tile in the
@@ -118,6 +124,92 @@ skipped, with a warning naming the tile.
 A layer with `has_collision` absent or false **never** blocks, whatever art it
 holds, and whatever shapes its tiles carry; a map that sets it nowhere has no
 walls at all.
+
+### `negate_collision`: a layer that takes collision away
+
+Tick `negate_collision` on a tile layer (again *Layer → Custom Properties*) and,
+**where that layer has a tile**, the collision the layers *below* it contributed
+is cancelled. That is what a bridge is: a deck painted over a river, which the
+flower crosses on planks instead of swimming.
+
+```
+negated(cell) <- a layer with negate_collision = true has a tile here, and
+                 that tile decks the cell:
+                     no collision shapes at all   -> the WHOLE cell
+                     shapes that cover the cell   -> the whole cell (same
+                                                     thing, drawn out)
+                     shapes covering only part    -> only that shape, and
+                                                     only for point tests
+                                                     (see the warning below)
+kind          <- a negated cell is GROUND. Not wall, not water: a flower on a
+                 bridge over a river is on planks, and `inWater()` is false.
+```
+
+**No shapes means the whole cell here — the opposite of what it means on a
+colliding layer.** That asymmetry is deliberate, and it is the one thing about
+this property worth remembering:
+
+| the tile has no collision shapes | on `has_collision` | on `negate_collision` |
+| --- | --- | --- |
+| what it does | nothing at all | decks the whole cell |
+| why | a wall-looking tile that does not block is nearly always a mistake, so the loader refuses to guess and counts the cells | a deck covers its square; that is what a deck *is*, and asking every bridge tile in the tileset to carry a hand-drawn 256-square rectangle would be ceremony, not safety |
+
+**It reaches down, not everywhere.** The layers are a stack. A `negate_collision`
+layer cancels what is *below* it and nothing above, so a wall layer added over a
+bridge still blocks on it. `garden.tmj`'s `bridge` happens to be the topmost
+layer, so today it cancels `water`, `dirt` and `castle` alike — but move it down
+the layer panel and it will only cancel what it now sits over. **A deck placed
+*under* the thing it meant to cancel does nothing at all**, which is the most
+common way to get this wrong; the load report warns about exactly that.
+
+**It reaches everything.** Negation is resolved once, when the map loads — the
+cancelled shapes are never filed in the first place — so the coarse grid, the
+shapes, the minimap, the bots' flow field, spawn placement, the wire and every
+query agree without any of them knowing negation exists. A bridge reads as a
+walkable channel straight across the river on the minimap, and the water either
+side of it still blocks.
+
+**A deck tile that carries its own shapes.** Drawing Tiled's whole-tile
+rectangle on the bridge tile is fine — it means the same whole-cell deck and is
+treated identically. A shape covering only *part* of the cell is the one case
+this cannot resolve: cancelling half a cell means subtracting one authored ring
+from another, which the loader does not do. Such a tile cancels only the point
+tests over its own shape; the coarse grid keeps the cell blocked, so the
+minimap, the flow field and the swept tests still see the blocker and a body may
+not be able to stand on the plank at all. The loader warns, with the count, and
+the fix is one click: give the deck tile a whole-tile shape, or no shape.
+
+**The worked example.** `garden.tmj`'s `bridge` layer is 14 cells at row
+`y = 123`, `x = 83…96`, painted with `bridge_c_0`, `bridge_r_0` and
+`bridge_c_1`. None of those three tiles carries a collision shape, and under
+every one of them is the `water` layer with `water_tl_0` / `water_l_0` /
+`water_tri_0` / `water_c_0`, each of which does. So the river blocks everywhere
+except those 14 cells, where the deck cancels it: a flower walks the run end to
+end, is dry the whole way (`inWater()` is false on the deck), and is stopped by
+the water one cell north and one cell south of it.
+
+The load report says what it resolved to — the negating layers by name, and how
+many of each layer's painted cells it actually opened:
+
+```
+[map] data/garden.tmj: collision from water, dirt, castle; negated by bridge
+(14 of 14 cells cleared); scenery background; 6495 wall, 1136 water, 8753
+ground cells; 93 shape sets over 7631 shaped cells, 14 cells decked over
+```
+
+`14 of 14` is the number to read after ticking the box. It counts cells where
+something was **cancelled**, never cells that merely held something, so a deck
+over dry land reads `0 of 14` and earns a warning:
+
+```
+[map] WARNING data/garden.tmj: layer "bridge" has "negate_collision" set but
+cancels no collision in any of its 14 painted cells; negation only reaches the
+layers BELOW it, so check it is not under what it means to cancel
+```
+
+A deck tile with a part-cell shape is counted apart (`0 of 1 cells cleared, 1
+partial`) and warned about in its own line, because it is the half-supported
+case above.
 
 ### The coarse grid, which is still per cell
 
@@ -159,11 +251,13 @@ whole region walkable and is obvious the moment you walk it, while a missing
 tile shape is one tile's worth of hole, which is why the loader counts those and
 names them.
 
-The cost is that **stacking does not subtract.** A tile painted on top of a
-colliding cell adds its own shapes; it never takes the cell's existing ones
-away. To open a hole through a colliding layer you erase the cell on that layer
-— the brush's eraser, not a tile painted over it — or paint a tile whose
-collision shapes leave the gap you want.
+The cost used to be that **stacking did not subtract**: a tile painted on top of
+a colliding cell added its own shapes and could never take the cell's existing
+ones away, so opening a hole through a colliding layer meant erasing the cell on
+that layer with the brush's eraser. That is still how you delete a wall — and it
+is still the right tool when what you want is *no wall there*. What a layer
+**can** now do is cancel the wall while keeping the art: `negate_collision`,
+next.
 
 Only three tile values ever come out of the reader — ground, wall and water —
 and the engine's `Tile` enum, `tileBlocks()` and `tileIsWater()` are unchanged.
@@ -200,22 +294,23 @@ engine: `water` is a label on a decision the layer already made.
 Everything else is untagged, which costs nothing: an untagged tile whose shapes
 block is a wall like any other. Note that `water` is asked about the tile whose
 SHAPE contains the point, so a bridge drawn over a pond reads as a bridge where
-its own shape covers.
+its own shape covers — and a bridge on a `negate_collision` layer is not water
+at all, because there is nothing left in that cell to be water.
 
-`garden.tmj` puts its five layers to work as `background` and `sand` (no
-collision) under `water`, `dirt` and `castle` (all three colliding). About 61%
-of its cells hold something that blocks — but because collision is the authored
-shapes rather than the cells, only about **49% of the map is actually solid**,
-and four cells in ten of the ones the coarse grid calls wall have walkable
-ground inside them. That difference is the edge tiles, and it is what a player
-feels as walking along a wall rather than along a staircase. Read the counts off
-your own start-up line rather than off this one, which is only what the map
-happened to say the day it was written:
+`garden.tmj` puts its layers to work as `background` (no collision) under
+`water`, `dirt` and `castle` (all three colliding), with `bridge` on top of them
+negating. Roughly half its cells hold something that blocks — but because
+collision is the authored shapes rather than the cells, rather less of the map
+is actually solid than the cell count suggests, and a good share of the cells
+the coarse grid calls wall have walkable ground inside them. That difference is
+the edge tiles, and it is what a player feels as walking along a wall rather
+than along a staircase. Read the counts off your own start-up line rather than
+off this one, which is only what the map happened to say the day it was written:
 
 ```
-[map] data/garden.tmj: collision from water, dirt, castle; scenery background,
-sand; 2204 wall, 290 water, 1602 ground cells; 86 shape sets over 2494 shaped
-cells
+[map] data/garden.tmj: collision from water, dirt, castle; negated by bridge
+(14 of 14 cells cleared); scenery background; 6495 wall, 1136 water, 8753
+ground cells; 93 shape sets over 7631 shaped cells, 14 cells decked over
 ```
 
 A second line appears when a collision shape reaches outside the tile it was
@@ -645,6 +740,36 @@ shapes a cell ends up with)
   `writing_a_tile_by_hand_drops_the_realms_authored_shapes` — shapes and grid
   never describe two different maps.
 
+**Negation — `cpp/tests/terrain_tests.cpp`** (`negate_collision`: the bridge)
+
+- `an_unshaped_negating_tile_clears_its_whole_cell` — the ordinary deck: the
+  coarse grid, the point tests, the rings, the swept test and the push-out all
+  say open.
+- `a_deck_tile_that_covers_its_cell_is_the_same_deck_as_an_unshaped_one` — the
+  two spellings of one deck, resolved to the same thing everywhere, including
+  `nearestOpenTile` and the report's counts.
+- `a_body_walks_onto_a_deck_whose_tile_carries_a_whole_cell_shape` — the same
+  fixture through the real movement step, because a cell the queries call open
+  that no body can reach is not a bridge.
+- `a_shaped_negating_tile_clears_only_its_own_shape` and
+  `a_partial_deck_that_overlaps_no_collision_is_reported_as_clearing_nothing` —
+  the half-supported part-cell deck, and that the report counts what was
+  **cancelled** rather than what was merely there.
+- `a_negating_layer_does_not_cancel_a_colliding_layer_above_it` — negation
+  reaches DOWN. The shipped bridge is the topmost layer, so only a fixture can
+  say this.
+- `a_negated_water_cell_is_ground_and_is_not_water` — `inWater()` is false on
+  the planks.
+- `the_coarse_grid_and_the_exact_queries_agree_on_a_negated_cell` — one answer
+  for the minimap, the flow field, spawn placement, the wire and the shapes.
+- `a_layer_with_both_collision_properties_is_reported_and_negates`.
+- `a_negating_layer_over_open_ground_cancels_nothing_and_says_so` — the numbers
+  the "cancels no collision" warning is printed from.
+- `the_shipped_bridge_is_a_walkable_channel_and_the_river_still_blocks` — the
+  real `garden.tmj`, with the run derived from the file: every decked cell open
+  and dry, a clear segment end to end, the rows either side still blocking in
+  every column, and the minimap drawing no solid on the deck.
+
 **The client — `cpp/tests/client_collision_tests.cpp`**
 
 - `a_client_collides_against_the_same_shapes_the_server_enforces`.
@@ -655,12 +780,18 @@ shapes a cell ends up with)
 **The object layers — `cpp/tests/spawn_tests.cpp`** (read off the shipped map,
 derived from the file rather than pinned, because the author is still drawing)
 
-- `the_shipped_map_loads_and_resolves_its_defaults` — including the banded
-  branch of the load line quoted above: it reports a band count and a
-  difficulty range and never says `NO SPAWN BANDS` (the count itself is not
-  pinned, because the author is still drawing bands).
-- `the_shipped_door_is_named_by_its_label_and_is_pickable` (the name → label
-  slug → map id fallback), `the_shipped_door_stands_on_open_ground`.
+- `the_shipped_catalogue_loads_and_resolves_its_defaults` (formerly
+  `the_shipped_map_loads_and_resolves_its_defaults`, which pinned a catalogue of
+  exactly one map) — **every** map `maps/maps.json` names loads, and each
+  reports the banded branch of the load line quoted above: a band count and a
+  difficulty range, never `NO SPAWN BANDS`. Neither the number of maps nor the
+  number of bands is pinned, because the author adds both.
+- `every_shipped_door_is_named_by_its_label_and_is_offered` (formerly
+  `the_shipped_door_is_named_by_its_label_and_is_pickable`) — the name → label
+  slug → map id fallback asked of every door in the catalogue, each resolving to
+  a real map, with the pickable ones offered on the join list; the catalogue is
+  required to be non-empty and self-consistent rather than a fixed size.
+  `the_shipped_door_stands_on_open_ground`.
 - `an_authored_band_and_region_still_parse`,
   `a_zone_outline_excludes_what_its_bounding_box_includes`,
   `a_zone_boundary_counts_as_inside`, `a_zone_area_is_the_outlines_not_the_boxs`,

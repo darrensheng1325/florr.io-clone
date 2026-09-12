@@ -119,7 +119,9 @@ construction:
   segmentBlocked/hasLineOfSight/findOpenSpawn` all take a `Realm` (no default,
   on purpose): the overworld is the map's authored collision shapes -- the
   polygons and rectangles each tile carries in Tiled, placed per cell from
-  every layer marked `has_collision`, with the one-value-per-cell tile grid
+  every layer marked `has_collision` and cancelled under a layer marked
+  `negate_collision` (a bridge deck, resolved once at load so that every view
+  agrees), with the one-value-per-cell tile grid
   kept beside them as the coarse view the flow field and the fast reject use
   (the minimap draws the shapes themselves, through
   `Terrain::collisionRingsAt`, because a coarse cell paints a tunnel shut) --
