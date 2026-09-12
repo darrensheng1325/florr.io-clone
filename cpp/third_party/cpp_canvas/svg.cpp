@@ -390,7 +390,80 @@ void parseCss(const std::string& text, std::vector<CssRule>& out) {
 struct Raster {
     int width = 0, height = 0;
     std::vector<std::uint8_t> rgba;    // tightly packed, straight (unpremultiplied)
+    // A number no other decoded raster in this process shares, so a backend
+    // that wants to keep something derived from these pixels -- the browser's
+    // scratch surface, say -- has a key it can trust. Never reused, so a stale
+    // entry can only ever be dead weight, never the wrong picture.
+    std::uint32_t id = 0;
+    // Successively halved copies, and the level list handed to the canvas.
+    // Built once, at decode: these sprites are drawn far smaller than they are
+    // stored (a 124-pixel glitch petal lands on about sixteen device pixels)
+    // and minifying from the full bitmap every frame is what that costs.
+    std::vector<std::vector<std::uint8_t>> mips;
+    std::vector<Canvas::ImageLevel> levels;
 };
+
+/// Halves `src` (w x h, straight RGBA) into `out`, averaging 2x2 blocks.
+/// Averaged PREMULTIPLIED, then put back to straight: mixing straight colour
+/// across a transparent texel drags its undefined rgb into the visible edge,
+/// exactly as it would in the sampler.
+void halveRaster(const std::uint8_t* src, int w, int h, std::vector<std::uint8_t>& out,
+                 int& outW, int& outH) {
+    outW = std::max(1, w / 2);
+    outH = std::max(1, h / 2);
+    out.assign(static_cast<std::size_t>(outW) * outH * 4, 0);
+    for (int y = 0; y < outH; ++y) {
+        for (int x = 0; x < outW; ++x) {
+            float r = 0, g = 0, b = 0, a = 0;
+            int taken = 0;
+            for (int dy = 0; dy < 2; ++dy) {
+                const int sy = std::min(h - 1, y * 2 + dy);
+                for (int dx = 0; dx < 2; ++dx) {
+                    const int sx = std::min(w - 1, x * 2 + dx);
+                    const std::uint8_t* p = src + (static_cast<std::size_t>(sy) * w + sx) * 4;
+                    const float pa = p[3] * (1.f / 255.f);
+                    r += p[0] * pa; g += p[1] * pa; b += p[2] * pa; a += pa;
+                    ++taken;
+                }
+            }
+            std::uint8_t* q = out.data() + (static_cast<std::size_t>(y) * outW + x) * 4;
+            if (a <= 1e-4f) { q[0] = q[1] = q[2] = q[3] = 0; continue; }
+            q[0] = static_cast<std::uint8_t>(std::clamp(std::lround(r / a), 0L, 255L));
+            q[1] = static_cast<std::uint8_t>(std::clamp(std::lround(g / a), 0L, 255L));
+            q[2] = static_cast<std::uint8_t>(std::clamp(std::lround(b / a), 0L, 255L));
+            q[3] = static_cast<std::uint8_t>(std::clamp(std::lround(a / taken * 255.f), 0L, 255L));
+        }
+    }
+}
+
+/// Fills in `mips` and `levels` for a decoded raster, down to a single pixel.
+void buildMips(Raster& raster) {
+    raster.mips.clear();
+    raster.levels.clear();
+    raster.levels.push_back({raster.rgba.data(), raster.width, raster.height});
+    int w = raster.width, h = raster.height;
+    const std::uint8_t* src = raster.rgba.data();
+    while (w > 1 || h > 1) {
+        std::vector<std::uint8_t> next;
+        int nw = 0, nh = 0;
+        halveRaster(src, w, h, next, nw, nh);
+        raster.mips.push_back(std::move(next));
+        w = nw; h = nh;
+        src = raster.mips.back().data();
+    }
+    // Only now that `mips` has stopped growing: a push_back that reallocated
+    // would leave every pointer taken before it dangling.
+    for (std::size_t i = 0; i < raster.mips.size(); ++i) {
+        const int lw = std::max(1, raster.width >> (i + 1));
+        const int lh = std::max(1, raster.height >> (i + 1));
+        raster.levels.push_back({raster.mips[i].data(), lw, lh});
+    }
+}
+
+std::uint32_t nextRasterId() {
+    static std::uint32_t counter = 0;
+    return ++counter;
+}
 
 int base64Value(char c) {
     if (c>='A' && c<='Z') return c-'A';
@@ -1240,6 +1313,8 @@ struct Builder {
         auto raster = std::make_shared<Raster>();
         std::string error;
         if (!decodePng(bytes, *raster, error)) { warn("SVG: <image> could not be decoded: " + error); return false; }
+        raster->id = nextRasterId();
+        buildMips(*raster);
 
         const float rw = static_cast<float>(raster->width), rh = static_cast<float>(raster->height);
         const float bx = x.number("x"), by = x.number("y");
@@ -1494,8 +1569,9 @@ void drawNode(const Node& n, const std::vector<Clip>& clips, Canvas& canvas, flo
             gImageClip.rect(n.imageClip[0], n.imageClip[1], n.imageClip[2], n.imageClip[3]);
             canvas.clip(gImageClip, "nonzero");
         }
-        canvas.drawImage(n.image->rgba.data(), n.image->width, n.image->height,
-                         n.imageBox[0], n.imageBox[1], n.imageBox[2], n.imageBox[3], alpha);
+        canvas.drawImage(n.image->levels.data(), static_cast<int>(n.image->levels.size()),
+                         n.imageBox[0], n.imageBox[1], n.imageBox[2], n.imageBox[3], alpha,
+                         n.image->id);
         if (n.imageSlice) canvas.restore();
     }
     for (const Node& kid : n.kids) drawNode(kid, clips, canvas, time, alpha);

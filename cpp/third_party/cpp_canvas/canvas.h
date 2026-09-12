@@ -150,6 +150,25 @@ public:
 
     void fillText(const std::string& text, float x, float y, float maxWidth = -1); void strokeText(const std::string& text, float x, float y, float maxWidth = -1); float measureText(const std::string& text) const;
     void drawCanvas(const Canvas& source, float dx, float dy); void drawCanvas(const Canvas& source, float dx, float dy, float dw, float dh);
+    // Blits one RECTANGLE of `source` into one rectangle of this canvas: the
+    // nine-argument drawImage form. What a caller wants when the scratch
+    // surface it drew into is bigger than the part it needs, which is the
+    // alternative to clipping the whole surface down to a strip and blitting
+    // all of it nine times over.
+    void drawCanvas(const Canvas& source, float sx, float sy, float sw, float sh,
+                    float dx, float dy, float dw, float dh);
+#ifndef __EMSCRIPTEN__
+    // The same one-to-one blit, with every source colour multiplied by `tint`
+    // (the source keeps its own alpha; the tint's is ignored).
+    //
+    // Native only, and deliberately: the browser build has real compositing
+    // operations and builds a tinted copy with a multiply and a
+    // destination-in, while the software backend has none and would otherwise
+    // have to read its own pixels back into a buffer, mask them by hand and
+    // put them back -- six passes over a surface to do what one blit can.
+    void drawCanvasTinted(const Canvas& source, float sx, float sy, float sw, float sh,
+                          float dx, float dy, Color tint);
+#endif
     // Draws tightly-packed 8-bit RGBA pixels into the user-space box
     // (dx, dy, dw, dh), through the current transform, clip and globalAlpha.
     // This is the real drawImage, not drawCanvas: the destination is sampled by
@@ -159,8 +178,30 @@ public:
     // alias into noise.
     // `alpha` multiplies the source, the way a fill folds a node's opacity
     // into its colour; it composes with globalAlpha rather than replacing it.
+    //
+    // `cacheKey` names these exact pixels, and must be unique to them for the
+    // life of the process -- zero means "no name", and costs the backend a
+    // fresh upload of the whole image on every call. It matters only on the
+    // web, where a browser cannot draw a heap pointer: the pixels have to
+    // become a surface first, and doing that per call means a copy of the
+    // whole image out of the wasm heap and a brand new canvas, every frame,
+    // for a sprite that has not changed since it was decoded.
     void drawImage(const std::uint8_t* rgba, int imageWidth, int imageHeight,
-                   float dx, float dy, float dw, float dh, float alpha = 1.0f);
+                   float dx, float dy, float dw, float dh, float alpha = 1.0f,
+                   std::uint32_t cacheKey = 0);
+    // One level of a prefiltered image pyramid: level 0 is the image itself and
+    // each one after it is the previous halved with a box filter.
+    struct ImageLevel { const std::uint8_t* rgba; int width; int height; };
+    // The same draw, choosing the level closest to the size actually being
+    // drawn. Without one, minifying is paid for by supersampling: a 124-pixel
+    // sprite fitted into sixteen device pixels costs sixteen samples of four
+    // texels each, per pixel, every frame. With one the sampler starts from a
+    // level already close to the target and spends one or two.
+    //
+    // Level selection is native-only; the web backend hands the browser level
+    // zero and lets it filter, which is what its own mipmapping is for.
+    void drawImage(const ImageLevel* levels, int levelCount, float dx, float dy, float dw,
+                   float dh, float alpha = 1.0f, std::uint32_t cacheKey = 0);
     std::vector<std::uint8_t> getImageData(int x, int y, int width, int height) const;
     void putImageData(const std::vector<std::uint8_t>& rgba, int sourceWidth, int sourceHeight, int dx, int dy);
     void fillCircle(float centerX, float centerY, float radius); void strokeCircle(float centerX, float centerY, float radius);
@@ -225,6 +266,8 @@ private:
     float clipAt(int x, int y) const;
     std::pair<float,float> mapPoint(float x, float y) const;
     void drawBounds(int& x0, int& y0, int& x1, int& y1) const;
+    void blitRegion(const Canvas& source, float sx, float sy, float sw, float sh,
+                    float dx, float dy, float dw, float dh, const Color* tint);
     void fillDevice(const Path2D& path, bool evenOdd, Color color);
     void strokeDevice(const Path2D& path);
     void glyphs(const std::string& text, float x, float y, float maxWidth, Color color);

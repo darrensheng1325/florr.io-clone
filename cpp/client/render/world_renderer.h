@@ -448,11 +448,11 @@ private:
     // The second buffer holds one chromatic-fringe copy of the first, built
     // and blitted twice per burst frame.
     mutable std::unique_ptr<Canvas> glitchBody_;
+#ifdef __EMSCRIPTEN__
+    // Only the web build needs the second surface: it makes each tint with
+    // Canvas2D composite operations, which need somewhere to compose into.
+    // Natively the tint is folded into the blit itself.
     mutable std::unique_ptr<Canvas> glitchTint_;
-#ifndef __EMSCRIPTEN__
-    // Only the desktop software backend needs a CPU-side tint buffer. The web
-    // build makes both tints with native Canvas2D composite operations.
-    mutable std::vector<std::uint8_t> glitchPixels_;
 #endif
     mutable int glitchSide_ = 0;
 };

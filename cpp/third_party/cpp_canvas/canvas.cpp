@@ -110,14 +110,34 @@ EM_JS(void, c2d_path_drop, (int key), { if (Module.cppCanvasPaths) Module.cppCan
 EM_JS(int, c2d_hit, (int id,double a,double b,int stroke,const char* rule), { const x=Module.cppCanvasContexts[id].ctx; return stroke ? x.isPointInStroke(a,b) : x.isPointInPath(a,b,UTF8ToString(rule)); });
 EM_JS(double, c2d_measure, (int id,const char* text), { return Module.cppCanvasContexts[id].ctx.measureText(UTF8ToString(text)).width; });
 EM_JS(void, c2d_draw, (int dst,int src,double a,double b,double c,double d,int sized), { const x=Module.cppCanvasContexts[dst].ctx, image=Module.cppCanvasContexts[src].surface; sized ? x.drawImage(image,a,b,c,d) : x.drawImage(image,a,b); });
+EM_JS(void, c2d_draw_sub, (int dst,int src,double sx,double sy,double sw,double sh,double dx,double dy,double dw,double dh), { const x=Module.cppCanvasContexts[dst].ctx; x.drawImage(Module.cppCanvasContexts[src].surface,sx,sy,sw,sh,dx,dy,dw,dh); });
 EM_JS(int, c2d_get_pixels, (int id,int x,int y,int w,int h,std::uint8_t* out), { const d=Module.cppCanvasContexts[id].ctx.getImageData(x,y,w,h).data; HEAPU8.set(d,out); return d.length; });
 EM_JS(void, c2d_put_pixels, (int id,const std::uint8_t* data,int sw,int sh,int dx,int dy), { const d=new ImageData(new Uint8ClampedArray(HEAPU8.slice(data,data+sw*sh*4)),sw,sh); Module.cppCanvasContexts[id].ctx.putImageData(d,dx,dy); });
-EM_JS(void, c2d_image, (int id,const std::uint8_t* data,int iw,int ih,double dx,double dy,double dw,double dh,double alpha), {
-  const pixels=new ImageData(new Uint8ClampedArray(HEAPU8.slice(data,data+iw*ih*4)),iw,ih);
+EM_JS(void, c2d_image, (int id,int key,const std::uint8_t* data,int iw,int ih,double dx,double dy,double dw,double dh,double alpha), {
   // putImageData ignores the transform, so the pixels go to a scratch surface
   // first and reach the destination through drawImage, which does not.
-  const scratch = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(iw,ih) : document.createElement('canvas');
-  scratch.width=iw; scratch.height=ih; scratch.getContext('2d').putImageData(pixels,0,0);
+  //
+  // That surface is KEPT. Built per call, an embedded sprite cost a copy of
+  // its whole bitmap out of the wasm heap plus a new canvas every time it was
+  // drawn -- and a glitch flower draws five of them, every frame, per mob on
+  // screen. Keyed by the decoded raster's own id, the upload happens once and
+  // every later frame is one drawImage of a surface the browser already holds.
+  let cache = Module.cppCanvasImages;
+  if (!cache) { cache = new Map(); Module.cppCanvasImages = cache; }
+  let scratch = key ? cache.get(key) : undefined;
+  if (scratch === undefined) {
+    const pixels=new ImageData(new Uint8ClampedArray(HEAPU8.slice(data,data+iw*ih*4)),iw,ih);
+    scratch = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(iw,ih) : document.createElement('canvas');
+    scratch.width=iw; scratch.height=ih; scratch.getContext('2d').putImageData(pixels,0,0);
+    if (key) {
+      // Bounded, oldest-first: a Map iterates in insertion order, and a client
+      // that draws thousands of distinct bitmaps must not grow the page's
+      // memory without limit. Sized well above the sprite sheet a frame
+      // touches, so an image drawn every frame is never the one evicted.
+      if (cache.size >= 512) cache.delete(cache.keys().next().value);
+      cache.set(key, scratch);
+    }
+  }
   const ctx=Module.cppCanvasContexts[id].ctx, was=ctx.globalAlpha;
   ctx.globalAlpha=was*alpha; ctx.drawImage(scratch,dx,dy,dw,dh); ctx.globalAlpha=was;
 });
@@ -1360,18 +1380,82 @@ void Canvas::drawCanvas(const Canvas&s,float a,float b,float c,float d) {
   const auto topLeft=mapPoint(a,b), bottomRight=mapPoint(a+c,b+d);
   const float dx0=std::min(topLeft.first,bottomRight.first), dx1=std::max(topLeft.first,bottomRight.first);
   const float dy0=std::min(topLeft.second,bottomRight.second), dy1=std::max(topLeft.second,bottomRight.second);
-  for (int y = std::max(0, static_cast<int>(std::floor(dy0))); y < std::min(height_, static_cast<int>(std::ceil(dy1))); ++y)
-    for (int x = std::max(0, static_cast<int>(std::floor(dx0))); x < std::min(width_, static_cast<int>(std::ceil(dx1))); ++x) {
+  // Narrowed by the clip before the walk, not per pixel: a clipped blit used to
+  // visit its whole destination box and throw away everything the mask zeroed,
+  // which for the nine band copies of the glitch effect meant nine full-buffer
+  // walks to paint nine ninths of one. clipAt() is zero outside the mask, so
+  // skipping those rows and columns writes exactly the same pixels.
+  int cx0,cy0,cx1,cy1; drawBounds(cx0,cy0,cx1,cy1);
+  const int bx0=std::max(cx0, static_cast<int>(std::floor(dx0))), bx1=std::min(cx1, static_cast<int>(std::ceil(dx1)));
+  const int by0=std::max(cy0, static_cast<int>(std::floor(dy0))), by1=std::min(cy1, static_cast<int>(std::ceil(dy1)));
+  for (int y = by0; y < by1; ++y)
+    for (int x = bx0; x < bx1; ++x) {
       const int sx = std::clamp(static_cast<int>((x + 0.5f - dx0) * s.width_ / std::max(1e-3f, dx1-dx0)), 0, s.width_ - 1);
       const int sy = std::clamp(static_cast<int>((y + 0.5f - dy0) * s.height_ / std::max(1e-3f, dy1-dy0)), 0, s.height_ - 1);
       paint(x, y, s.pixels_[static_cast<size_t>(sy) * s.width_ + sx], state_.alpha * clipAt(x,y));
     }
 #endif
 }
-void Canvas::drawImage(const std::uint8_t* rgba,int iw,int ih,float dx,float dy,float dw,float dh,float alpha) {
+void Canvas::drawCanvas(const Canvas&s,float sx,float sy,float sw,float sh,float a,float b,float c,float d) {
 #ifdef __EMSCRIPTEN__
-  c2d_image(contextId_,rgba,iw,ih,dx,dy,dw,dh,alpha);
+  c2d_draw_sub(contextId_,s.contextId_,sx,sy,sw,sh,a,b,c,d);
 #else
+  blitRegion(s,sx,sy,sw,sh,a,b,c,d,nullptr);
+#endif
+}
+#ifndef __EMSCRIPTEN__
+void Canvas::drawCanvasTinted(const Canvas&s,float sx,float sy,float sw,float sh,float a,float b,Color tint) {
+  blitRegion(s,sx,sy,sw,sh,a,b,sw,sh,&tint);
+}
+// One walk shared by the plain sub-rect blit and the tinted one: the only
+// difference between them is what the sampled colour becomes on the way out,
+// and duplicating the mapping to say that twice is how the two drift.
+void Canvas::blitRegion(const Canvas&s,float sx,float sy,float sw,float sh,float a,float b,float c,float d,const Color* tint) {
+  if (c <= 0 || d <= 0 || sw <= 0 || sh <= 0) return;
+  const auto topLeft=mapPoint(a,b), bottomRight=mapPoint(a+c,b+d);
+  const float dx0=std::min(topLeft.first,bottomRight.first), dx1=std::max(topLeft.first,bottomRight.first);
+  const float dy0=std::min(topLeft.second,bottomRight.second), dy1=std::max(topLeft.second,bottomRight.second);
+  int cx0,cy0,cx1,cy1; drawBounds(cx0,cy0,cx1,cy1);
+  const int bx0=std::max(cx0,static_cast<int>(std::floor(dx0))), bx1=std::min(cx1,static_cast<int>(std::ceil(dx1)));
+  const int by0=std::max(cy0,static_cast<int>(std::floor(dy0))), by1=std::min(cy1,static_cast<int>(std::ceil(dy1)));
+  for (int y=by0;y<by1;++y) for (int x=bx0;x<bx1;++x) {
+    const int ox=std::clamp(static_cast<int>((x+0.5f-dx0)*sw/std::max(1e-3f,dx1-dx0)),0,static_cast<int>(sw)-1);
+    const int oy=std::clamp(static_cast<int>((y+0.5f-dy0)*sh/std::max(1e-3f,dy1-dy0)),0,static_cast<int>(sh)-1);
+    const int px=std::clamp(static_cast<int>(sx)+ox,0,s.width_-1), py=std::clamp(static_cast<int>(sy)+oy,0,s.height_-1);
+    Color texel=s.pixels_[static_cast<size_t>(py)*s.width_+px];
+    if (tint) {
+      texel.r=static_cast<std::uint8_t>(texel.r*tint->r/255);
+      texel.g=static_cast<std::uint8_t>(texel.g*tint->g/255);
+      texel.b=static_cast<std::uint8_t>(texel.b*tint->b/255);
+    }
+    paint(x,y,texel,state_.alpha*clipAt(x,y));
+  }
+}
+#endif
+void Canvas::drawImage(const ImageLevel* levels,int levelCount,float dx,float dy,float dw,float dh,float alpha,std::uint32_t cacheKey) {
+  if (!levels || levelCount <= 0) return;
+#ifdef __EMSCRIPTEN__
+  drawImage(levels[0].rgba,levels[0].width,levels[0].height,dx,dy,dw,dh,alpha,cacheKey);
+#else
+  // How many image pixels land under one device pixel, measured off level 0,
+  // and then the level whose own texels are nearest one-to-one with them. The
+  // sampler below still supersamples whatever is left over, so a half-step
+  // between levels costs a 2x2 grid rather than the 4x4 a raw minification of
+  // eight or sixteen would have needed.
+  const auto& t=state_.matrix;
+  const float ux=dw/std::max(1,levels[0].width), uy=dh/std::max(1,levels[0].height);
+  const float stepX=std::hypot(t[0]*ux,t[1]*ux), stepY=std::hypot(t[2]*uy,t[3]*uy);
+  float shrink=std::max(stepX>1e-6f?1.f/stepX:1.f, stepY>1e-6f?1.f/stepY:1.f);
+  int level=0;
+  while (level+1<levelCount && shrink>=2.f) { shrink*=0.5f; ++level; }
+  drawImage(levels[level].rgba,levels[level].width,levels[level].height,dx,dy,dw,dh,alpha,cacheKey);
+#endif
+}
+void Canvas::drawImage(const std::uint8_t* rgba,int iw,int ih,float dx,float dy,float dw,float dh,float alpha,std::uint32_t cacheKey) {
+#ifdef __EMSCRIPTEN__
+  c2d_image(contextId_,static_cast<int>(cacheKey),rgba,iw,ih,dx,dy,dw,dh,alpha);
+#else
+  (void)cacheKey;   // the software path samples the heap pixels directly
   if (!rgba || iw<=0 || ih<=0 || dw==0 || dh==0 || state_.alpha<=0 || alpha<=0) return;
   // One matrix from image pixels straight to device pixels: the image->box
   // scale folded into the current transform. Inverting THAT (rather than
@@ -1393,8 +1477,11 @@ void Canvas::drawImage(const std::uint8_t* rgba,int iw,int ih,float dx,float dy,
     if (!(std::isfinite(px)&&std::isfinite(py))) return;
     lo=std::min(lo,px); hi=std::max(hi,px); top=std::min(top,py); bottom=std::max(bottom,py);
   }
-  const int x0=std::max(0,static_cast<int>(std::floor(lo))), x1=std::min(width_,static_cast<int>(std::ceil(hi))+1);
-  const int y0=std::max(0,static_cast<int>(std::floor(top))), y1=std::min(height_,static_cast<int>(std::ceil(bottom))+1);
+  // Same narrowing as drawCanvas: the clip bounds the walk, rather than every
+  // pixel outside the mask being sampled and then discarded.
+  int cx0,cy0,cx1,cy1; drawBounds(cx0,cy0,cx1,cy1);
+  const int x0=std::max(cx0,static_cast<int>(std::floor(lo))), x1=std::min(cx1,static_cast<int>(std::ceil(hi))+1);
+  const int y0=std::max(cy0,static_cast<int>(std::floor(top))), y1=std::min(cy1,static_cast<int>(std::ceil(bottom))+1);
   if (x0>=x1||y0>=y1) return;
   // Minification is where a point sample turns detailed artwork into noise, so
   // the subsample grid tracks how many image pixels land under one device

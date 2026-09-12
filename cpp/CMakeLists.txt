@@ -508,6 +508,13 @@ target_link_libraries(bot_probe PRIVATE flix_server flix_client)
 target_compile_definitions(bot_probe PRIVATE FLIX_TEST_DATA_DIR="${FLIX_DATA_DIR}")
 add_dependencies(bot_probe flix_data)
 
+# What one mob type costs the mob layer, in milliseconds -- the figure that
+# says whether a mob is drawing something expensive every frame. See the
+# file's own header.
+add_executable(mob_render_bench tools/mob_render_bench.cpp)
+target_link_libraries(mob_render_bench PRIVATE flix_client cpp_canvas)
+add_dependencies(mob_render_bench flix_data)
+
 # --- tests -------------------------------------------------------------------
 enable_testing()
 # Globbed deliberately: tests are added often and a stale list is a test that

@@ -1166,10 +1166,10 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
                                  double timeSeconds,
                                  const std::function<void(Canvas&)>& body) const {
     // Glitch is a post-process, not a replacement skin: the SAME body is drawn
-    // into a transparent buffer and recomposed as clipped, horizontally
-    // displaced bands. That is what keeps it composable with the Pumpkin and
-    // Robot skins, and what lets the glitch flower tear its petal ring along
-    // with its face.
+    // into a transparent buffer and recomposed as horizontally displaced
+    // bands, each one blitted straight out of the buffer. That is what keeps
+    // it composable with the Pumpkin and Robot skins, and what lets the glitch
+    // flower tear its petal ring along with its face.
     const std::uint32_t bucket =
         static_cast<std::uint32_t>(std::max(0.0, std::floor(timeSeconds * 1000.0 / 70.0)));
     if (hash01(seed, bucket) >= 0.45) {
@@ -1182,15 +1182,27 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
 
     const int half = std::max(16, static_cast<int>(std::ceil(radius * 2.0 + 24.0)));
     const int side = half * 2;
+    // The buffer only ever GROWS, but the work is confined to the top-left
+    // `side` square of it: everything below reads `side`, never `glitchSide_`.
+    // Sizing the passes off the buffer instead meant one oversized glitched
+    // body -- a size-6 flower, a boss-sized mob -- permanently taxed every
+    // other glitched entity on screen with its dimensions, and eight glitch
+    // flowers beside one of those cost five times what eight alone do.
     if (!glitchBody_ || glitchSide_ < side) {
-        glitchBody_ = std::make_unique<Canvas>(Canvas::createVirtual(side, side));
-        glitchTint_ = std::make_unique<Canvas>(Canvas::createVirtual(side, side));
-        glitchSide_ = side;
+        // Rounded up to a multiple of 64, the way the reference grows its own
+        // buffers: a scene of flowers at a dozen slightly different radii
+        // otherwise reallocates the surface for each of them.
+        const int target = ((side + 63) / 64) * 64;
+        glitchBody_ = std::make_unique<Canvas>(Canvas::createVirtual(target, target));
+#ifdef __EMSCRIPTEN__
+        glitchTint_ = std::make_unique<Canvas>(Canvas::createVirtual(target, target));
+#endif
+        glitchSide_ = target;
     }
 
     Canvas& buffer = *glitchBody_;
-    const int bufferHalf = glitchSide_ / 2;
-    buffer.clearRect(0, 0, static_cast<float>(glitchSide_), static_cast<float>(glitchSide_));
+    const int bufferHalf = half;
+    buffer.clearRect(0, 0, static_cast<float>(side), static_cast<float>(side));
     buffer.save();
     buffer.translate(static_cast<float>(bufferHalf), static_cast<float>(bufferHalf));
     body(buffer);
@@ -1204,16 +1216,18 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
         if (roll < 0.36) {
             dx = (hash01(seed, bucket * 17u + static_cast<std::uint32_t>(i)) - 0.5) * radius * 0.9;
         }
-        const double y0 = screen.y - bufferHalf + static_cast<double>(glitchSide_ * i) / kBandCount;
-        const double y1 = screen.y - bufferHalf + static_cast<double>(glitchSide_ * (i + 1)) / kBandCount;
-        canvas.save();
-        canvas.beginPath();
-        canvas.rect(static_cast<float>(screen.x - bufferHalf), static_cast<float>(y0),
-                    static_cast<float>(glitchSide_), static_cast<float>(std::ceil(y1 - y0)));
-        canvas.clip();
-        canvas.drawCanvas(buffer, static_cast<float>(screen.x - bufferHalf + dx),
-                          static_cast<float>(screen.y - bufferHalf));
-        canvas.restore();
+        // The band is taken out of the buffer rather than clipped out of a
+        // full-surface copy of it: nine clipped blits of the whole buffer is
+        // nine times the pixels this needs, and nine coverage masks built to
+        // throw eight ninths of each away.
+        const int top = side * i / kBandCount;
+        const int bottom = side * (i + 1) / kBandCount;
+        if (bottom <= top) continue;
+        canvas.drawCanvas(buffer, 0, static_cast<float>(top), static_cast<float>(side),
+                          static_cast<float>(bottom - top),
+                          static_cast<float>(screen.x - bufferHalf + dx),
+                          static_cast<float>(screen.y - bufferHalf + top),
+                          static_cast<float>(side), static_cast<float>(bottom - top));
     }
 
     // The chromatic fringe: the same silhouette flattened to red and to cyan
@@ -1231,36 +1245,32 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
     // in the browser, never read their pixels into Wasm. The native client has
     // no compositing backend, so it keeps the equivalent CPU pixel pass.
 #ifdef __EMSCRIPTEN__
-    const auto buildTint = [&](Color colour) {
-        glitchTint_->clearRect(0, 0, static_cast<float>(glitchSide_),
-                               static_cast<float>(glitchSide_));
-        glitchTint_->drawCanvas(buffer, 0, 0, static_cast<float>(glitchSide_),
-                                static_cast<float>(glitchSide_));
+    const auto drawTint = [&](Color colour, double offset) {
+        glitchTint_->clearRect(0, 0, static_cast<float>(side), static_cast<float>(side));
+        glitchTint_->drawCanvas(buffer, 0, 0, static_cast<float>(side), static_cast<float>(side),
+                                0, 0, static_cast<float>(side), static_cast<float>(side));
         glitchTint_->setGlobalCompositeOperation("multiply");
         glitchTint_->setFillStyle(colour);
-        glitchTint_->fillRect(0, 0, static_cast<float>(glitchSide_),
-                              static_cast<float>(glitchSide_));
+        glitchTint_->fillRect(0, 0, static_cast<float>(side), static_cast<float>(side));
         glitchTint_->setGlobalCompositeOperation("destination-in");
-        glitchTint_->drawCanvas(buffer, 0, 0, static_cast<float>(glitchSide_),
-                                static_cast<float>(glitchSide_));
+        glitchTint_->drawCanvas(buffer, 0, 0, static_cast<float>(side), static_cast<float>(side),
+                                0, 0, static_cast<float>(side), static_cast<float>(side));
         glitchTint_->setGlobalCompositeOperation("source-over");
+        canvas.drawCanvas(*glitchTint_, 0, 0, static_cast<float>(side), static_cast<float>(side),
+                          static_cast<float>(screen.x - bufferHalf + offset),
+                          static_cast<float>(screen.y - bufferHalf), static_cast<float>(side),
+                          static_cast<float>(side));
     };
 #else
-    const std::vector<std::uint8_t> silhouette =
-        buffer.getImageData(0, 0, glitchSide_, glitchSide_);
-    const auto buildTint = [&](bool keepRed) {
-        glitchPixels_ = silhouette;
-        for (std::size_t i = 0; i + 3 < glitchPixels_.size(); i += 4) {
-            if (keepRed) {
-                glitchPixels_[i + 1] = 0;
-                glitchPixels_[i + 2] = 0;
-            } else {
-                glitchPixels_[i] = 0;
-            }
-        }
-        glitchTint_->clearRect(0, 0, static_cast<float>(glitchSide_),
-                               static_cast<float>(glitchSide_));
-        glitchTint_->putImageData(glitchPixels_, glitchSide_, glitchSide_, 0, 0);
+    // One tinted blit per copy. The equivalent with no tint in the blit was to
+    // read the buffer back, mask a channel out of a copy of it, push that into
+    // a second canvas and blit THAT -- six passes over the surface for each of
+    // the two copies, which cost more than every other part of the effect put
+    // together.
+    const auto drawTint = [&](Color colour, double offset) {
+        canvas.drawCanvasTinted(buffer, 0, 0, static_cast<float>(side), static_cast<float>(side),
+                                static_cast<float>(screen.x - bufferHalf + offset),
+                                static_cast<float>(screen.y - bufferHalf), colour);
     };
 #endif
     canvas.save();
@@ -1268,20 +1278,8 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
     canvas.setGlobalCompositeOperation("lighter");
 #endif
     canvas.setGlobalAlpha(0.36f);
-#ifdef __EMSCRIPTEN__
-    buildTint(Color{255, 0, 0});
-#else
-    buildTint(true);
-#endif
-    canvas.drawCanvas(*glitchTint_, static_cast<float>(screen.x - bufferHalf - shift),
-                      static_cast<float>(screen.y - bufferHalf));
-#ifdef __EMSCRIPTEN__
-    buildTint(Color{0, 255, 255});
-#else
-    buildTint(false);
-#endif
-    canvas.drawCanvas(*glitchTint_, static_cast<float>(screen.x - bufferHalf + shift),
-                      static_cast<float>(screen.y - bufferHalf));
+    drawTint(Color{255, 0, 0}, -shift);
+    drawTint(Color{0, 255, 255}, shift);
     canvas.restore();
 }
 
