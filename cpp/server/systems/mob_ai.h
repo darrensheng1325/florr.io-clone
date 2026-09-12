@@ -398,7 +398,13 @@ private:
     /// Always, within the active radius. Beyond it, one tick in kMobFarStride,
     /// offset by the mob's own slot so the far world does not decide in
     /// lockstep -- a shared stride would move the spike rather than remove it.
-    bool stepsThisTick(Entity self, Vec2 position, Realm realm,
+    ///
+    /// A BOSS is the exception and thinks wherever it stands. There are a
+    /// handful of them in the world at once, the server announced every one of
+    /// them by name and sent the bots at it, and a boss that stutters at a
+    /// fifth speed until somebody gets within five thousand units is a boss
+    /// that is visibly asleep in front of the raid walking up to it.
+    bool stepsThisTick(Entity self, Vec2 position, Realm realm, Rarity rarity,
                        const std::vector<RealmPoint>& activePlayers) const;
 
     /// What a far mob does on a tick it did not think.

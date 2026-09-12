@@ -904,8 +904,12 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
 // Level of detail
 // ---------------------------------------------------------------------------
 
-bool MobAiSystem::stepsThisTick(Entity self, Vec2 position, Realm realm,
+bool MobAiSystem::stepsThisTick(Entity self, Vec2 position, Realm realm, Rarity rarity,
                                 const std::vector<RealmPoint>& activePlayers) const {
+    // A boss is never off: see the header. It is a few mobs' worth of full-rate
+    // AI in exchange for the one class of mob whose behaviour anybody watches
+    // from a distance.
+    if (isBossRarity(rarity)) return true;
     if (mobActive(position, realm, activePlayers)) return true;
     return (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) == 0;
 }
@@ -1288,9 +1292,11 @@ void MobAiSystem::followChains(World& world, const Terrain& terrain,
         // ticks the head did. The reference places every segment every tick and
         // gets the same positions out of it, because a follower re-placed
         // against a head that has not moved lands where it already was.
-        const bool active = headTransform != nullptr &&
-                            stepsThisTick(head, headTransform->position, headTransform->realm,
-                                          activePlayers);
+        const MobType* headType = world.tryGet<MobType>(head);
+        const bool active =
+            headTransform != nullptr && headType != nullptr &&
+            stepsThisTick(head, headTransform->position, headTransform->realm, headType->rarity,
+                          activePlayers);
 
         visited_.insert(head);
         Entity ahead = head;
@@ -1481,7 +1487,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         const Transform* at = world.tryGet<Transform>(self);
         const MobType* type = world.tryGet<MobType>(self);
         if (at == nullptr || type == nullptr) continue;
-        if (!stepsThisTick(self, at->position, at->realm, activePlayers)) {
+        if (!stepsThisTick(self, at->position, at->realm, type->rarity, activePlayers)) {
             ++stats_.skipped;
             driftUnwatched(world, self, nowMillis, dt);
             continue;

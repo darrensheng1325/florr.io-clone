@@ -641,8 +641,21 @@ private:
     int botMobHeatAt(Vec2) const;
     void computeBotRaidSlots(double nowMillis);
     void updateBotSquads(double nowMillis);
+    /// Tells the bot controller that a boss has just appeared.
+    ///
+    /// The other half of announceBossSpawns: the same event that puts a line
+    /// in everybody's chat also reaches the bots, and it reaches them from the
+    /// SPAWNER rather than from whatever the per-tick index happened to
+    /// notice, so a boss from any path at all -- a band stocking itself, a
+    /// nest, the arena, an operator's console -- is one the bots know about
+    /// and know the age of. Without it a boss is only ever discovered by the
+    /// index sweep, which cannot tell a mob that spawned this tick from one
+    /// that has been standing there since the server came up.
+    void noteBossSighting(Entity boss, double nowMillis);
     /// Bots call fresh super/unique sightings out in chat, which is also what
-    /// rallies the population onto one.
+    /// rallies the population onto one. Spawn alerts are worked through first,
+    /// oldest first, so what the bots shout about is what actually just
+    /// happened.
     void announceNewBosses(double nowMillis);
     /// Rallies every bot onto the best boss in the world (unique over super,
     /// then most recently seen, then closest to a human). Returns whether one
@@ -843,6 +856,14 @@ private:
     std::unordered_map<Entity, double> botBossFirstSeen_;
     /// Bosses that have already been called out, so one is not announced twice.
     std::unordered_map<Entity, bool> botAnnouncedBosses_;
+    /// Scratch for one callout pass: the alerts, then the standing index.
+    std::vector<Entity> botCalloutQueue_;
+    /// Bosses the spawner reported this tick or recently, oldest first.
+    ///
+    /// Small and bounded: a callout is on a minute-long cooldown, so this is a
+    /// short queue of what to shout about next, not a log. Entries are dropped
+    /// when the boss dies before its turn comes round.
+    std::vector<Entity> botBossAlerts_;
     /// Suppresses a burst of callouts for the bosses that were already alive
     /// when the first pass ran.
     bool botBossAnnounceReady_ = false;

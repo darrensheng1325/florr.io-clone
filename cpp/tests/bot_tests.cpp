@@ -23,6 +23,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "server/bot_ai.h"
@@ -441,27 +442,62 @@ TEST(a_bot_fights_what_is_put_in_front_of_it) {
     // because a bot may legitimately be doing something else at that instant
     // -- running from something, standing on a drop -- and the claim is about
     // the controller, not about any single tick of any single bot.
-    const std::unordered_map<Entity, double> before = mobHealths(world);
-    for (int i = 0; i < 5; ++i) {
-        const Vec2 at = world.get<Transform>(bots[static_cast<std::size_t>(i)]).position;
-        adminSpawn(client, "beetle", "rare", at + Vec2{90, 0}, 1);
+    //
+    // LEGENDARY, not rare. A rare beetle dropped on a bot is dead on the tick
+    // it lands -- which is the claim, emphatically, but it leaves nothing to
+    // measure: the mob is killed and reaped inside the same tick the console
+    // created it, so no observer between ticks ever sees it at all. A
+    // legendary one takes a few seconds to chew through, and its health
+    // dropping is the same statement made where it can be read.
+    //
+    // They are also picked out by WHAT and WHERE rather than by being new to
+    // the world, because the world stocks itself now: mobs appear beside a bot
+    // on their own the whole time this runs, and "everything that was not here
+    // a moment ago" would be measuring the spawner.
+    const std::uint16_t beetle = content().mobIndex("beetle");
+    std::unordered_set<Entity> known;
+    {
+        Query<MobTag, MobType> mobs{world};
+        mobs.each([&](Entity e, MobTag&, MobType& type) {
+            if (type.configIndex == beetle) known.insert(e);
+        });
+    }
+
+    std::vector<Entity> staged;
+    std::unordered_map<Entity, double> stagedHealth;
+    // Five staged, not five attempted: a bot may have died since the list was
+    // taken, and a console line now and then does not land. Walking the roster
+    // until five beetles are actually standing beside a bot is what stops the
+    // measurement below quietly shrinking to two or three mobs.
+    for (const Entity bot : bots) {
+        if (staged.size() >= 5) break;
+        if (!world.isAlive(bot) || world.has<Dead>(bot)) continue;
+        const Vec2 at = world.get<Transform>(bot).position;
+        const Vec2 spot = at + Vec2{90, 0};
+        adminSpawn(client, "beetle", "legendary", spot, 1);
         // A third of a second between lines. The console is rate limited like
-        // any other chat (session.h: chatAllowance), and five commands on
+        // any other chat (session.h: commandAllowance), and five commands on
         // consecutive ticks is four commands the server never reads.
-        h.step(10, {&client});
+        for (int step = 0; step < 10; ++step) {
+            h.step(1, {&client});
+            Query<MobTag, MobType, Transform, Health> mobs{world};
+            mobs.each([&](Entity e, MobTag&, MobType& type, Transform& where, Health& health) {
+                if (type.configIndex != beetle || type.rarity != Rarity::Legendary) return;
+                if (where.realm != Realm::Overworld) return;
+                if (distance(where.position, spot) > 250.0) return;
+                if (!known.insert(e).second) return;
+                staged.push_back(e);
+                stagedHealth[e] = health.current;
+            });
+        }
     }
     h.step(3, {&client});
 
-    // Which mobs are new.
-    std::vector<Entity> staged;
-    for (const auto& entry : mobHealths(world)) {
-        if (before.count(entry.first) == 0) staged.push_back(entry.first);
-    }
-    CHECK(!staged.empty());
+    // Loudly, rather than measuring whatever happened to be lying around: a
+    // staging step that quietly places nothing turns the assertion below into
+    // a statement about an empty list.
+    CHECK(staged.size() >= 4);
     if (staged.empty()) return;
-
-    std::unordered_map<Entity, double> stagedHealth;
-    for (const Entity mob : staged) stagedHealth[mob] = world.get<Health>(mob).current;
 
     // Four seconds: long enough for the reaction delay, for the bot to close
     // the last few units and for a petal to come round.

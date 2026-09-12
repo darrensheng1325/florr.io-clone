@@ -509,19 +509,17 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // both the LOD list and broadphase after player movement instead of asking
     // AI to make this tick's decision from last tick's coordinates.
     //
-    // Two lists, because the reference draws the line in two different places.
-    // The mob LOD counts EVERY flower as an observer, bots included -- a bot
-    // fighting a mob is something worth simulating properly. The spawner
-    // counts only real connections: a bot in this list would make every band
-    // it worked visible, stocking that band to its full area-derived target,
-    // so two dozen of them would keep the whole map's population standing
-    // whether or not anyone was playing, and would go on feeding the
-    // unseen-despawn census so none of it ever recycled.
+    // Two lists, because two questions are being asked. EVERY flower is an
+    // observer for the mob LOD and for the spawner's wake-up pass, bots
+    // included: a bot fighting a mob is something worth simulating properly,
+    // and a bot standing in a band is something that band has to be awake for.
+    // A bot in that list can no longer inflate anything -- a band holds the
+    // population its own area buys whether anyone is there or not, and being
+    // looked at only decides how much of it is currently an entity.
     //
-    // That is also why the bot controller chooses its hunting grounds around
-    // the PEOPLE who are online (server/bot_ai.cpp, botPickHuntingGround):
-    // ground nobody can see grows nothing, so a bot sent to farm it stands in
-    // an empty field until its timer runs out.
+    // The HUMAN list is what the arena and the maze are filled for: those are
+    // generated realms with no bands, ModeSpawner stocks each one whole while
+    // somebody is in it, and a bot has no business keeping one populated.
     activePlayers_.clear();
     Query<PlayerTag, Transform> players{world_};
     players.each([&](Entity, PlayerTag&, Transform& transform) {
@@ -558,8 +556,8 @@ void GameServer::runSystems(double nowMillis, double dt) {
         grid_.insert(e, transform.realm, transform.position, body.radius);
     });
     combat_->runWorldPhase(world_, grid_, content(), nowMillis, dt);
-    spawning_->run(world_, *terrain_, content(), humanPlayers_, rng_, nowMillis, net::kTickSeconds,
-                   commands_);
+    spawning_->run(world_, *terrain_, content(), activePlayers_, rng_, nowMillis,
+                   net::kTickSeconds, commands_);
     // The arena and the maze are filled whole rather than by viewport, and only
     // while someone is in them.
     modes_->run(world_, *terrain_, content(), *spawning_, grid_, humanPlayers_, rng_, nowMillis);
@@ -583,6 +581,14 @@ void GameServer::runSystems(double nowMillis, double dt) {
 
 void GameServer::announceBossSpawns() {
     for (const SpawnSystem::BossSpawn& boss : spawning_->bossSpawns) {
+        // The bots hear about it too, from the same event and in the same
+        // breath. Every path that can put a boss in the world queues one of
+        // these -- a band stocking itself in a corner nobody has visited, a
+        // nest's escort, the arena, an operator's console -- so there is one
+        // place a boss becomes news and no way to add a spawn path that
+        // produces one the server says nothing about.
+        noteBossSighting(boss.entity, clockMillis_);
+
         // Underscores read as spaces in the reference's wording, so
         // `soldier_ant` announces itself as "soldier ant".
         std::string name = content().mob(boss.mobIndex).id;

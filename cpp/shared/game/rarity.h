@@ -77,6 +77,18 @@ inline constexpr Rarity clampRarity(int index) {
     return static_cast<Rarity>(clamp(index, 0, kRarityCount - 1));
 }
 
+/// The tier at which a mob stops being scenery and becomes an EVENT.
+///
+/// One line, shared by everything that has an opinion about bosses: the
+/// spawner announces at it and places such a mob as a live entity wherever it
+/// rolled, the mob AI keeps it thinking at full rate however far from anybody
+/// it stands, and the bot controller rallies a raid on it. ULTRA IS BELOW IT
+/// on purpose -- an ultra is a hard mob you find, a super is a thing the whole
+/// server is told about.
+inline constexpr bool isBossRarity(Rarity r) {
+    return rarityIndex(r) >= rarityIndex(Rarity::Super);
+}
+
 // ---------------------------------------------------------------------------
 // Stat scaling
 // ---------------------------------------------------------------------------

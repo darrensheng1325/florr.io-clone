@@ -6,14 +6,28 @@
 namespace flix {
 namespace {
 
-/// Mobs the recycler is not allowed to touch.
+/// Mobs that are never put to sleep and never recycled: they stay live
+/// entities wherever they stand, however long nobody looks at them.
 ///
-/// A boss tier is placed deliberately and is meant to be found and fought, and
-/// a target dummy is furniture someone walked away from. Both persist until
-/// something kills them, however long nobody looks at them.
-bool neverDespawns(const ContentRegistry& content, const MobType& type) {
-    if (rarityIndex(type.rarity) >= rarityIndex(Rarity::Ultra)) return true;
-    return content.mob(type.configIndex).neverAmbient;
+/// A BOSS is an event -- the whole server was told it appeared and the bots
+/// were sent at it, so it has to be there when somebody arrives, doing what it
+/// was doing. A target dummy is furniture someone walked away from, and the
+/// DPS row has to be standing when they come back to it.
+///
+/// Nothing else qualifies, ULTRAS INCLUDED. An ultra out of everyone's sight
+/// goes back to being a record like any other mob, which is not the same as
+/// being destroyed: it is still on the map, at the same spot, and it comes
+/// back to life when somebody returns. It costs nothing while nobody is there,
+/// which is the whole point -- a difficulty-100 band is nearly all ultras, and
+/// keeping that band's population simulated forever is exactly the bill this
+/// system exists not to pay.
+bool alwaysAwake(const ContentRegistry& content, std::uint16_t mobIndex, Rarity rarity) {
+    if (isBossRarity(rarity)) return true;
+    return mobIndex < content.mobCount() && content.mob(mobIndex).neverAmbient;
+}
+
+bool alwaysAwake(const ContentRegistry& content, const MobType& type) {
+    return alwaysAwake(content, type.configIndex, type.rarity);
 }
 
 /// How much smaller a permanent fixture is than the wild mob of its tier.
@@ -116,20 +130,22 @@ bool nearAnyPlayer(const std::vector<SpawnSystem::Viewer>& viewers, Realm realm,
     return false;
 }
 
-/// True when a band's box overlaps any player's buffered viewport. What decides
-/// whether a band is worth stocking at all: only the handful somebody can see
-/// are simulated.
+/// True when a band's box overlaps any player's buffered viewport, grown by
+/// `margin`.
+///
+/// The cheap half of waking the world: a band nobody is anywhere near is one
+/// rectangle test per viewer, and its records are never walked at all.
 bool zoneInView(const Rect& bounds, Realm realm,
-                const std::vector<SpawnSystem::Viewer>& viewers) {
+                const std::vector<SpawnSystem::Viewer>& viewers, double margin) {
     for (const SpawnSystem::Viewer& viewer : viewers) {
         // Same map first: two maps' coordinates overlap numerically, so a
-        // viewport test alone would stock a second map because somebody was
+        // viewport test alone would wake a second map because somebody was
         // standing at the same numbers in the first.
         if (viewer.realm != realm) continue;
-        if (bounds.left() < viewer.position.x + viewer.half.x &&
-            bounds.right() > viewer.position.x - viewer.half.x &&
-            bounds.top() < viewer.position.y + viewer.half.y &&
-            bounds.bottom() > viewer.position.y - viewer.half.y) {
+        if (bounds.left() < viewer.position.x + viewer.half.x + margin &&
+            bounds.right() > viewer.position.x - viewer.half.x - margin &&
+            bounds.top() < viewer.position.y + viewer.half.y + margin &&
+            bounds.bottom() > viewer.position.y - viewer.half.y - margin) {
             return true;
         }
     }
@@ -148,6 +164,12 @@ Vec2 samplePointInRect(const Rect& bounds, Vec2 extent, Rng& rng) {
             clamp(bounds.y + rng.unit() * bounds.h, 0.0, extent.y)};
 }
 
+/// A uniform point within `radius` of `around`, in the same rectangle.
+Vec2 samplePointNear(Vec2 around, double radius, Vec2 extent, Rng& rng) {
+    const Vec2 at = around + rng.insideCircle(radius);
+    return {clamp(at.x, 0.0, extent.x), clamp(at.y, 0.0, extent.y)};
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -163,6 +185,7 @@ void SpawnSystem::bind(World& world) {
     // same system over a second world.
     ambient_.emplace(world);
     ambient_->without<Dead>();
+    casualties_.emplace(world);
     escorts_.emplace(world);
     escorts_->without<Dead>();
     spawners_.emplace(world);
@@ -281,12 +304,17 @@ double SpawnSystem::difficultyAt(Realm realm, Vec2 at) const {
 Entity SpawnSystem::spawnMob(World& world, const Terrain& terrain, const ContentRegistry& content,
                              std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                              double nowMillis, Rng& rng) {
-    return spawnMobAt(world, terrain, content, mobIndex, rarity, position, realm, nowMillis, rng, 0);
+    // No band owns a mob somebody else asked for -- the arena, the maze, a
+    // script, an operator's console -- so it is counted against no band's
+    // target and is recycled the old way rather than going back to a record
+    // there is no band to hold.
+    return spawnMobAt(world, terrain, content, mobIndex, rarity, position, realm, nowMillis, rng, 0,
+                      kInvalidIndex);
 }
 
 Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
                                std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
-                               double nowMillis, Rng& rng, int depth) {
+                               double nowMillis, Rng& rng, int depth, std::uint16_t zone) {
     if (mobIndex >= content.mobCount()) return NULL_ENTITY;
 
     const MobConfig& config = content.mob(mobIndex);
@@ -355,7 +383,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     ai.nextDecisionMillis = nowMillis;
     world.add<MobAi>(e, std::move(ai));
 
-    world.add<AmbientMob>(e, AmbientMob{nowMillis});
+    world.add<AmbientMob>(e, AmbientMob{nowMillis, zone});
     world.add<Replicated>(e, Replicated{net::EntityKind::Mob, 0, mobIndex, rarity, 0});
     if (netIds != nullptr) world.add<NetId>(e, NetId{netIds->next()});
 
@@ -409,6 +437,15 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
         }
     }
 
+    // EVERY path that puts a mob in the world comes through here, so this is
+    // the one place a boss can be announced from and there is no way to add a
+    // spawn path that quietly produces one in silence.
+    //
+    // Roots only. A nest's escorts and a centipede's segments carry their
+    // parent's tier, and announcing those would put a line in chat for every
+    // bead of a super centipede rather than one for the animal.
+    if (depth == 0) announceIfNotable(content, e, mobIndex, rarity, at, realm);
+
     return e;
 }
 
@@ -434,8 +471,11 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
     for (int i = 1; i <= config.segmentCount; ++i) {
         if (census_.mobs >= mobCap) break;
         at = at + step;
+        // Segments belong to the animal, not to the band: the head is the one
+        // thing the band counted, and the chain is rebuilt from scratch every
+        // time that head comes back to life.
         const Entity segment = spawnMobAt(world, terrain, content, config.segmentBodyIndex, rarity,
-                                          at, realm, nowMillis, rng, depth);
+                                          at, realm, nowMillis, rng, depth, kInvalidIndex);
         if (segment == NULL_ENTITY) break;
 
         BodySegment link;
@@ -460,8 +500,8 @@ Entity SpawnSystem::spawnEscort(World& world, const Terrain& terrain, const Cont
                                 std::uint16_t childIndex, Rarity nestRarity, Vec2 at, Realm realm,
                                 Entity parent, double nowMillis, Rng& rng, int depth) {
     if (census_.mobs >= mobCap) return NULL_ENTITY;
-    const Entity child =
-        spawnMobAt(world, terrain, content, childIndex, nestRarity, at, realm, nowMillis, rng, depth);
+    const Entity child = spawnMobAt(world, terrain, content, childIndex, nestRarity, at, realm,
+                                    nowMillis, rng, depth, kInvalidIndex);
     if (child == NULL_ENTITY || parent == NULL_ENTITY) return child;
 
     // The leash, on all three paths that put a child into the world. Dragged
@@ -492,15 +532,28 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
     runNests(world, terrain, content, rng, nowMillis);
 
     // The census is O(mobs x players) and nothing about a population of a few
-    // hundred changes meaningfully inside half a second.
+    // hundred changes meaningfully inside half a second. Waking rides with it:
+    // the two are the same question asked in the two directions, they need the
+    // same viewer list, and kLatentWakeMargin is what pays for the cadence.
+    // EVERY tick, unlike everything else here, because a corpse does not wait:
+    // combat marks a mob dead earlier in this very tick and the runtime reaps
+    // it at the end of it, so a band that only looked twice a second would
+    // miss nineteen kills in twenty and hand their slots to the band-wide
+    // top-up instead -- which is to say, to somewhere else entirely.
+    bankCasualties(world, terrain, content, viewers_, rng, nowMillis);
+
     if (nowMillis >= nextPopulationMillis_) {
         nextPopulationMillis_ = nowMillis + kPopulationIntervalMillis;
         takeCensus(content, viewers_, nowMillis, commands);
+        promoteLatent(world, terrain, content, viewers_, rng, nowMillis);
     }
 
-    // The one ambient spawn path. Its own clock, and it reads the last census
-    // rather than taking one of its own, so it is not tied to that cadence.
-    runSpawnZones(world, terrain, content, viewers_, rng, nowMillis);
+    // The one ambient spawn path, and it runs whether or not anybody is
+    // anywhere near: the map is full at all times, and that is the whole
+    // difference between this and a spawner that follows the players around.
+    // Its own clock, and it reads the last census rather than taking one of
+    // its own, so it is not tied to that cadence.
+    stockSpawnZones(world, terrain, content, viewers_, rng, nowMillis);
 
     // And that is all of it. There is no second pass behind the bands covering
     // the ground the author left unbanded -- a square no band covers grows
@@ -510,7 +563,7 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
     // realms with no object layer to draw a band on, and ModeSpawner
     // (mode_spawning.h) fills each one whole, every tick, through spawnMob().
     // Their mobs are kept alive by the realm-occupied branch of takeCensus
-    // rather than by any band.
+    // rather than by any band, and none of them is ever latent.
 }
 
 void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& players) {
@@ -588,6 +641,11 @@ void SpawnSystem::takeCensus(const ContentRegistry& content, const std::vector<V
     doomed_.clear();
 
     mobPlacements_.clear();
+    // Recounted from the world rather than tracked through every death: a mob
+    // dies in combat, is reaped by the runtime and is never reported here, so
+    // a running total would drift downward forever and its band would stop
+    // replacing anything.
+    for (SpawnZone& zone : zones_) zone.liveMobs = 0;
 
     // Nobody connected means nobody has failed to see anything. The reference's
     // near-a-player test answers true when its box list is empty, and that
@@ -629,7 +687,21 @@ void SpawnSystem::takeCensus(const ContentRegistry& content, const std::vector<V
         if (nearAnyone) {
             ambient.lastNearPlayerMillis = nowMillis;
         } else if (nowMillis - ambient.lastNearPlayerMillis >= kMobDespawnDelayMillis &&
-                   !neverDespawns(content, type)) {
+                   !alwaysAwake(content, type)) {
+            // Nobody has been near it for the grace period, so it stops being
+            // an entity. Whether that is the END of it depends on whether a
+            // band is holding a slot for it: one the band placed goes back
+            // into that band's records AT THE POSITION IT WANDERED TO, so the
+            // map stays exactly as full as it was and the mob is still there
+            // to be found. A nest's escort, a centipede's segment, an arena
+            // mob or something an operator conjured has no band, and is simply
+            // destroyed as it always was.
+            if (ambient.zone < zones_.size()) {
+                SpawnZone& zone = zones_[ambient.zone];
+                zone.latent.push_back(
+                    LatentMob{transform.position, nowMillis, type.configIndex, type.rarity});
+                ++census_.demotedTotal;
+            }
             // Left out of the counts on purpose: it is on its way out, and
             // counting it would suppress the replacement spawn for one pass.
             doomed_.push_back(e);
@@ -637,20 +709,46 @@ void SpawnSystem::takeCensus(const ContentRegistry& content, const std::vector<V
         }
 
         ++census_.mobs;
-        // The placement record the band fill spaces its next spawns against.
+        if (ambient.zone < zones_.size()) ++zones_[ambient.zone].liveMobs;
+        // The placement record the stocking pass spaces its next spawns
+        // against.
         mobPlacements_.push_back(MobPlacement{transform.position, body.radius, transform.realm});
     });
 
     for (const Entity e : doomed_) commands.destroy(e);
     census_.despawnedTotal += static_cast<int>(doomed_.size());
+
+    census_.latent = latentCount();
 }
 
-bool SpawnSystem::crowdedAt(Realm realm, Vec2 position, double halfSize,
-                            double extraGap) const {
+bool SpawnSystem::crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap,
+                            const SpawnZone& zone) const {
     for (const MobPlacement& mob : mobPlacements_) {
         if (mob.realm != realm) continue;
         const double reach = halfSize + mob.radius + extraGap;
         if (distanceSq(mob.position, position) < reach * reach) return true;
+    }
+    // The band's own records. They carry no radius -- a record is a type and a
+    // point, and the body it will grow is rolled when it wakes -- so they are
+    // spaced by the same nominal gap two spawn ATTEMPTS are, which is what
+    // keeps a stocked band from settling into clumps.
+    const double reach = halfSize + kPreliminarySpawnRadius + extraGap;
+    const double reachSq = reach * reach;
+    for (const LatentMob& record : zone.latent) {
+        if (distanceSq(record.position, position) < reachSq) return true;
+    }
+    return false;
+}
+
+bool SpawnSystem::seenBy(const std::vector<Viewer>& viewers, Realm realm, Vec2 position,
+                         double margin) const {
+    for (const Viewer& viewer : viewers) {
+        if (viewer.realm != realm) continue;
+        const Vec2 offset = position - viewer.position;
+        if (std::abs(offset.x) <= viewer.half.x + margin &&
+            std::abs(offset.y) <= viewer.half.y + margin) {
+            return true;
+        }
     }
     return false;
 }
@@ -926,108 +1024,62 @@ std::uint16_t SpawnSystem::chooseZoneMobType(const ContentRegistry& content,
     return rollResolvedRows(content, zone.resolved, rarity, rng);
 }
 
-int SpawnSystem::countMobsInZone(const SpawnZone& zone) const {
-    int count = 0;
-    for (const MobPlacement& mob : mobPlacements_) {
-        if (mob.realm != zone.realm) continue;
-        if (zoneContains(zone.bounds, zone.polygon, mob.position)) ++count;
-    }
-    return count;
-}
+// ---------------------------------------------------------------------------
+// Stocking the map
+// ---------------------------------------------------------------------------
 
-void SpawnSystem::runSpawnZones(World& world, const Terrain& terrain,
-                                const ContentRegistry& content,
-                                const std::vector<Viewer>& viewers, Rng& rng, double nowMillis) {
+void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
+                                  const ContentRegistry& content,
+                                  const std::vector<Viewer>& viewers, Rng& rng,
+                                  double nowMillis) {
     // No band anywhere means no ambient mob anywhere. There is no second pass
     // behind this one that would cover the ground the author left unbanded.
     if (zones_.empty()) return;
     if (nowMillis < nextZoneMillis_) return;
     nextZoneMillis_ = nowMillis + kZoneIntervalMillis;
 
-    // Nobody online: every band forgets where it was, so the next arrival gets
-    // a full one rather than walking into one mid-trickle.
-    if (viewers.empty()) {
-        for (SpawnZone& zone : zones_) {
-            zone.initialized = false;
-            zone.pendingFill = 0;
-        }
-        return;
-    }
-
-    for (SpawnZone& zone : zones_) {
-        if (!zoneInView(zone.bounds, zone.realm, viewers)) {
-            zone.initialized = false;
-            zone.pendingFill = 0;
-            continue;
-        }
-
-        if (!zone.initialized) {
-            zone.pendingFill = std::max(0, zone.targetMobs - countMobsInZone(zone));
-            zone.initialized = true;
-            zone.lastWaveMillis = nowMillis;
-            zone.lastTrickleMillis = nowMillis;
-        }
-
-        // A fill is drained a chunk at a time so a large band entering view is
-        // spread over several seconds instead of arriving as one packet. A
-        // pass that placed nothing drops the rest of the debt rather than
-        // spinning on a band the terrain has since walled over.
-        if (zone.pendingFill > 0) {
-            const int chunk = std::min(zone.pendingFill, kZoneSpawnsPerPass);
-            int spawned = 0;
-            for (int i = 0; i < chunk; ++i) {
-                if (spawnInZone(world, terrain, content, zone, viewers, rng, nowMillis) ==
-                    NULL_ENTITY) {
-                    break;
-                }
-                ++spawned;
-            }
-            zone.pendingFill = spawned == 0 ? 0 : std::max(0, zone.pendingFill - spawned);
-            continue;
-        }
-
-        if (nowMillis - zone.lastWaveMillis >= kZoneWaveIntervalMillis) {
-            const int deficit = std::max(0, zone.targetMobs - countMobsInZone(zone));
-            zone.pendingFill = std::min(deficit, kZoneSpawnsPerPass * 4);
-            zone.lastWaveMillis = nowMillis;
-            zone.lastTrickleMillis = nowMillis;
-            continue;
-        }
-
-        // Between waves, one or two at a time, and only while the band is below
-        // its target -- a player culling one sees it seep back rather than snap
-        // back.
-        if (nowMillis - zone.lastTrickleMillis >= kZoneTrickleIntervalMillis) {
-            zone.lastTrickleMillis = nowMillis;
-            const int current = countMobsInZone(zone);
-            if (current >= zone.targetMobs) continue;
-            const int rolled =
-                kZoneTrickleMin +
-                static_cast<int>(rng.below(kZoneTrickleMax - kZoneTrickleMin + 1));
-            const int count = std::min(rolled, zone.targetMobs - current);
-            for (int i = 0; i < count; ++i) {
-                if (spawnInZone(world, terrain, content, zone, viewers, rng, nowMillis) ==
-                    NULL_ENTITY) {
-                    break;
-                }
+    for (std::size_t index = 0; index < zones_.size(); ++index) {
+        SpawnZone& zone = zones_[index];
+        // The band's whole population, awake and asleep. Nothing about a
+        // viewport appears in this test: a band on the far side of the map is
+        // stocked to exactly the same number as the one under the player's
+        // feet, which is the change this whole file is built around.
+        //
+        // A full band costs one subtraction per pass, which is what makes it
+        // affordable to ask the question of every band on every map every
+        // second.
+        int owed = zone.targetMobs - static_cast<int>(zone.latent.size()) - zone.liveMobs;
+        if (owed <= 0) continue;
+        owed = std::min(owed, kZoneStockPerPass);
+        for (int n = 0; n < owed; ++n) {
+            if (!stockZone(world, terrain, content, zone, static_cast<std::uint16_t>(index),
+                           viewers, rng, nowMillis)) {
+                // The outline had nowhere to put this one, so it has nowhere
+                // to put the next either: drop the rest of the debt rather
+                // than spinning on a band the terrain has since walled over.
+                break;
             }
         }
     }
 }
 
-Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
-                                const ContentRegistry& content, const SpawnZone& zone,
-                                const std::vector<Viewer>& viewers, Rng& rng, double nowMillis) {
-    if (census_.mobs >= mobCap) return NULL_ENTITY;
-
-    // Everything about this fill happens in the band's OWN realm: the map it
-    // is drawn on has its own size, its own walls and its own population, and
-    // the same numbers on the overworld describe somewhere else entirely.
+bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
+                            SpawnZone& zone, std::uint16_t zoneIndex,
+                            const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
+                            Vec2 anchor, double scatter) {
+    // Everything about this happens in the band's OWN realm: the map it is
+    // drawn on has its own size, its own walls and its own population, and the
+    // same numbers on the overworld describe somewhere else entirely.
     const Vec2 extent = terrain.realmExtent(zone.realm);
     Vec2 at;
     bool placed = false;
     for (int attempt = 0; attempt < kZonePlacementAttempts; ++attempt) {
-        const Vec2 candidate = samplePointInRect(zone.bounds, extent, rng);
+        // Near where the last one was lost, or anywhere in the outline. See
+        // kRespawnScatter: the difference between the two is the difference
+        // between a band that is evenly full and one that is full on paper.
+        const Vec2 candidate = scatter > 0.0
+                                   ? samplePointNear(anchor, scatter, extent, rng)
+                                   : samplePointInRect(zone.bounds, extent, rng);
         // Rejection sampling over the bounding box keeps the distribution
         // uniform over the outline. A candidate in a corner the polygon does
         // not cover is thrown away like any other unusable one, so a zone that
@@ -1037,23 +1089,25 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
         if (inBorderBand(candidate, extent)) continue;
         if (terrain.blocked(candidate, zone.realm)) continue;
         if (nearAnyPlayer(viewers, zone.realm, candidate, kMinSpawnDistance)) continue;
-        if (crowdedAt(zone.realm, candidate, kPreliminarySpawnRadius, kMinMobSpawnSpacing)) continue;
+        if (crowdedAt(zone.realm, candidate, kPreliminarySpawnRadius, kMinMobSpawnSpacing, zone)) {
+            continue;
+        }
         at = candidate;
         placed = true;
         break;
     }
-    if (!placed) return NULL_ENTITY;
+    if (!placed) return false;
 
     // A band belongs to nobody's viewport, so anything charged to luck is
     // charged to whoever is standing nearest its centre -- the reference's own
     // attribution rule for a zone fill. The bounding box's centre, which for a
     // concave band is not inside it; it is an attribution tiebreak, not a
-    // placement, so that costs nothing.
+    // placement, so that costs nothing. With nobody near the band at all --
+    // which is now the usual case, because a band stocks itself whether or not
+    // anyone is there -- this is neutral luck, and neutral luck is exactly
+    // what the difficulty anchors are stated at.
     const Vec2 centre{zone.bounds.x + zone.bounds.w * 0.5, zone.bounds.y + zone.bounds.h * 0.5};
     const double luck = nearestViewerLuck(viewers, zone.realm, centre);
-    // The section is the overworld's grid; permanentFixtureExists only reads
-    // it for an overworld band and judges any other map as a whole.
-    const int section = sectionAt(at);
 
     // The band's own DIFFICULTY, run through the one curve: this is where the
     // map's rarity progression comes from, and where every boss in the world
@@ -1062,18 +1116,44 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
     // one.
     Rarity rarity = rollSpawnRarity(zone.difficulty, luck, rng);
     std::uint16_t type = chooseZoneMobType(content, zone, at, rarity, rng);
-    if (type == kInvalidIndex) return NULL_ENTITY;
+    if (type == kInvalidIndex) return false;
     // A band naming a mob outright can name one below its own tier; the mob's
-    // floor wins, exactly as it does on every other spawn path.
+    // floor wins, exactly as it does on every other spawn path. Read the tier
+    // AFTER the floor, because that is the tier that decides whether this is a
+    // record or an event.
     rarity = clampRarity(std::max(rarityIndex(rarity), rarityIndex(content.mob(type).minRarity)));
 
-    if (content.mob(type).neverAmbient &&
-        permanentFixtureExists(world, type, rarity, zone.realm, section)) {
-        return NULL_ENTITY;
+    if (!alwaysAwake(content, type, rarity)) {
+        // The ordinary case, and the whole reason the map can be full: a
+        // position, a type and a tier. No entity, no components, no wire id.
+        //
+        // WHEN it may wake is the one subtlety. A record placed where nobody
+        // was looking is ready at once, so an unvisited band is full the
+        // moment somebody walks into it. A record placed inside a live
+        // viewport is a REPLACEMENT for something that just died there, and it
+        // waits: without the wait, clearing the mobs around you would refill
+        // them in front of you within half a second.
+        const double delay = seenBy(viewers, zone.realm, at, 0.0)
+                                 ? rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis)
+                                 : 0.0;
+        zone.latent.push_back(LatentMob{at, nowMillis + delay, type, rarity});
+        return true;
     }
 
-    const Entity spawned = spawnMob(world, terrain, content, type, rarity, at, zone.realm, nowMillis, rng);
-    if (spawned == NULL_ENTITY) return NULL_ENTITY;
+    // A boss, or a permanent fixture. Neither is ever a record: a boss is an
+    // event the whole server is told about the moment it happens and has to be
+    // standing where it was announced, and a dummy is the DPS row.
+    const int section = sectionAt(at);
+    if (content.mob(type).neverAmbient &&
+        permanentFixtureExists(world, type, rarity, zone.realm, section)) {
+        return false;
+    }
+    if (census_.mobs >= mobCap) return false;
+
+    const Entity spawned = spawnMobAt(world, terrain, content, type, rarity, at, zone.realm,
+                                      nowMillis, rng, 0, zoneIndex);
+    if (spawned == NULL_ENTITY) return false;
+    ++zone.liveMobs;
     // Counted straight away, so the rest of this pass spaces itself against
     // what it has just placed rather than against the last census alone --
     // in the band's realm, or crowdedAt() would never see it.
@@ -1082,17 +1162,123 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
         mobPlacements_.push_back(MobPlacement{transform->position,
                                               body != nullptr ? body->radius : 0.0,
                                               transform->realm});
-        announceIfNotable(content, type, rarity, transform->position, transform->realm);
     }
-    return spawned;
+    return true;
+}
+
+void SpawnSystem::bankCasualties(World& world, const Terrain& terrain,
+                                 const ContentRegistry& content,
+                                 const std::vector<Viewer>& viewers, Rng& rng, double nowMillis) {
+    if (zones_.empty()) return;
+
+    casualtyList_.clear();
+    casualties_->each([&](Entity, MobTag&, Transform& transform, AmbientMob& ambient, Dead&) {
+        if (ambient.zone >= zones_.size()) return;
+        casualtyList_.push_back(Casualty{transform.position, ambient.zone});
+        // Claimed, once and for all. A corpse lies around for a while before
+        // the reaper takes it, and a band that banked it on every pass in
+        // between would breed a mob per pass out of one kill.
+        ambient.zone = kInvalidIndex;
+    });
+
+    // Collected first, spent afterwards: stocking a boss creates an entity,
+    // and a create() relocates the very rows the walk above is holding.
+    //
+    // A slot this cannot place -- it died in a pocket of wall, or against a
+    // crowd -- is simply not placed. The band is then one short of its target,
+    // which is exactly what the top-up pass exists to notice, so the mob comes
+    // back somewhere else in the band rather than being lost.
+    for (const Casualty& casualty : casualtyList_) {
+        SpawnZone& zone = zones_[casualty.zone];
+        stockZone(world, terrain, content, zone, casualty.zone, viewers, rng, nowMillis,
+                  casualty.position, kRespawnScatter);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Waking it up
+// ---------------------------------------------------------------------------
+
+void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
+                                const ContentRegistry& content,
+                                const std::vector<Viewer>& viewers, Rng& rng, double nowMillis) {
+    // Nobody is looking at anything, so nothing has to be awake. This is also
+    // what keeps an unattended server from paying for the population it holds:
+    // the whole map is stocked and not one of it is simulated.
+    if (viewers.empty()) return;
+
+    for (std::size_t index = 0; index < zones_.size(); ++index) {
+        SpawnZone& zone = zones_[index];
+        if (zone.latent.empty()) continue;
+        // The cheap rejection, and the reason this is affordable at all: one
+        // rectangle test per viewer says whether the band's records are worth
+        // walking, and on a map with two dozen bands almost none of them are.
+        if (!zoneInView(zone.bounds, zone.realm, viewers, kLatentWakeMargin)) continue;
+
+        int budget = kZoneWakePerPass;
+        for (std::size_t i = 0; i < zone.latent.size() && budget > 0;) {
+            const LatentMob& record = zone.latent[i];
+            if (nowMillis < record.readyMillis ||
+                !seenBy(viewers, zone.realm, record.position, kLatentWakeMargin)) {
+                ++i;
+                continue;
+            }
+            if (census_.mobs >= mobCap) return;
+
+            const Entity spawned =
+                spawnMobAt(world, terrain, content, record.mobIndex, record.rarity,
+                           record.position, zone.realm, nowMillis, rng, 0,
+                           static_cast<std::uint16_t>(index));
+            // Gone from the records either way. A record whose type the
+            // content no longer defines cannot be woken and must not be
+            // retried every pass forever; dropping it lets the band stock a
+            // replacement it can actually place.
+            zone.latent[i] = zone.latent.back();
+            zone.latent.pop_back();
+            if (spawned == NULL_ENTITY) continue;
+            // census_.mobs is spawnMobAt's to raise -- it is the cap every
+            // spawn path shares, and counting it twice here would halve the
+            // ceiling for everything else in the same pass.
+            ++zone.liveMobs;
+            ++census_.promotedTotal;
+            --budget;
+            if (const Transform* transform = world.tryGet<Transform>(spawned)) {
+                const Body* body = world.tryGet<Body>(spawned);
+                mobPlacements_.push_back(MobPlacement{transform->position,
+                                                      body != nullptr ? body->radius : 0.0,
+                                                      transform->realm});
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reading the latent population back
+// ---------------------------------------------------------------------------
+
+int SpawnSystem::latentCount() const {
+    std::size_t total = 0;
+    for (const SpawnZone& zone : zones_) total += zone.latent.size();
+    return static_cast<int>(total);
+}
+
+void SpawnSystem::latentSites(Realm realm, std::vector<LatentSite>& out) const {
+    for (const SpawnZone& zone : zones_) {
+        if (zone.realm != realm) continue;
+        for (const LatentMob& record : zone.latent) {
+            out.push_back(
+                LatentSite{record.position, record.mobIndex, record.rarity, zone.difficulty});
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Announcements
 // ---------------------------------------------------------------------------
 
-void SpawnSystem::announceIfNotable(const ContentRegistry& content, std::uint16_t mobIndex,
-                                    Rarity rarity, Vec2 position, Realm realm) {
+void SpawnSystem::announceIfNotable(const ContentRegistry& content, Entity entity,
+                                    std::uint16_t mobIndex, Rarity rarity, Vec2 position,
+                                    Realm realm) {
     if (rarityIndex(rarity) < rarityIndex(kAnnouncedRarity)) return;
     // A permanent fixture is not an event. The DPS row is built out of bands
     // that name the target dummy outright, up to unique, and announcing those
@@ -1101,7 +1287,7 @@ void SpawnSystem::announceIfNotable(const ContentRegistry& content, std::uint16_
     // Oldest first, so a server that never drains this keeps the announcements
     // somebody might still care about instead of the ones from an hour ago.
     if (bossSpawns.size() >= kMaxPendingBossSpawns) bossSpawns.erase(bossSpawns.begin());
-    bossSpawns.push_back(BossSpawn{mobIndex, rarity, position, realm});
+    bossSpawns.push_back(BossSpawn{entity, mobIndex, rarity, position, realm});
 }
 
 } // namespace flix

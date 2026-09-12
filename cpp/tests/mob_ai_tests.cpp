@@ -703,6 +703,27 @@ TEST(mobs_further_than_the_active_radius_think_one_tick_in_five) {
           kEnemyWanderRange);
 }
 
+TEST(a_boss_thinks_every_tick_however_far_from_everybody_it_stands) {
+    // The one exception to the level of detail, and the reason it is worth
+    // making: a boss is placed live wherever its band rolled it, announced to
+    // the whole server and raided. There are a handful in the world at once,
+    // and one of them stuttering at a fifth speed until somebody gets within
+    // five thousand units is a boss visibly asleep in front of the raid
+    // walking up to it.
+    CHECK(contentReady());
+    Sim sim;
+    const Vec2 away = kOrigin + Vec2{kMobActiveRadius + 500.0, 0};
+    sim.spawnMob("soldier_ant", away);                    // scenery, at the same spot
+    sim.spawnMob("soldier_ant", away + Vec2{200, 0}, Rarity::Super);
+    sim.spawnPlayer(kOrigin);
+
+    sim.tick(10);
+    CHECK_EQ(sim.totalConsidered, std::uint64_t(20));
+    // Ten skipped ticks from the ordinary mob (all but its two strided ones),
+    // and not one from the boss.
+    CHECK_EQ(sim.totalSkipped, std::uint64_t(10 - 10 / kMobFarStride));
+}
+
 TEST(an_empty_activity_field_is_permissive_not_a_freeze) {
     CHECK(contentReady());
     Sim sim;

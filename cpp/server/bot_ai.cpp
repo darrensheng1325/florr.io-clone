@@ -1113,6 +1113,25 @@ int GameServer::botStrafeDirection(Bot& bot, double nowMillis) {
 // Per-tick indexes
 // ---------------------------------------------------------------------------
 
+void GameServer::noteBossSighting(Entity boss, double nowMillis) {
+    if (boss == NULL_ENTITY || !world_.isAlive(boss)) return;
+    // The true spawn moment, from the system that did the spawning. The index
+    // sweep below stamps first SIGHT, which for a boss that appeared while the
+    // controller was between passes is a tick late and, for one that was
+    // already standing when the server came up, is meaningless -- and "most
+    // recently spawned" is exactly what a raid picker ranks on.
+    botBossFirstSeen_[boss] = nowMillis;
+
+    // Bounded, oldest dropped first: a callout is on a minute-long cooldown,
+    // so what matters is that the newest events survive to be shouted about.
+    constexpr std::size_t kMaxBossAlerts = 8;
+    if (std::find(botBossAlerts_.begin(), botBossAlerts_.end(), boss) != botBossAlerts_.end()) {
+        return;
+    }
+    if (botBossAlerts_.size() >= kMaxBossAlerts) botBossAlerts_.erase(botBossAlerts_.begin());
+    botBossAlerts_.push_back(boss);
+}
+
 void GameServer::rebuildBotBossIndex(double nowMillis) {
     botBosses_.clear();
     Query<MobTag, MobType, Transform> mobs{world_};
@@ -1414,9 +1433,28 @@ void GameServer::announceNewBosses(double nowMillis) {
             nowMillis + botRng_.range(kBotBossAnnounceMinMillis, kBotBossAnnounceMaxMillis);
         return;
     }
+    // What the spawner reported, before whatever the sweep found: a boss that
+    // appeared thirty seconds ago is worth shouting about, and one that has
+    // been standing in a corner since the map was stocked is not news. Dead
+    // ones are dropped here rather than left to age out.
+    while (!botBossAlerts_.empty()) {
+        const Entity front = botBossAlerts_.front();
+        if (world_.isAlive(front) && !world_.has<Dead>(front) &&
+            botAnnouncedBosses_.count(front) == 0) {
+            break;
+        }
+        botBossAlerts_.erase(botBossAlerts_.begin());
+    }
+
     if (nowMillis < botNextBossAnnounceMillis_) return;
 
-    for (const Entity boss : botBosses_) {
+    botCalloutQueue_.clear();
+    botCalloutQueue_.insert(botCalloutQueue_.end(), botBossAlerts_.begin(),
+                            botBossAlerts_.end());
+    botCalloutQueue_.insert(botCalloutQueue_.end(), botBosses_.begin(), botBosses_.end());
+
+    for (const Entity boss : botCalloutQueue_) {
+        if (!world_.isAlive(boss) || world_.has<Dead>(boss)) continue;
         if (botAnnouncedBosses_.count(boss) != 0) continue;
         const MobType* type = world_.tryGet<MobType>(boss);
         const Transform* transform = world_.tryGet<Transform>(boss);
@@ -1460,6 +1498,8 @@ void GameServer::announceNewBosses(double nowMillis) {
 
         broadcastChat(net::ChatChannel::Global, announcer->name, shout);
         botAnnouncedBosses_[boss] = true;
+        botBossAlerts_.erase(std::remove(botBossAlerts_.begin(), botBossAlerts_.end(), boss),
+                             botBossAlerts_.end());
         botNextBossAnnounceMillis_ =
             nowMillis + botRng_.range(kBotBossAnnounceMinMillis, kBotBossAnnounceMaxMillis);
         // Rally everyone: the chat handler's own trigger cannot fire for a

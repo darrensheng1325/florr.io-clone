@@ -1,25 +1,54 @@
 #pragma once
-// Keeping the world populated: what appears, where, and what is recycled.
+// Keeping the world populated: what exists, where, and what is simulated.
 //
 // THE AUTHOR DRAWS WHERE THE MOBS ARE. A map carries SPAWN BANDS -- shapes on
 // an object layer, each with a `difficulty` -- and a band owns a population of
-// its own, sized by the area of its outline and stocked while somebody can see
-// it. That is the only source of ambient mobs there is. Ground with no band
-// over it grows nothing, ever, so a map its author has drawn no band on has no
-// mobs at all: that is a fact about the data, not a fault in this file, and
-// the map's load line says so out loud when it happens.
+// its own, sized by the area of its outline. That is the only source of
+// ambient mobs there is. Ground with no band over it grows nothing, ever, so a
+// map its author has drawn no band on has no mobs at all: that is a fact about
+// the data, not a fault in this file, and the map's load line says so out loud
+// when it happens.
 //
-// Recycling is the other half, and it is still a moving neighbourhood: only
-// the bands somebody is looking at are stocked, and a mob nobody has been near
-// for the grace period is destroyed. The tick cost therefore follows the
-// number of players rather than the area of the world.
+// THE WHOLE MAP IS ALWAYS STOCKED. Every band holds its full population at all
+// times, whether or not anybody is looking at it, so walking into a corner
+// nobody has been to for an hour is walking into a full band rather than into
+// an empty one that starts filling as you arrive.
 //
-// One ceiling sits above all of it -- a global live-mob cap, so a crowd of
-// players spread over many bands cannot multiply the population without bound.
+// What makes that affordable is that a stocked mob is NOT AN ENTITY. A band's
+// population is held as LatentMob records -- a position, a type and a tier,
+// and nothing else -- and a record becomes a real entity only when somebody's
+// viewport reaches it (promoteLatent), and goes back to being a record when
+// nobody has been near it for the grace period (takeCensus). So the number of
+// mobs the tick SIMULATES follows the number of players, exactly as it did
+// when the far side of the map was simply empty, while the number of mobs the
+// world CONTAINS follows its area. A latent mob costs one small struct and one
+// distance test per population pass; it is in no query, no archetype, no
+// broadphase and no snapshot.
+//
+// Two rules keep that population EVEN rather than merely correct in total. A
+// mob nobody has been near goes back to being a record where it stands, not
+// where the band would next have sampled; and a mob that was KILLED has its
+// slot handed back within kRespawnScatter of where it died, after a short
+// wait. Without the second one a player farming one corner of a band strips it
+// while the far side of the same band quietly goes over density -- and the map
+// reports itself full the whole time, which is the hardest kind of wrong to
+// see.
+//
+// The exceptions are BOSSES -- super and above -- and the target dummies.
+// Both are placed live and stay live wherever they stand, however long nobody
+// looks at them. A boss is an EVENT: chat is told the moment one appears, the
+// bot controller is told with it, and it waits where it spawned until
+// something kills it.
+//
+// One ceiling sits above all of it -- a global cap on LIVE mobs, so a crowd of
+// players spread over many bands cannot multiply the simulated population
+// without bound. The latent population needs no such cap: it is the map's own
+// area times a density.
 //
 // The ARENA and the MAZE are not map ground: they are generated, they carry no
 // object layer and no band covers them, and ModeSpawner (mode_spawning.h)
-// populates each one whole. Nothing in this file spawns there.
+// populates each one whole, with live entities. Nothing in this file stocks
+// them, and nothing in them is ever latent.
 
 #include <array>
 #include <cstdint>
@@ -54,6 +83,16 @@ struct AmbientMob {
     /// spawn, so a mob placed into an empty world still gets the full grace period rather
     /// than being recycled on the very next pass.
     double lastNearPlayerMillis = 0;
+    /// The spawn band that owns this mob, or kInvalidIndex when nothing does.
+    ///
+    /// It is what makes a live mob and a latent record the same thing seen in
+    /// two states: the band counts both against its target, and a mob nobody
+    /// has been near goes back into THIS band's records rather than
+    /// disappearing. kInvalidIndex is everything a band did not place -- a
+    /// nest's escorts, a centipede's body, the arena and maze populations, a
+    /// mob an operator conjured -- and such a mob is recycled the old way,
+    /// destroyed outright, because no band is keeping a slot for it.
+    std::uint16_t zone = kInvalidIndex;
 };
 
 /// A nest working through the escalating `spawn_waves` list in its config.
@@ -82,12 +121,43 @@ struct NestWaves {
 };
 
 // ---------------------------------------------------------------------------
+// The latent population
+// ---------------------------------------------------------------------------
+
+/// A mob that EXISTS but is not simulated.
+///
+/// All but the handful of mobs somebody can actually see are one of these. It
+/// is the whole reason the map can be full everywhere: the far side of the
+/// world costs a few dozen bytes per mob and one distance test per population
+/// pass, instead of an entity in every query the tick runs.
+///
+/// It holds what a record has to remember to become the same mob later, and
+/// deliberately no more. The size jitter, the health, the wounds and the
+/// aggro are NOT among them: a promoted record arrives whole and freshly
+/// rolled, exactly as the mob it replaced used to when the recycler destroyed
+/// it and the band grew another. The realm and the band are not stored either
+/// -- a record lives inside the band that owns it, which knows both.
+struct LatentMob {
+    Vec2 position;
+    /// Earliest time this record may come to life.
+    ///
+    /// Zero for the vast majority: a record placed where nobody was looking is
+    /// ready the instant it exists, which is what makes an unvisited band full
+    /// the moment somebody walks into it. It is only the replacement for a mob
+    /// killed IN somebody's view that waits, and the wait is what stops a
+    /// cleared screen refilling in front of the player who cleared it.
+    double readyMillis = 0;
+    std::uint16_t mobIndex = kInvalidIndex;
+    Rarity rarity = Rarity::Common;
+};
+
+// ---------------------------------------------------------------------------
 // Tuning
 // ---------------------------------------------------------------------------
 
 /// The DEFAULT buffered viewport: half a 1920x1080 screen plus 500 units of
 /// buffer on each side. It is the box a mob has to be inside to count as seen,
-/// and it is what decides which bands are worth stocking.
+/// and it is what decides which bands are worth waking.
 ///
 /// A default, for a player whose client reported no viewport at all. The
 /// reference sizes the keep-alive box off each client's OWN reported viewport
@@ -96,9 +166,22 @@ struct NestWaves {
 inline constexpr double kSpawnViewportHalfWidth = kViewportWidth * 0.5 + kViewportBuffer;
 inline constexpr double kSpawnViewportHalfHeight = kViewportHeight * 0.5 + kViewportBuffer;
 
-/// The one hard ceiling: what a full server actually costs. Every spawn path
-/// tests it, the bands included, so a hundred bands in view cannot between them
-/// put more than this in the world.
+/// How much WIDER the box that wakes a latent mob is than the box that keeps a
+/// live one awake.
+///
+/// The two differ on purpose, and the gap is the hysteresis of the whole
+/// scheme: with one box, a player pacing its edge would promote and demote the
+/// same mob over and over. It also covers the population pass's own cadence --
+/// a flower crosses a few hundred units between passes, and a mob has to be
+/// alive before it is on screen rather than as it arrives there.
+inline constexpr double kLatentWakeMargin = 700.0;
+
+/// The one hard ceiling: what a full server actually costs to SIMULATE. Every
+/// path that creates an entity tests it, so a hundred bands in view cannot
+/// between them put more than this in the world.
+///
+/// It says nothing about how many mobs the world holds: the map is stocked to
+/// its own area whatever this is, and the rest of that population is latent.
 inline constexpr int kMaxLiveMobs = 900;
 
 /// Escorts stand off their nest by this much plus up to another body radius,
@@ -116,13 +199,15 @@ inline constexpr double kMinMobSpawnSpacing = 80.0;
 inline constexpr double kPreliminarySpawnRadius = 20.0;
 
 /// Radius counted as "a player has been here", and how long a mob survives
-/// without one. The radius is wider than the active radius so a player pacing
-/// the edge of a group does not cause it to blink out and back.
+/// without one before it goes back to being a record. The radius is wider than
+/// the active radius so a player pacing the edge of a group does not cause it
+/// to blink out and back.
 inline constexpr double kMobDespawnDelayMillis = 30000.0;
 
 /// The census runs on its own cadence rather than every tick: it is
 /// O(mobs x players), and at 30Hz nothing about the population changes fast
-/// enough to need it more often than this.
+/// enough to need it more often than this. The promotion pass rides with it,
+/// which is what kLatentWakeMargin is sized against.
 inline constexpr double kPopulationIntervalMillis = 500.0;
 
 /// Cadence a wave nest used to send on, kept as the interval anything
@@ -152,20 +237,54 @@ inline constexpr int kMaxNestDepth = 2;
 /// (src/server/spawnZoneManager.ts).
 inline constexpr double kZoneIntervalMillis = 1000.0;
 
-/// A zone fills the moment it enters someone's view, then alternates between a
-/// big refill and a thin trickle. The long gap is what makes an area a player
-/// has just cleared stay cleared for a while, and the short one is what keeps
-/// it from being empty when they turn around.
-inline constexpr double kZoneWaveIntervalMillis = 45000.0;
-inline constexpr double kZoneTrickleIntervalMillis = 4000.0;
-inline constexpr int kZoneTrickleMin = 1;
-inline constexpr int kZoneTrickleMax = 2;
+/// Records one band may add per stocking pass.
+///
+/// It is what spreads a cold start over a few seconds rather than paying for a
+/// whole map in one tick. Generous, because a record is cheap: the expensive
+/// part of stocking is the rejection sampling, not what it produces.
+inline constexpr int kZoneStockPerPass = 32;
 
-/// Ceiling on one zone's spawns per pass, so a large rectangle entering view
-/// is staggered over several seconds rather than arriving as one packet.
-inline constexpr int kZoneSpawnsPerPass = 12;
+/// Records one band may bring to life per population pass.
+///
+/// Bounds the one genuinely bursty moment in the scheme -- a player arriving
+/// somewhere by door or teleporter, with a whole band's worth of records
+/// suddenly inside their viewport. They wake over the next few passes instead
+/// of all on the tick they were noticed.
+inline constexpr int kZoneWakePerPass = 24;
 
-/// Attempts allowed per band spawn before it gives up on this pass. A point in
+/// How far from where a mob was lost its replacement is placed.
+///
+/// The band's population is returned TO THE PLACE IT WAS TAKEN FROM, which is
+/// what keeps the density even rather than merely the total right. Spread the
+/// deficit uniformly over the outline instead -- these bands are tens of
+/// millions of square units and a viewport is six -- and a player farming one
+/// spot strips it while the far side of the same band quietly goes over
+/// density: the map says it is full and the screen says it is empty.
+///
+/// About half a screen, so a replacement is near enough to restore the
+/// neighbourhood and far enough not to appear on the exact spot the last one
+/// died on.
+inline constexpr double kRespawnScatter = 900.0;
+
+/// How long a replacement for a mob killed inside somebody's viewport waits
+/// before it may appear, rolled per record.
+///
+/// This is the old wave-and-trickle rhythm, restated where it belongs: the
+/// window over which a cleared screen seeps back rather than snapping back.
+/// Ground nobody was looking at is stocked with no delay at all, which is the
+/// whole point of the change -- the map does not wait to be full.
+///
+/// It is the one number that trades the map's stated density against how a
+/// fight feels, and the trade is arithmetic rather than taste: a screen holds
+/// about five mobs at this density, and a player killing one every ten seconds
+/// keeps (kill rate x mean delay) of its slots waiting at any moment. At the
+/// old band's 4..45 seconds that was half the screen permanently empty. Kept
+/// short enough that the dip is a dip rather than the normal state, and long
+/// enough that nothing appears in the hole the last kill left.
+inline constexpr double kInViewRespawnMinMillis = 3000.0;
+inline constexpr double kInViewRespawnMaxMillis = 12000.0;
+
+/// Attempts allowed per placement before it gives up on this pass. A point in
 /// a lake, in a wall or in somebody's lap is thrown away rather than nudged, so
 /// this is what decides how thin a band over bad terrain goes.
 inline constexpr int kZonePlacementAttempts = 60;
@@ -176,8 +295,9 @@ inline constexpr int kZonePlacementAttempts = 60;
 /// as ordinary ground rather than as a pit.
 inline constexpr double kTargetMobDensity = 9000.0 / (kWorldSize * kWorldSize);
 
-/// The tier at which a spawn is worth telling the whole server about. Supers,
-/// uniques and apexes are events; everything below is scenery.
+/// The tier at which a spawn is worth telling the whole server about, and at
+/// which a mob is simulated wherever it stands. Supers, uniques and apexes are
+/// events; everything below is scenery.
 ///
 /// There is no boss PASS any more -- bosses come from band difficulty, and a
 /// difficulty-200 band is full of supers by design -- so this is a property of
@@ -195,8 +315,11 @@ public:
     /// about the world, because the world is the state.
     struct Census {
         int mobs = 0;                                  ///< ambient mobs alive
+        int latent = 0;                                ///< stocked but not simulated
         int spawnedTotal = 0;                          ///< cumulative, since construction
         int despawnedTotal = 0;
+        int promotedTotal = 0;                         ///< records brought to life
+        int demotedTotal = 0;                          ///< live mobs put back to records
     };
 
     /// One player's neighbourhood, as this system has to see it.
@@ -212,14 +335,13 @@ public:
     /// 1920x1080 flower it assumes.
     struct Viewer {
         Vec2 position;
-        /// The realm this flower is standing in. Spawn bands only serve
-        /// viewers in their OWN map: two maps' coordinates overlap
-        /// numerically, and a band that ignored this would stock a second map
-        /// because somebody was standing at the same numbers in the first.
+        /// The realm this flower is standing in. Two maps' coordinates overlap
+        /// numerically, and a viewer filed under the wrong one would wake a
+        /// second map because somebody was standing at the same numbers in the
+        /// first.
         Realm realm = Realm::Overworld;
         /// Half the reported viewport plus the spawn buffer, per axis: the box
-        /// a mob has to be inside to count as seen, and the box a band has to
-        /// overlap to be worth stocking.
+        /// a mob has to be inside to count as seen.
         Vec2 half{kSpawnViewportHalfWidth, kSpawnViewportHalfHeight};
         double luck = kNeutralSpawnLuck;
     };
@@ -229,8 +351,10 @@ public:
     /// A variable rather than kMaxLiveMobs directly because the admin console
     /// can raise or lower it at runtime (`/admin set_max_enemies`), which is
     /// the one knob an operator reaches for when a box is struggling. Every
-    /// spawn path tests it, so lowering it stops new mobs immediately and lets
-    /// the existing population drain rather than culling anything.
+    /// path that creates an entity tests it, so lowering it stops new mobs
+    /// immediately and lets the existing population drain rather than culling
+    /// anything. It does not shrink the map's population, only how much of it
+    /// is awake at once.
     int mobCap = kMaxLiveMobs;
 
     /// Assigns the wire id for every entity this system creates.
@@ -254,12 +378,21 @@ public:
 
     /// A boss the last pass admitted, for whoever owns the chat channel.
     ///
-    /// The reference announces supers and uniques with a per-player line whose
-    /// wording depends on where that player is standing; this system has no
-    /// view of the socket list, so it reports rather than broadcasts. Anything
-    /// below kAnnouncedRarity -- an ultra included -- is deliberately silent
-    /// and never appears here.
+    /// Every path that creates a mob reports through here -- a band stocking
+    /// itself, a nest, the arena, an operator's console -- so there is exactly
+    /// one place a boss can come from as far as the rest of the server is
+    /// concerned, and no way to add a spawn path that quietly appears without
+    /// a word. The reference announces supers and uniques with a per-player
+    /// line whose wording depends on where that player is standing; this
+    /// system has no view of the socket list, so it reports rather than
+    /// broadcasts. Anything below kAnnouncedRarity -- an ultra included -- is
+    /// deliberately silent and never appears here.
     struct BossSpawn {
+        /// The boss itself, so the runtime can hand the bot controller
+        /// something it can follow rather than a coordinate that is already
+        /// stale. Alive when it is queued; check before use, because a boss
+        /// can die before the queue is drained.
+        Entity entity = NULL_ENTITY;
         std::uint16_t mobIndex = 0;
         Rarity rarity = Rarity::Super;
         Vec2 position;
@@ -272,11 +405,14 @@ public:
     /// never drains it keeps the newest announcements instead of growing.
     std::vector<BossSpawn> bossSpawns;
 
-    /// `players` is every connected flower with a body; the bands are stocked
-    /// for the ones standing on an authored MAP, and the census keeps a mob in
-    /// another realm alive for as long as anyone is in that realm at all --
-    /// the arena and the maze are populated by ModeSpawner, whole, not by
-    /// viewport and not by band.
+    /// `players` is every flower with a body -- bots included, because a bot
+    /// standing in a band is something the band has to be awake for. The
+    /// BANDS do not care: every band is stocked to its full population whether
+    /// or not anybody is anywhere near it. What the list decides is which of
+    /// that population is awake, and the census keeps a mob in another realm
+    /// alive for as long as anyone is in that realm at all -- the arena and the
+    /// maze are populated by ModeSpawner, whole, not by viewport and not by
+    /// band.
     void run(World& world, const Terrain& terrain, const ContentRegistry& content,
              const std::vector<RealmPoint>& players, Rng& rng, double nowMillis, double dt,
              CommandBuffer& commands);
@@ -287,6 +423,10 @@ public:
     /// `position` is a request, not a promise: it is pushed out of the terrain
     /// before use, so a caller may hand over a point in a wall and still get a
     /// mob standing somewhere legal.
+    ///
+    /// A boss placed this way announces itself like any other, which is what
+    /// makes "every boss is announced" a property of the system rather than of
+    /// each caller.
     Entity spawnMob(World& world, const Terrain& terrain, const ContentRegistry& content,
                     std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                     double nowMillis, Rng& rng);
@@ -321,12 +461,26 @@ public:
 
     const Census& census() const { return census_; }
 
-private:
-    /// One `spawn` shape and where it is in its fill cycle.
+    /// How many mobs stand on the map without being simulated, and what and
+    /// where they are.
     ///
-    /// The cycle resets the moment the shape leaves every viewport, so a
-    /// player walking back into an area they cleared an hour ago finds it
-    /// freshly stocked rather than mid-trickle.
+    /// The world is not the whole state any more -- most of the population is
+    /// in here -- so anything asserting on how full the map is, or reporting
+    /// it to an operator, has to read both. `latentAt` walks every band, which
+    /// is a diagnostic price, not a tick price.
+    int latentCount() const;
+    /// Every record in `realm`, appended to `out` with the band it belongs to.
+    struct LatentSite {
+        Vec2 position;
+        std::uint16_t mobIndex = kInvalidIndex;
+        Rarity rarity = Rarity::Common;
+        double difficulty = 0.0;
+    };
+    void latentSites(Realm realm, std::vector<LatentSite>& out) const;
+
+private:
+    /// One `spawn` shape, its population, and the part of that population that
+    /// is not currently a mob.
     struct SpawnZone {
         /// The outline's bounding box: what the viewport test and the point
         /// sampler both work in.
@@ -361,44 +515,71 @@ private:
         };
         std::vector<ResolvedRow> resolved;
         /// The population this band is aimed at: kTargetMobDensity over the
-        /// area of its own outline.
+        /// area of its own outline. `latent.size() + liveMobs` is measured
+        /// against it, and the band stocks itself until they meet.
         int targetMobs = 1;
-        bool initialized = false;
-        double lastWaveMillis = 0;
-        double lastTrickleMillis = 0;
-        /// Spawns still owed from an initial fill or a wave, drained a chunk
-        /// per pass rather than all at once.
-        int pendingFill = 0;
+        /// This band's share of the world that is not simulated. Held HERE
+        /// rather than in one flat list because both hot questions are per
+        /// band: "is this band worth walking at all" is one rectangle test
+        /// against the viewports, and "is this band full" is a size().
+        std::vector<LatentMob> latent;
+        /// Live mobs this band placed, as of the last census. Stale by up to
+        /// one census between passes, which self-corrects: an over-count
+        /// delays a replacement by half a second, an under-count is spent on a
+        /// record the next census absorbs.
+        int liveMobs = 0;
     };
 
     void bind(World& world);
 
     /// Pairs each position the caller handed over with the flower standing on
-    /// it. The list stays the caller's -- it decides WHO drives the population
-    /// -- and this only fills in what a bare coordinate cannot say.
+    /// it. The list stays the caller's -- it decides WHO the population is
+    /// kept awake for -- and this only fills in what a bare coordinate cannot
+    /// say.
     void gatherViewers(World& world, const std::vector<RealmPoint>& players);
 
     /// Counts what is alive, refreshes every mob's "last seen by somebody"
-    /// stamp, and destroys the ones nobody has been near for the grace period.
-    /// It also rebuilds the placement record the band fill spaces itself
-    /// against, which is why it runs before one.
+    /// stamp, and puts the ones nobody has been near for the grace period back
+    /// into their band's records. It also rebuilds the placement record the
+    /// stocking pass spaces itself against, which is why it runs before one.
     void takeCensus(const ContentRegistry& content, const std::vector<Viewer>& viewers,
                     double nowMillis, CommandBuffer& commands);
     void runNests(World& world, const Terrain& terrain, const ContentRegistry& content,
                   Rng& rng, double nowMillis);
     void expireEscorts(double dt, CommandBuffer& commands);
 
-    /// Stocks every spawn band a player can see, at the tier the map declares
-    /// for it. THE ONLY ambient spawn path there is: a point no band covers is
-    /// never sampled by anything, so it never grows a mob.
-    void runSpawnZones(World& world, const Terrain& terrain, const ContentRegistry& content,
-                       const std::vector<Viewer>& viewers, Rng& rng, double nowMillis);
+    /// Tops every spawn band up to the population its own area buys, wherever
+    /// it is and whoever is looking. THE ONLY ambient spawn path there is: a
+    /// point no band covers is never sampled by anything, so it never grows a
+    /// mob.
+    void stockSpawnZones(World& world, const Terrain& terrain, const ContentRegistry& content,
+                         const std::vector<Viewer>& viewers, Rng& rng, double nowMillis);
 
-    /// One mob inside `zone`, or NULL_ENTITY when the rectangle had nowhere to
-    /// put it. The tier comes from the zone's own difficulty.
-    Entity spawnInZone(World& world, const Terrain& terrain, const ContentRegistry& content,
-                       const SpawnZone& zone, const std::vector<Viewer>& viewers, Rng& rng,
-                       double nowMillis);
+    /// One mob's worth of population added to `zone` -- a record, or an entity
+    /// when the roll came out at a tier that has to be awake. False when the
+    /// band's outline had nowhere to put it, which ends the pass for that band.
+    ///
+    /// `scatter` says WHERE. Zero or less samples the band's whole outline,
+    /// which is the cold start; a positive radius samples within that of
+    /// `anchor`, which is how a casualty's slot goes back where it was lost.
+    bool stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
+                   SpawnZone& zone, std::uint16_t zoneIndex, const std::vector<Viewer>& viewers,
+                   Rng& rng, double nowMillis, Vec2 anchor = Vec2{}, double scatter = 0.0);
+
+    /// Gives each band back the population that died in it, where it died.
+    ///
+    /// The counterpart to takeCensus's sleep path: a mob that was KILLED
+    /// leaves no record behind it, so without this its slot would be refilled
+    /// by the band-wide top-up -- somewhere else entirely, in a band the size
+    /// of a district. A corpse is claimed exactly once, by clearing the band
+    /// it belonged to off it.
+    void bankCasualties(World& world, const Terrain& terrain, const ContentRegistry& content,
+                        const std::vector<Viewer>& viewers, Rng& rng, double nowMillis);
+
+    /// Brings every record somebody can now see to life. The cheap half is the
+    /// rejection: a band whose box no viewport touches is one rectangle test.
+    void promoteLatent(World& world, const Terrain& terrain, const ContentRegistry& content,
+                       const std::vector<Viewer>& viewers, Rng& rng, double nowMillis);
 
     /// True when this section already holds a mob of this type and tier that
     /// nothing will ever clear away.
@@ -417,12 +598,12 @@ private:
     /// Queues one boss for whoever owns the chat channel, when the spawn was
     /// notable enough to be worth one: kAnnouncedRarity and up, and never a
     /// permanent fixture (a super target dummy is a DPS post, not an event).
-    void announceIfNotable(const ContentRegistry& content, std::uint16_t mobIndex, Rarity rarity,
-                           Vec2 position, Realm realm);
+    void announceIfNotable(const ContentRegistry& content, Entity entity, std::uint16_t mobIndex,
+                           Rarity rarity, Vec2 position, Realm realm);
 
     void rebuildZones(const ContentRegistry& content);
 
-    /// The mob a band fill should place: the band's own distribution when it
+    /// The mob a band should place: the band's own distribution when it
     /// declares one, and otherwise whatever `at` would grow anyway -- the
     /// region under it, then the map's default.
     std::uint16_t chooseZoneMobType(const ContentRegistry&, const SpawnZone&, Vec2 at, Rarity,
@@ -443,16 +624,26 @@ private:
     std::uint16_t rollResolvedRows(const ContentRegistry&,
                                    const std::vector<SpawnZone::ResolvedRow>& rows, Rarity,
                                    Rng&) const;
-    int countMobsInZone(const SpawnZone& zone) const;
 
     /// True when a body of `halfSize` at `position` would touch a mob the last
-    /// census saw, with `extraGap` of clearance on top. The one scan behind
-    /// every spacing test a band fill makes.
-    bool crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap) const;
+    /// census saw, or a record this band already holds, with `extraGap` of
+    /// clearance on top. The one scan behind every spacing test there is.
+    ///
+    /// The live half is world-wide and the latent half is the band's own,
+    /// which is the one seam in it: two records either side of a band boundary
+    /// can stand closer than the gap. That is a pixel of overlap between two
+    /// mobs nobody is looking at yet, and it buys a stocking pass that costs
+    /// the band's own population rather than the map's.
+    bool crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap,
+                   const SpawnZone& zone) const;
+
+    /// True when `position` is inside somebody's viewport, grown by `margin`.
+    bool seenBy(const std::vector<Viewer>& viewers, Realm realm, Vec2 position,
+                double margin) const;
 
     Entity spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
                       std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
-                      double nowMillis, Rng& rng, int depth);
+                      double nowMillis, Rng& rng, int depth, std::uint16_t zone);
 
     /// Lays a centipede's body out behind its head, each segment linked to the
     /// one in front. Driven from spawnMobAt so that every path to a head --
@@ -476,6 +667,9 @@ private:
 
     World* boundWorld_ = nullptr;
     std::optional<Query<MobTag, Transform, Body, MobType, AmbientMob>> ambient_;
+    /// The corpses, which the pass above steps over: a band's own dead are the
+    /// population it has to put back.
+    std::optional<Query<MobTag, Transform, AmbientMob, Dead>> casualties_;
     std::optional<Query<AmbientMob, Lifetime>> escorts_;
     std::optional<Query<Transform, MobType, Spawner>> spawners_;
     std::optional<Query<Transform, MobType, NestWaves>> waveNests_;
@@ -490,7 +684,8 @@ private:
     double nextPopulationMillis_ = 0;
 
     /// Rebuilt when `worldMaps` or the content changes, which in the server is
-    /// once. Bands from EVERY staged map, each tagged with its realm.
+    /// once. Bands from EVERY staged map, each tagged with its realm, each
+    /// holding its own share of the world's latent population.
     std::vector<SpawnZone> zones_;
     /// The mob regions, in map order. Same shape as a band and rebuilt beside
     /// them, but kept apart because they own no population: a region says which
@@ -504,8 +699,8 @@ private:
     std::set<std::string> unknownZoneMobs_;
     const WorldMaps* zoneMaps_ = nullptr;
     std::uint32_t zoneContentHash_ = 0;
-    /// Starts due, so the first tick stocks the zones a player can already see
-    /// rather than waiting out an interval first.
+    /// Starts due, so the first tick stocks the map rather than waiting out an
+    /// interval first.
     double nextZoneMillis_ = 0;
 
     /// The players, the placement record and the despawn list, kept as members
@@ -518,6 +713,11 @@ private:
     std::array<bool, kMaxRealms> realmOccupied_{};
     struct MobPlacement { Vec2 position; double radius = 0; Realm realm = Realm::Overworld; };
     std::vector<MobPlacement> mobPlacements_;
+    /// Where each of this pass's dead fell, and which band is owed it.
+    /// Collected before any of it is spent, because spending it creates
+    /// entities and that moves the very rows the walk is holding.
+    struct Casualty { Vec2 position; std::uint16_t zone = kInvalidIndex; };
+    std::vector<Casualty> casualtyList_;
     std::vector<Entity> doomed_;
     std::vector<Entity> scratchChildren_;
 };

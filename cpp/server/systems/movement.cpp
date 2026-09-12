@@ -555,7 +555,12 @@ Vec2 MovementSystem::aimAtLaunch(World& world, Entity self, Vec2 position,
 // Mob separation
 // ---------------------------------------------------------------------------
 
-bool MovementSystem::activeForSeparation(Vec2 position, Realm realm) const {
+bool MovementSystem::activeForSeparation(Vec2 position, Realm realm, Rarity rarity) const {
+    // A boss is never off, the same exception the AI phase makes: it is an
+    // announced event standing where the server said it would be, and a raid
+    // arriving to find its escorts sitting inside each other is the visible
+    // half of "asleep".
+    if (isBossRarity(rarity)) return true;
     // Nobody connected is the PERMISSIVE case, as it is in the reference's
     // activity field: with no observer there is nothing to save the work for,
     // and a bench or a test that never adds a player sees the unmodified rule.
@@ -585,7 +590,8 @@ void MovementSystem::buildSeparationSet(World& world) {
     separationGrid_.clear();
 
     const ContentRegistry& registry = content();
-    queries_->mobBodies.each([&](Entity e, MobTag&, Transform& transform, Body& body) {
+    queries_->mobBodies.each([&](Entity e, MobTag&, Transform& transform, Body& body,
+                                 MobType& type) {
         const Vec2 position = transform.position;
         // A degenerate coordinate makes the cell walks non-terminating and
         // would put a NaN into every push the mob takes part in. Such a mob
@@ -597,7 +603,7 @@ void MovementSystem::buildSeparationSet(World& world) {
         // Far from every flower: sit this tick out, the same LOD rule the AI
         // phase applies. A shove nobody is near enough to see is missed
         // outright rather than applied one-sided.
-        if (!activeForSeparation(position, transform.realm)) return;
+        if (!activeForSeparation(position, transform.realm, type.rarity)) return;
 
         SeparationEntry entry;
         entry.entity = e;

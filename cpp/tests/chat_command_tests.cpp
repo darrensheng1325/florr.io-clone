@@ -252,6 +252,37 @@ TEST(spawn_places_a_mob_and_killall_clears_it) {
     CHECK(sawText(client, "pets left intact"));
 }
 
+TEST(a_boss_from_the_console_is_announced_to_the_whole_server) {
+    // The announcement is a property of the SPAWNER, not of the band fill: a
+    // boss the console conjures is as much an event as one a difficulty-200
+    // band rolled in a corner nobody has visited, and the same queue carries
+    // both into chat and on to the bot controller.
+    Harness h("cmd-boss-announce", [](const std::string& path) {
+        seedUser(path, "boss", "password7", true);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginAs(h, client, "boss", "password7"));
+    client.joinGame(1920, 1080, {}, "Boss");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }, 200));
+
+    CHECK(say(h, client, "/admin spawn bee super 1"));
+    // The queue is drained on the tick after the command, and the line is
+    // worded per recipient: this one is standing on the boss, so it is told
+    // where rather than that it happened "somewhere".
+    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "has spawned"); }, 60));
+    CHECK(sawText(client, "A Super bee has spawned"));
+
+    // And nothing below the line says a word, an ultra included. Named
+    // precisely rather than "no spawn line at all", because the world is
+    // stocking itself the whole time this runs and its own difficulty-100
+    // band is entitled to roll a super while we watch.
+    CHECK(say(h, client, "/admin spawn bee ultra 1"));
+    h.step(30, {&client});
+    CHECK(!sawText(client, "Ultra bee has spawned"));
+}
+
 TEST(spawn_with_a_bad_mob_type_spawns_nothing) {
     Harness h("cmd-spawn-bad", [](const std::string& path) {
         seedUser(path, "boss", "password7", true);

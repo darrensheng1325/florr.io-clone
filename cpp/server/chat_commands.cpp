@@ -1039,10 +1039,19 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
             return;
         }
         spawning_->mobCap = count;
-        // Lowering the cap does not cull: every spawn path tests it, so the
-        // population drains through the ordinary despawn rather than a few
-        // hundred mobs vanishing in front of whoever is fighting them.
-        out("Max enemies set to " + std::to_string(count));
+        // Lowering the cap does not cull: every path that creates an entity
+        // tests it, so the simulated population drains through the ordinary
+        // despawn rather than a few hundred mobs vanishing in front of whoever
+        // is fighting them.
+        //
+        // And it is the SIMULATED population, not the map's. The bands hold
+        // what their area buys whatever this is set to; the rest of it is
+        // asleep and costs nothing. An operator turning this down is asking
+        // for less of the world to be awake at once, which is the knob they
+        // actually want when a box is struggling.
+        out("Max enemies set to " + std::to_string(count) + " (simulated at once; the map holds " +
+            std::to_string(spawning_->census().latent + spawning_->census().mobs) +
+            " mobs, " + std::to_string(spawning_->census().latent) + " of them asleep)");
         return;
     }
 
@@ -1257,8 +1266,16 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
                     const double radius = rng_.range(0.0, 40.0 + 8.0 * static_cast<double>(i));
                     at = {x + std::cos(angle) * radius, y + std::sin(angle) * radius};
                 }
+                // The SIMULATION's clock, not the wall clock. Every timestamp
+                // on a mob -- when it last saw a player, when it next decides,
+                // when its nest is next due -- is compared against the
+                // nowMillis the tick was handed, and a mob stamped from
+                // somewhere else is a mob whose grace period has already
+                // expired. In the server the two agree; in any harness driving
+                // tick() on a clock of its own they do not, and an operator's
+                // spawn was being recycled by the very next census.
                 spawning_->spawnMob(world_, *terrain_, content(), mobIndex, rarity, at,
-                                    spawnRealm, monotonicMillis(), rng_);
+                                    spawnRealm, clockMillis_, rng_);
             }
         }
         out("Spawned " + (count > 1 ? std::to_string(count) + "x " : std::string()) + words[2] +

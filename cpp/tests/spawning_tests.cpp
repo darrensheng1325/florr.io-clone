@@ -177,6 +177,28 @@ struct Sim {
         return n;
     }
 
+    /// Every record the bands are holding in `realm`.
+    ///
+    /// The world is not the whole population any more. A band stocks itself to
+    /// its full target wherever it is and whoever is looking, and only the
+    /// part of it somebody's viewport reaches is an entity; a test that counts
+    /// MobTags and stops there is measuring the viewport rather than the map.
+    std::vector<SpawnSystem::LatentSite> latent(Realm realm = Realm::Overworld) {
+        std::vector<SpawnSystem::LatentSite> out;
+        spawner.latentSites(realm, out);
+        return out;
+    }
+
+    /// The whole population standing inside `bounds`, awake or not: what a
+    /// band's target is stated against.
+    int populationIn(const Rect& bounds) {
+        int n = mobsIn(bounds);
+        for (const SpawnSystem::LatentSite& site : latent()) {
+            if (bounds.contains(site.position)) ++n;
+        }
+        return n;
+    }
+
     /// Mobs standing inside `bounds`, whatever put them there.
     int mobsIn(const Rect& bounds) {
         Query<MobTag, Transform> mobs{world};
@@ -542,9 +564,13 @@ TEST(an_unknown_mob_index_spawns_nothing) {
 
 TEST(a_band_converges_to_the_population_its_own_area_buys) {
     // What "converges" means now. A band's target is kTargetMobDensity over
-    // the area of its outline; it fills to that while somebody can see it, and
-    // then holds. The number is derived here the same way the spawner derives
-    // it, so a change to the density is a change to both.
+    // the area of its outline; it stocks itself to that whoever is looking,
+    // and then holds. The number is derived here the same way the spawner
+    // derives it, so a change to the density is a change to both.
+    //
+    // POPULATION, not entities. A band is the size of several screens, so most
+    // of what it holds is latent at any moment and counting MobTags would be
+    // counting the flower's viewport.
     const Rect band{kCentre.x - 3000.0, kCentre.y - 3000.0, 6000.0, 6000.0};
     WorldMaps maps;
     makeBandedWorld(maps, {band}, "garden 100%");
@@ -556,20 +582,247 @@ TEST(a_band_converges_to_the_population_its_own_area_buys) {
 
     const int target = bandTarget(band);
     CHECK(target > 20);   // a band worth measuring convergence against
-    // Most of the way there rather than exactly there: a fill is drained a
+    // Most of the way there rather than exactly there: stocking is drained a
     // chunk per pass and a sample in somebody's lap is thrown away.
-    CHECK(sim.mobsIn(band) >= target * 3 / 4);
-    // And never past it. The bound is on what the FILL placed: a hole's brood
+    CHECK(sim.populationIn(band) >= target * 3 / 4);
+    // And never past it. The bound is on what the BAND placed: a hole's brood
     // and a centipede's body are children of a mob the band asked for rather
     // than spawns the band asked for, and a garden roster is full of both.
-    CHECK(sim.bandPlacedIn(band) <= target);
+    CHECK(sim.bandPlacedIn(band) + static_cast<int>(sim.latent().size()) <= target);
+
+    // Some of it is awake, because somebody is standing in the middle of it.
+    // A band that stocked itself and woke none of it would satisfy every
+    // count above and be an empty field to play in.
+    CHECK(sim.mobsIn(band) > 0);
 
     // It holds: a converged population does not keep creeping upward. The
     // whole world this time, escorts included, because a nest going on
     // producing forever is exactly what this would catch.
-    const int settled = sim.mobCount();
+    const int settled = sim.mobCount() + static_cast<int>(sim.latent().size());
     for (int i = 0; i < 400; ++i) sim.tick(players);
-    CHECK(sim.mobCount() <= settled + kMaxNestChildren);
+    CHECK(sim.mobCount() + static_cast<int>(sim.latent().size()) <=
+          settled + kMaxNestChildren);
+}
+
+TEST(the_whole_map_is_stocked_whether_or_not_anybody_is_looking) {
+    // The rule this file is built around. A band holds the population its own
+    // area buys wherever it is drawn: nobody has to be near it, nobody has to
+    // have visited it, and the flower below never goes anywhere near the
+    // second one.
+    const Rect near{kCentre.x - 3000.0, kCentre.y - 3000.0, 6000.0, 6000.0};
+    const Rect away{kCentre.x + 12000.0, kCentre.y + 12000.0, 6000.0, 6000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {near, away}, "bee 100%");
+    Sim sim;
+    sim.spawner.worldMaps = &maps;
+    const std::vector<Vec2> players{kCentre};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    // A dozen screens away, never seen, and full.
+    CHECK(sim.populationIn(away) >= bandTarget(away) * 3 / 4);
+    // And not one unit of that costs the tick anything: there is no entity in
+    // it at all. That is the whole trade -- the map is the size of its area,
+    // the simulation is the size of the viewports.
+    CHECK_EQ(sim.mobsIn(away), 0);
+
+    // The band under the flower is just as full, and some of it is awake.
+    CHECK(sim.populationIn(near) >= bandTarget(near) * 3 / 4);
+    CHECK(sim.mobsIn(near) > 0);
+    // Awake means the part they can SEE, not the whole band: a 6000-unit band
+    // is several screens across.
+    CHECK(sim.mobsIn(near) < sim.populationIn(near));
+}
+
+TEST(a_mob_nobody_is_near_becomes_a_record_again_and_comes_back) {
+    // The other direction, and what makes the population stable rather than
+    // churning: walking away does not DESTROY the mobs behind you, it puts
+    // them back to sleep where they stand. Walk back and the same band is
+    // still full.
+    const Rect band{kCentre.x - 1500.0, kCentre.y - 1500.0, 3000.0, 3000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "bee 100%");
+    Sim sim;
+    sim.spawner.worldMaps = &maps;
+    const std::vector<Vec2> here{kCentre};
+    for (int i = 0; i < 400; ++i) sim.tick(here);
+
+    const int awake = sim.mobsIn(band);
+    const int population = sim.populationIn(band);
+    CHECK(awake > 0);
+
+    // Off to the other side of the map, and wait out the grace period. Twice,
+    // because a mob that was still in view on the pass the flower left gets
+    // its full period from then.
+    const std::vector<Vec2> elsewhere{Vec2{5000.0, 5000.0}};
+    sim.tick(elsewhere);
+    sim.jump(kMobDespawnDelayMillis + 1000.0, elsewhere);
+    sim.jump(kMobDespawnDelayMillis + 1000.0, elsewhere);
+
+    // Nothing there is simulated any more, and nothing was LOST: the same
+    // population is standing there, all of it asleep.
+    CHECK_EQ(sim.mobsIn(band), 0);
+    CHECK(sim.populationIn(band) >= population - 5);
+    CHECK(sim.spawner.census().demotedTotal >= awake);
+
+    // Walk back. It is awake again within a population pass or two, and it did
+    // not have to be spawned from nothing to get there.
+    const int promotedBefore = sim.spawner.census().promotedTotal;
+    for (int i = 0; i < 60; ++i) sim.tick(here);
+    CHECK(sim.mobsIn(band) > 0);
+    CHECK(sim.spawner.census().promotedTotal > promotedBefore);
+}
+
+TEST(ground_a_player_has_just_cleared_does_not_refill_in_front_of_them) {
+    // The map is full everywhere and tops itself up the moment anything dies,
+    // so something has to stop the replacements appearing on the screen of the
+    // player who just cleared it. That is what a record's ready time is for:
+    // one placed where nobody was looking is awake at once, and one placed
+    // inside a live viewport waits out kInViewRespawnMin..Max first.
+    const Rect band{kCentre.x - 3000.0, kCentre.y - 3000.0, 6000.0, 6000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "bee 100%");
+    Sim sim;
+    sim.spawner.worldMaps = &maps;
+    const std::vector<Vec2> players{kCentre};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    const Rect screen{kCentre.x - kSpawnViewportHalfWidth, kCentre.y - kSpawnViewportHalfHeight,
+                      kSpawnViewportHalfWidth * 2.0, kSpawnViewportHalfHeight * 2.0};
+    const int cleared = sim.mobsIn(screen);
+    CHECK(cleared > 2);
+
+    // Kill everything the flower can see, the way a player would.
+    Query<MobTag, Transform> mobs{sim.world};
+    mobs.each([&](Entity e, MobTag&, Transform& transform) {
+        if (screen.contains(transform.position)) sim.world.destroy(e);
+    });
+    CHECK_EQ(sim.mobsIn(screen), 0);
+
+    // Two seconds later the band has already replaced them in its books --
+    // the map does not wait to be full -- and the flower's own screen has not.
+    for (int i = 0; i < 60; ++i) sim.tick(players);
+    CHECK(sim.populationIn(band) >= (bandTarget(band) * 3) / 4);
+    CHECK(sim.mobsIn(screen) <= cleared / 2);
+}
+
+TEST(a_killed_mob_is_replaced_where_it_died_rather_than_anywhere_in_its_band) {
+    // The difference between a band that is evenly full and one that is full
+    // on paper. These bands are millions of square units and a viewport is a
+    // few: hand a casualty's slot back to the band at large and a player
+    // farming one corner strips it while the far side of the same band quietly
+    // goes over density. The map would still report itself full the whole
+    // time, which is exactly the failure that is hard to see.
+    const Rect band{kCentre.x - 6000.0, kCentre.y - 6000.0, 12000.0, 12000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "bee 100%");
+    Sim sim;
+    sim.spawner.worldMaps = &maps;
+
+    // One corner of it, a long way from the middle. The watched box is the
+    // kill radius plus the scatter, so every honest replacement lands inside
+    // it -- and it is a fourteenth of the band, so a band-wide replacement
+    // almost never does.
+    const Vec2 corner{band.x + 2000.0, band.y + 2000.0};
+    constexpr double kKillRadius = 900.0;
+    const double watchedHalf = kKillRadius + kRespawnScatter + 100.0;
+    const Rect watched{corner.x - watchedHalf, corner.y - watchedHalf, watchedHalf * 2.0,
+                       watchedHalf * 2.0};
+
+    const std::vector<Vec2> visiting{corner};
+    for (int i = 0; i < 300; ++i) sim.tick(visiting);
+    const int before = sim.populationIn(watched);
+    CHECK(before > 3);
+
+    // Farm it, the way a player does: marked Dead so the spawner meets them as
+    // casualties rather than as mobs that simply vanished, then reaped as the
+    // runtime reaps them.
+    int killed = 0;
+    for (int round = 0; round < 8; ++round) {
+        std::vector<Entity> doomed;
+        Query<MobTag, Transform> mobs{sim.world};
+        mobs.each([&](Entity e, MobTag&, Transform& transform) {
+            if (sim.world.has<Dead>(e)) return;
+            if (distance(transform.position, corner) > kKillRadius) return;
+            doomed.push_back(e);
+        });
+        // Marked outside the walk: adding a component moves the entity to
+        // another archetype, which relocates the rows the walk is holding.
+        for (const Entity e : doomed) sim.world.add<Dead>(e, Dead{NULL_ENTITY});
+        killed += static_cast<int>(doomed.size());
+        sim.tick(visiting);
+        for (const Entity e : doomed) {
+            if (sim.world.isAlive(e)) sim.world.destroy(e);
+        }
+        // Long enough for the replacements to come back: they wait out
+        // kInViewRespawnMin..Max first, because this is somebody's screen.
+        for (int i = 0; i < 500; ++i) sim.tick(visiting);
+    }
+    CHECK(killed > 15);
+
+    // Every one of those slots came back to this corner. Spread over the band
+    // instead, they would have gone to a hundred and forty million square
+    // units of somewhere else and left the corner permanently thin.
+    CHECK(sim.populationIn(watched) >= before - 3);
+}
+
+TEST(a_boss_is_a_live_mob_wherever_it_rolled_and_never_sleeps) {
+    // Supers and up are the exception: they are placed as entities whatever
+    // corner of the map their band is in, they are never put back to sleep,
+    // and they are never recycled. A boss is an event -- chat was told, the
+    // bots were sent -- so it has to be standing there when somebody arrives.
+    const Rect band{kCentre.x + 12000.0, kCentre.y + 12000.0, 1500.0, 1500.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "bee 100%", 200.0);   // difficulty 200: all supers
+    Sim sim;
+    sim.spawner.worldMaps = &maps;
+    // A flower on the far side of the map: the band is never in anyone's view.
+    const std::vector<Vec2> players{Vec2{5000.0, 5000.0}};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    CHECK(sim.mobsIn(band) > 0);
+    // Not one of them is a record. A boss the spawner had quietly filed away
+    // is a boss the announcement promised and the raid cannot find.
+    for (const SpawnSystem::LatentSite& site : sim.latent()) {
+        CHECK(rarityIndex(site.rarity) < rarityIndex(kAnnouncedRarity));
+    }
+
+    // And they outlast the grace period with nobody anywhere near them.
+    const int standing = sim.mobsIn(band);
+    sim.jump(kMobDespawnDelayMillis + 1000.0, players);
+    sim.jump(kMobDespawnDelayMillis + 1000.0, players);
+    CHECK_EQ(sim.mobsIn(band), standing);
+}
+
+TEST(a_boss_announces_itself_whatever_placed_it) {
+    // Not just a band stocking itself: the arena, a nest, a script and the
+    // operator console all reach the world through spawnMob, and the
+    // announcement is made THERE. That is what makes "every boss is announced"
+    // a property of the spawner rather than a thing each caller has to
+    // remember.
+    Sim sim;
+    const std::uint16_t bee = shipped().mobIndex("bee");
+    CHECK(bee != kInvalidIndex);
+
+    const Entity boss = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), bee, Rarity::Super,
+                                             kCentre, Realm::Overworld, sim.now, sim.rng);
+    CHECK(boss != NULL_ENTITY);
+    CHECK_EQ(sim.spawner.bossSpawns.size(), std::size_t(1));
+    if (!sim.spawner.bossSpawns.empty()) {
+        const SpawnSystem::BossSpawn& announced = sim.spawner.bossSpawns.front();
+        // The entity rides with it, so the runtime can hand the bot controller
+        // something it can follow rather than a coordinate that is already
+        // stale by the time the raid sets off.
+        CHECK_EQ(announced.entity, boss);
+        CHECK(announced.rarity == Rarity::Super);
+        CHECK(announced.mobIndex == bee);
+    }
+
+    // Everything below the line is scenery and says nothing, an ultra
+    // included.
+    sim.spawner.bossSpawns.clear();
+    sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), bee, Rarity::Ultra,
+                         kCentre + Vec2{500, 0}, Realm::Overworld, sim.now, sim.rng);
+    CHECK(sim.spawner.bossSpawns.empty());
 }
 
 TEST(a_band_stocks_its_own_outline_and_never_the_open_ground_beside_it) {
@@ -635,9 +888,14 @@ TEST(a_crowd_of_players_cannot_exceed_the_global_cap) {
     CHECK(sim.spawner.census().mobs > kMaxLiveMobs / 2);
 }
 
-TEST(mobs_nobody_has_been_near_are_recycled) {
-    // A band under the flower, because nothing else puts a mob in the world any
-    // more; the rule under test is the recycler, which is unchanged.
+TEST(mobs_nobody_has_been_near_stop_being_entities) {
+    // The recycler, which is where a mob STOPS being simulated. What happens
+    // to it then depends on whether a band is holding a slot for it -- a band
+    // mob goes back to being a record where it stands, an escort or a fixture
+    // is simply gone -- and that half is
+    // a_mob_nobody_is_near_becomes_a_record_again_and_comes_back's business.
+    // This one pins the timing: the grace period, and that an empty viewer
+    // list is permissive rather than a purge.
     const Rect band{kCentre.x - 3000.0, kCentre.y - 3000.0, 6000.0, 6000.0};
     WorldMaps maps;
     makeBandedWorld(maps, {band}, "garden 100%");
@@ -660,8 +918,8 @@ TEST(mobs_nobody_has_been_near_are_recycled) {
     CHECK_EQ(sim.spawner.census().despawnedTotal, despawnedBefore);
 
     // A player who WALKS AWAY is what starts the clock: every flower's own
-    // viewport box is tested, and a mob outside all of them is recycled once
-    // it has been unseen for the grace period.
+    // viewport box is tested, and a mob outside all of them stops being an
+    // entity once it has been unseen for the grace period.
     const std::vector<Vec2> elsewhere{Vec2{90000.0, 90000.0}};
     sim.tick(elsewhere);
     CHECK_EQ(sim.mobsWithin(kCentre, 4000.0), populated);   // not immediately
@@ -1837,13 +2095,18 @@ std::string writeZoneMap(const std::string& name, const std::string& distributio
     return writeTiledFixture(name, fixtureMapBody(polygon));
 }
 
-/// Every ambient mob in the world, by config id.
+/// Every ambient mob a band has put on the map, by config id: the entities and
+/// the records alike. Which of the two a given mob is right now is a fact about
+/// where the flower is standing, not about what the band grows.
 std::vector<std::string> spawnedMobIds(Sim& sim) {
     std::vector<std::string> ids;
     Query<MobTag, MobType> mobs{sim.world};
     mobs.each([&](Entity, MobTag&, MobType& type) {
         ids.push_back(shipped().mob(type.configIndex).id);
     });
+    for (const SpawnSystem::LatentSite& site : sim.latent()) {
+        ids.push_back(shipped().mob(site.mobIndex).id);
+    }
     return ids;
 }
 
@@ -2018,6 +2281,14 @@ TEST(the_border_band_is_measured_against_the_maps_own_extent) {
     int placed = 0;
     int inNearBand = 0;
     int inFarBand = 0;
+    const auto judge = [&](Vec2 at) {
+        ++placed;
+        if (at.x < kWorldBoundaryThreshold || at.y < kWorldBoundaryThreshold) ++inNearBand;
+        if (at.x > extent.x - kWorldBoundaryThreshold ||
+            at.y > extent.y - kWorldBoundaryThreshold) {
+            ++inFarBand;
+        }
+    };
     Query<MobTag, Transform> mobs{sim.world};
     mobs.each([&](Entity e, MobTag&, Transform& transform) {
         if (transform.realm != Realm::Overworld) return;
@@ -2026,14 +2297,12 @@ TEST(the_border_band_is_measured_against_the_maps_own_extent) {
         // -- and a centipede reversing into the edge wall is movement, not
         // placement.
         if (sim.isChildOfAPlacedMob(e)) return;
-        ++placed;
-        const Vec2 at = transform.position;
-        if (at.x < kWorldBoundaryThreshold || at.y < kWorldBoundaryThreshold) ++inNearBand;
-        if (at.x > extent.x - kWorldBoundaryThreshold ||
-            at.y > extent.y - kWorldBoundaryThreshold) {
-            ++inFarBand;
-        }
+        judge(transform.position);
     });
+    // The records too, and they are the larger half: the rule under test is
+    // about where a band may SAMPLE, and most of what it samples never becomes
+    // an entity while one flower stands there.
+    for (const SpawnSystem::LatentSite& site : sim.latent()) judge(site.position);
     // Enough mobs that an empty far band means the rule held rather than that
     // nothing was placed at all.
     CHECK(placed >= 40);

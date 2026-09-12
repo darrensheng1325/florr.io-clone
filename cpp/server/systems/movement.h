@@ -191,7 +191,9 @@ private:
         Query<MobTag, Transform, Faction, Health> mobTargets;
         /// The separation pass wants every mob that has a place and a size,
         /// whether or not it is a mover: a nest still occupies its ground.
-        Query<MobTag, Transform, Body> mobBodies;
+        /// MobType rides along for the level of detail: a boss is
+        /// simulated wherever it stands, separation included.
+        Query<MobTag, Transform, Body, MobType> mobBodies;
         /// LOD is measured against every flower, dead ones included -- a
         /// player about to respawn is still standing there watching.
         Query<PlayerTag, Transform> playerPositions;
@@ -246,7 +248,7 @@ private:
     void buildSeparationSet(World& world);
     /// The LOD gate: false for a mob too far from every flower to be worth
     /// colliding this tick.
-    bool activeForSeparation(Vec2 position, Realm realm) const;
+    bool activeForSeparation(Vec2 position, Realm realm, Rarity rarity) const;
 
     /// Collected lazily: a tick with no seeking projectile pays nothing.
     void collectSeekTargets();
