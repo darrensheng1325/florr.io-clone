@@ -13,6 +13,7 @@
   "maps": [
     { "file": "garden.tmj" },
     { "file": "desert.tmj" },
-    { "file": "computer.tmj" }
+    { "file": "computer.tmj" },
+    { "file": "ocean.tmj" }
   ]
 }
