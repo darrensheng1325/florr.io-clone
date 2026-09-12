@@ -303,7 +303,6 @@ void MapData::reset(Realm realm) {
     displayName_.clear();
     biome_.clear();
     defaultMobGroup_.clear();
-    defaultDifficulty_ = 0.0;
     artFiles_.clear();
     layers_.clear();
     sourcePath_.clear();
@@ -335,10 +334,10 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
     // and only a map that deliberately disagrees has to say so.
     defaultMobGroup_ = properties["defaultMobGroup"].asString();
     if (defaultMobGroup_.empty()) defaultMobGroup_ = biome_;
-    // And the difficulty of every square no band covers. Zero -- fully common
-    // -- unless the map says otherwise, which is what makes a map that is
-    // nothing but painted art safe to walk into.
-    defaultDifficulty_ = properties["defaultDifficulty"].asDouble(0.0);
+    // There is deliberately NO map-wide difficulty property. Difficulty is a
+    // band's, and a band is the only thing that spawns anything: a number for
+    // "the ground no band covers" would configure nothing, because that ground
+    // never grows a mob to roll it against.
 
     adopt(map.elements());
 
@@ -357,44 +356,56 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
         doors += point->spawnId;
         if (!point->pickable) doors += " (not pickable)";
     }
-    // The bands, said out loud. A difficulty band is invisible in the art -- it
-    // is a shape on an object layer with one number on it -- so an author who
-    // brushes danger onto a map otherwise has nothing but the mobs that turn up
-    // to tell them whether the engine read it. The range is printed with the
-    // tier each end resolves to, because "difficulty 15" only means something
-    // once you know it is uncommon ground.
-    int bands = 0;
+    // The bands, said out loud -- see bandSummary() for why in those words.
+    const std::string zones = bandSummary();
     int regions = 0;
-    double softest = 0.0;
-    double hardest = 0.0;
     for (const MapElement& element : elements_) {
         if (element.isMobRegion()) ++regions;
-        if (!element.isSpawnBand()) continue;
-        if (bands == 0) softest = hardest = element.difficulty;
-        softest = std::min(softest, element.difficulty);
-        hardest = std::max(hardest, element.difficulty);
-        ++bands;
-    }
-    char zones[160] = "no bands";
-    if (bands > 0) {
-        std::snprintf(zones, sizeof(zones), "%d band%s difficulty %g (%s)..%g (%s)", bands,
-                      bands == 1 ? "" : "s", softest,
-                      rarityName(dominantTierForDifficulty(softest)), hardest,
-                      rarityName(dominantTierForDifficulty(hardest)));
     }
 
     // stdout, not stderr: this is what the map RESOLVED to, not something
     // wrong with it. stderr stays the channel that means a map needs fixing,
     // so "no [map] lines on stderr" is still a meaningful thing to check.
     std::fprintf(stdout,
-                 "[map] %s: %dx%d tiles, biome \"%s\", mobs \"%s\", default difficulty %g (%s), "
-                 "%s, %d region%s, %d art files, %d layers, doors: %s\n",
+                 "[map] %s: %dx%d tiles, biome \"%s\", mobs \"%s\", %s, %d region%s, "
+                 "%d art files, %d layers, doors: %s\n",
                  id_.c_str(), width_, height_, biome_.c_str(), defaultMobGroup_.c_str(),
-                 defaultDifficulty_, rarityName(dominantTierForDifficulty(defaultDifficulty_)),
-                 zones, regions, regions == 1 ? "" : "s",
+                 zones.c_str(), regions, regions == 1 ? "" : "s",
                  static_cast<int>(artFiles_.size()), static_cast<int>(layers_.size()),
                  doors.empty() ? "none" : doors.c_str());
     return true;
+}
+
+std::string MapData::bandSummary() const {
+    // A difficulty band is invisible in the art -- it is a shape on an object
+    // layer with one number on it -- so an author who brushes danger onto a map
+    // otherwise has nothing but the mobs that turn up to tell them whether the
+    // engine read it. The range is printed with the tier each end resolves to,
+    // because "difficulty 15" only means something once you know it is uncommon
+    // ground.
+    //
+    // And a map with NO band is worth saying outright rather than as an
+    // absence: bands are the only source of ambient mobs there are, so such a
+    // map grows nothing at all, and an author who sees an empty world needs to
+    // be told it is their data rather than the spawner.
+    int bands = 0;
+    double softest = 0.0;
+    double hardest = 0.0;
+    for (const MapElement& element : elements_) {
+        if (!element.isSpawnBand()) continue;
+        if (bands == 0) softest = hardest = element.difficulty;
+        softest = std::min(softest, element.difficulty);
+        hardest = std::max(hardest, element.difficulty);
+        ++bands;
+    }
+    if (bands == 0) return "NO SPAWN BANDS -- no mobs will spawn on this map";
+
+    char text[160];
+    std::snprintf(text, sizeof(text), "%d band%s difficulty %g (%s)..%g (%s)", bands,
+                  bands == 1 ? "" : "s", softest,
+                  rarityName(dominantTierForDifficulty(softest)), hardest,
+                  rarityName(dominantTierForDifficulty(hardest)));
+    return text;
 }
 
 TiledCell MapData::cellAt(std::size_t layer, int tx, int ty) const {

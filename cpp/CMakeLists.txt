@@ -156,6 +156,7 @@ add_library(flix_client STATIC
   client/ui/mobile_controls.cpp
   client/ui/tutorial.cpp
   client/render/art_cache.cpp
+  client/render/mob_art.cpp
   client/render/sprites.cpp
   client/render/world_renderer.cpp
   client/web/reload.cpp
@@ -497,6 +498,15 @@ target_link_libraries(raster_parity PRIVATE cpp_canvas)
 
 add_executable(behavior_oracle tools/behavior_oracle.cpp)
 target_link_libraries(behavior_oracle PRIVATE flix_server)
+
+# The bot controller's fingerprint. Runs a real server with a real bot
+# population for a few simulated minutes and prints what they did -- how often
+# they had something in reach, how often they walked into it, how much ground
+# they covered. A controller change that reads better has to move these.
+add_executable(bot_probe tools/bot_probe.cpp)
+target_link_libraries(bot_probe PRIVATE flix_server flix_client)
+target_compile_definitions(bot_probe PRIVATE FLIX_TEST_DATA_DIR="${FLIX_DATA_DIR}")
+add_dependencies(bot_probe flix_data)
 
 # --- tests -------------------------------------------------------------------
 enable_testing()

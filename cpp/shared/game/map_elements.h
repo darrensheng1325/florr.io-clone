@@ -126,8 +126,11 @@ struct MapElement {
     std::vector<ZoneMobEntry> mobDistribution;
 
     /// True when this `spawn` object owns a POPULATION: a difficulty band,
-    /// which is stocked to a density of its own and which the world's ambient
-    /// fill stays out of.
+    /// stocked to a density of its own.
+    ///
+    /// These are the ONLY source of ambient mobs on a map. Ground no band
+    /// covers grows nothing at all, so a map with no band on it is an empty
+    /// map -- deliberately, and its load line says so.
     bool isSpawnBand() const { return kind == MapElementKind::Spawn && hasDifficulty; }
 
     /// True when it only says WHAT lives on this ground, and owns nothing.
@@ -137,9 +140,9 @@ struct MapElement {
     /// shape: danger runs in bands along a coastline, while "this is the
     /// desert" covers a whole quarter of the map. A region is the second
     /// question on its own -- a `spawn` object with a `mobs` distribution and
-    /// no `difficulty`. The ambient fill spawns inside one freely, at the
-    /// difficulty of the ground it covers (the map's `defaultDifficulty`), and
-    /// asks the region only what to spawn.
+    /// no `difficulty`. It owns no population and spawns nothing: a band
+    /// standing on it with no `mobs` of its own asks it what to grow, and a
+    /// region drawn over ground no band covers grows nothing whatsoever.
     ///
     /// This is what replaced sectionAt() as the spawner's question. The nine
     /// sections used to decide what lived where implicitly, by geography
@@ -238,6 +241,16 @@ public:
     bool loaded() const { return !elements_.empty(); }
     const std::vector<MapElement>& elements() const { return elements_; }
 
+    /// The bands clause of this map's load line: how many bands it carries and
+    /// the difficulty range they span, each end named with the tier it
+    /// resolves to -- or, when the map carries none, the sentence saying so.
+    ///
+    /// Split out of loadTiled so a test can hold the exact words to the light.
+    /// The words matter: bands are the ONLY source of ambient mobs, so a
+    /// bandless map is an empty world, and the line is the only thing standing
+    /// between that and a reader deciding the spawner is broken.
+    std::string bandSummary() const;
+
     /// Which realm this map's coordinates are in.
     Realm realm() const { return realm_; }
 
@@ -269,21 +282,14 @@ public:
     /// bucket shared with every other silent map.
     const std::string& biome() const { return biome_; }
 
-    /// The mob group a spawn band with no `mobs` distribution of its own
-    /// spawns from.
+    /// The mob group a spawn band with no `mobs` distribution of its own, and
+    /// no mob region under it, spawns from.
     ///
     /// From the map's `defaultMobGroup` property, DEFAULTING TO biome() -- so
     /// `garden.tmj` grows garden mobs with nothing authored at all. A group
     /// mobs.json does not define is reported once by the spawner, which is
     /// where the content registry is; it cannot be checked here.
     const std::string& defaultMobGroup() const { return defaultMobGroup_; }
-
-    /// The difficulty of ground no band covers, from the map's
-    /// `defaultDifficulty` property. DEFAULTS TO ZERO, so a map an author has
-    /// only painted art on -- garden.tmj, today -- grows nothing but commons
-    /// until they draw a band, rather than inheriting a spread nobody asked
-    /// for. See shared/game/difficulty.h for what the number means.
-    double defaultDifficulty() const { return defaultDifficulty_; }
 
     /// The map's size in TILES. The map decides: a corridor level is a hundred
     /// tiles across and the overworld is sixty-four, and nothing here assumes
@@ -398,7 +404,6 @@ private:
     std::string displayName_;
     std::string biome_;
     std::string defaultMobGroup_;
-    double defaultDifficulty_ = 0.0;
     /// The map's art, straight out of the file. Copied rather than referenced
     /// because the TiledMap that parsed it is a load-time scratch object and
     /// the renderer reads these every frame.

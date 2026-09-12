@@ -621,9 +621,14 @@ TEST(the_shipped_map_loads) {
         CHECK(false);
         return;
     }
-    CHECK_EQ(map.width(), 64);
-    CHECK_EQ(map.height(), 64);
-    CHECK(map.tiles().size() == std::size_t(64 * 64));
+    // The map's SIZE is not pinned: the author resizes the canvas in Tiled as
+    // the map is drawn, and a test that wrote the number down would fail every
+    // time they did. What is pinned is the shape the engine needs -- a square
+    // canvas big enough to be a world, with a full grid behind it.
+    const int side = map.width();
+    CHECK(side >= 32);
+    CHECK_EQ(map.height(), side);
+    CHECK(map.tiles().size() == std::size_t(side) * std::size_t(side));
     CHECK(!map.artFiles().empty());
     CHECK(map.strandedWaterTiles().empty());
 
@@ -634,7 +639,7 @@ TEST(the_shipped_map_loads) {
     std::string collides;
     std::string scenery;
     for (const TiledLayer& l : map.layers()) {
-        CHECK(l.cells.size() == std::size_t(64 * 64));
+        CHECK(l.cells.size() == std::size_t(side) * std::size_t(side));
         std::string& list = l.collides ? collides : scenery;
         if (!list.empty()) list += ",";
         list += l.name;
@@ -651,7 +656,7 @@ TEST(the_shipped_map_loads) {
     CHECK(!map.layers()[0].collides);
     CHECK(!scenery.empty());
 
-    CHECK_EQ(map.wallCells() + map.waterCells() + map.groundCells(), 64 * 64);
+    CHECK_EQ(map.wallCells() + map.waterCells() + map.groundCells(), side * side);
     if (map.wallCells() == 0 || map.waterCells() == 0 || map.groundCells() == 0) {
         std::printf("  garden.tmj derived %d wall, %d water, %d ground cells\n", map.wallCells(),
                     map.waterCells(), map.groundCells());

@@ -259,11 +259,37 @@ it carries decides which kind of object it is:
 | `mobs` | the **distribution**: what actually appears here |
 
 - A shape with `difficulty` is a **band**. It owns a population of its own,
-  stocked to a density scaled by the outline's area, and the ambient fill stays
-  out of it. This is where the map's difficulty progression lives.
+  stocked to a density scaled by the outline's area. **Bands are the only thing
+  that spawns anything.** This is where the map's difficulty progression lives.
 - A shape with only `mobs` is a **region**: it says what grows on this ground
-  and owns nothing. The ambient fill spawns inside it freely, at the difficulty
-  of the ground it stands on, and asks the region only *what*.
+  and owns nothing. It spawns nothing by itself — a band standing on it that
+  named no `mobs` asks it *what* to grow, and that is all it does.
+
+> **If there is no band, there are no mobs.** Ground no band covers grows
+> nothing, ever, and a map with no band on it is empty. That is the rule, not a
+> bug: the author draws where the mobs are. A region drawn over unbanded ground
+> is still empty ground — it answers a question nothing is asking. The map's
+> load line says so out loud when it happens:
+>
+> ```
+> [map] sketch: 64x64 tiles, biome "sketch", mobs "sketch", NO SPAWN BANDS --
+> no mobs will spawn on this map, 1 region, 3 art files, 2 layers, doors: main
+> ```
+>
+> **What still appears regardless**, because none of it is ground being filled:
+>
+> - A **child of a mob a band placed** — a nest's escorts and waves, a
+>   centipede's body segments. They are laid out on a ring around their parent,
+>   and that ring legitimately reaches over the band's edge onto ground nothing
+>   fills. They are not spawned *on* unbanded ground, they are spawned *by*
+>   something standing inside a band, so they are deliberately not gated.
+> - **Pets, admin spawn commands and the drop/loot system**, none of which ask
+>   the ground anything.
+> - **The PVP arena and the daily maze**, the two realms that are not authored
+>   maps at all: they are generated, they carry no object layer to draw a band
+>   on, and `cpp/server/systems/mode_spawning.h` populates each of them whole on
+>   its own terms. "No band, no mobs" is a rule about map ground, and those two
+>   are deliberately exempt from it.
 
 A band with `difficulty: 0` is still a band — it owns its population and grows
 commons. It is the *presence* of the property that makes it one, not its value.
@@ -344,18 +370,16 @@ the ground is *entirely* rare and which would have called a band that rolls rare
 98.7% of the time (difficulty 33) safe for a level-one flower. Derived from the
 curve rather than written down twice.
 
-**What the shipped map says today.** `garden.tmj` carries sixteen bands, from
-0.5 on the ground the `garden` door stands on to 100 at the hardest of them —
-fully common where a fresh flower lands, ultra where it does not — with three
-of them naming their own distribution (`garden 10% bee 90%`, `garden 5% bee
-95%`, `garden 10% ladybug 90%`) and the rest taking the map's `garden`. It
-declares no `defaultDifficulty`, so every scrap of ground no band covers is common. The
-start-up line restates the range it read:
+**What the shipped map says today.** `garden.tmj` carries a handful of bands,
+from 0 on the ground the `garden` door stands on up to the hardest of them, each
+naming the map's own `garden` roster. Everything outside them is empty ground.
+The author moves and renumbers them as the map is balanced, so the count below
+is whatever the file said the day this was written; the start-up line is the
+thing to read:
 
 ```
-[map] garden: 64x64 tiles, biome "garden", mobs "garden", default difficulty 0
-(common), 16 bands difficulty 0.5 (common)..100 (ultra), 0 regions, 77 art
-files, 5 layers, doors: garden
+[map] garden: 128x128 tiles, biome "garden", mobs "garden", 4 bands difficulty 0
+(common)..40 (rare), 0 regions, 77 art files, 4 layers, doors: garden
 ```
 
 ### `player_spawns` — doors
@@ -413,12 +437,17 @@ Set these in Tiled under *Map → Map Properties → Custom Properties*.
 | --- | --- | --- |
 | `displayName` | what the map is called in a message | the map's id |
 | `biome` | which tab of the spawn picker this map's doors file under | **the map's id** |
-| `defaultMobGroup` | the mob group a band with no `mobs` of its own spawns from | **`biome`** |
-| `defaultDifficulty` | how dangerous the ground no band covers is | `0`, i.e. fully common |
+| `defaultMobGroup` | the mob group a band with no `mobs` of its own, and no region under it, spawns from | **`biome`** |
 
 Both defaults exist so that a one-biome map does not have to say its own name
 three times. `garden.tmj` declares none of them and is therefore the map
 `garden`, in biome `garden`, growing `garden` mobs.
+
+There is deliberately **no map-wide difficulty**. There used to be a
+`defaultDifficulty` property, for "how dangerous the ground no band covers is",
+and it was read by exactly one thing: the per-viewer density fill that stocked
+that ground. That fill is gone, so no mob is ever rolled against such a number
+and the property configured nothing. Difficulty belongs to a band.
 
 ## Mob groups
 
@@ -529,7 +558,7 @@ untracked, it is not staged, and nothing reads it. Leave it alone.
 
 **Zone rarities are gone**, and with them the machinery that hung off them: a
 band naming `spawnType: rare`, the per-section "natural" rarity spread the
-ambient fill used to roll, the one-tier drift that nudged every spawn up or down
+density fill used to roll, the one-tier drift that nudged every spawn up or down
 on a die roll, the one-in-a-hundred super an ultra band used to produce, and the
 boss pass — the pass that kept exactly one ultra alive in the world and one
 super per section and placed them by hand. That pass cannot coexist with a scale
@@ -541,7 +570,10 @@ unique or apex spawning is still worth telling the server about.
 
 Every name below is a test in `cpp/tests` that exists and passes today, with
 what it pins written after it. The list was checked against the files rather
-than remembered, so a name that has drifted is a bug in one of the two.
+than remembered, so a name that has drifted is a bug in one of the two. The
+only exception is a name introduced as a *former* name — "(it replaced …)",
+"(formerly …)" — which is deliberately a test that no longer exists, kept so
+that someone searching for the old behaviour finds where it went.
 
 **The collision rule — `cpp/tests/tiled_map_tests.cpp`** (the reader: which
 shapes a cell ends up with)
@@ -615,8 +647,11 @@ shapes a cell ends up with)
 **The object layers — `cpp/tests/spawn_tests.cpp`** (read off the shipped map,
 derived from the file rather than pinned, because the author is still drawing)
 
-- `the_shipped_map_loads_and_resolves_its_defaults`,
-  `the_shipped_door_is_named_by_its_label_and_is_pickable` (the name → label
+- `the_shipped_map_loads_and_resolves_its_defaults` — including the banded
+  branch of the load line quoted above: it reports a band count and a
+  difficulty range and never says `NO SPAWN BANDS` (the count itself is not
+  pinned, because the author is still drawing bands).
+- `the_shipped_door_is_named_by_its_label_and_is_pickable` (the name → label
   slug → map id fallback), `the_shipped_door_stands_on_open_ground`.
 - `an_authored_band_and_region_still_parse`,
   `a_zone_outline_excludes_what_its_bounding_box_includes`,
@@ -625,6 +660,11 @@ derived from the file rather than pinned, because the author is still drawing)
 - `a_distribution_parses_the_authored_syntax`,
   `a_distribution_accepts_the_shapes_an_author_will_type`,
   `a_broken_distribution_is_reported_not_guessed_at`.
+- `the_live_server_grows_what_the_ground_under_each_mob_declares` — the same
+  rule asked of a real `GameServer` on the real map, with a real client joined
+  through the real door: every mob it grew is judged against the hardest band
+  on the map it stands on, and a mob clear of every band may only be a borrowed
+  body segment or a nest's escort.
 - `every_pickable_door_stands_on_safe_open_ground`,
   `a_door_that_is_not_pickable_is_joined_only_by_an_admin`,
   `a_teleporter_carries_a_player_to_another_map`,
@@ -641,11 +681,33 @@ derived from the file rather than pinned, because the author is still drawing)
 - `luck_shifts_the_curve_upward_and_never_down`.
 - `safe_ground_is_ground_that_cannot_roll_a_rare` — the door threshold, pinned
   from both sides.
-- `a_bands_difficulty_beats_the_maps_default` and
-  `the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares` —
-  `defaultDifficulty`, and the bands over it.
+- `a_band_is_the_only_ground_that_grows_anything` — commons inside a
+  difficulty-0 band, and *nothing at all* on the map beside it. (It replaced
+  `a_bands_difficulty_beats_the_maps_default`, whose second half asserted that
+  the ground around the band grew the map's `defaultDifficulty`.)
+- `a_map_with_no_band_at_all_grows_nothing` — a map with a default group and a
+  region over the whole of it, and still no mobs. It also pins the load line
+  above word for word, through `MapData::bandSummary()`, because that line is
+  the only warning the author gets.
+- `a_harness_with_no_map_at_all_grows_nothing` — no maps means no bands means
+  no mobs, stated on its own so that a harness which places its own mobs cannot
+  quietly start passing for the wrong reason.
+- `every_ambient_mob_on_the_shipped_map_stands_inside_a_band` — the invariant
+  itself, driven over `garden.tmj` with the real spawn pass: every live mob is
+  inside a band, or is the escort or body segment of one that is. There is no
+  third case.
+- `a_band_converges_to_the_population_its_own_area_buys` and
+  `a_band_stocks_its_own_outline_and_never_the_open_ground_beside_it` — a
+  band's target is its outline's area times `kTargetMobDensity`, and every mob
+  it places lands inside that outline. (The two used to be
+  `population_converges_to_the_target_near_a_player` and
+  `ambient_mobs_spawn_inside_the_buffered_viewport`, which measured the deleted
+  per-viewer fill; they now measure the band.)
+- `the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares` — no
+  band exceeds the tier its own difficulty buys.
 - `the_region_under_a_spawn_decides_its_group` and
-  `the_shipped_map_stocks_its_default_group` — the band → region →
+  `the_shipped_map_grows_its_own_biomes_roster` (formerly
+  `the_shipped_map_stocks_its_default_group`) — the band → region →
   `defaultMobGroup` fallback, which `spawn_tests.cpp`'s
   `the_shipped_map_falls_back_to_its_own_mob_group_wherever_nothing_says_otherwise`
   checks again off the real map.
@@ -673,9 +735,25 @@ Nothing today guards the client's *missing tile art* warning
 covers the SVG cache itself and not that path.
 
 And the real thing, which is the check that matters: `flowrix_server` boots on
-the staged map and prints its two `[map]` lines — the collision summary and the
-overhang note — with no other `[map]`, `[spawn]` or `[tiled]` line on stderr,
-and the native client draws it and stops where the art says it should. Measured
-on the map as it stands: the coarse grid calls 2494 of 4096 cells blocked, the
-shapes make 49.1% of the world's area solid, and 41% of the cells the coarse
-grid calls wall have ground you can stand on inside them.
+the staged map and prints its three `[map]` lines — the collision summary, the
+overhang note and the load report — with **no `[spawn]` or `[tiled]` line at
+all** on stderr, and the native client draws the map and stops where the art
+says it should. A `[spawn]` line on a shipped boot means the map lost its bands.
+Measured on the map as it stands, which the author is still redrawing, so read
+the boot lines rather than these numbers:
+
+```
+[map] data/garden.tmj: collision from water, dirt, castle; scenery background;
+6443 wall, 1150 water, 8791 ground cells; 93 shape sets over 7593 shaped cells
+[map] data/garden.tmj: a collision shape reaches 0.391 world units outside its
+own tile; it still blocks, in every cell it reaches, but check it was meant
+[map] garden: 128x128 tiles, biome "garden", mobs "garden", 4 bands difficulty 0
+(common)..40 (rare), 0 regions, 77 art files, 4 layers, doors: garden
+```
+
+and a client joining through that door meets a world every mob of which was
+born inside one of those four bands, or is the brood of a hole that was. A
+thirteen-second boot with one client joined counted 229 live mobs: 229 born in a
+band, 0 anywhere else. (Three of them had since wandered off their band's edge,
+which is why the check is against the spot a mob was *placed* — `MobAi::anchor`,
+never rewritten — and not against where it is standing.)

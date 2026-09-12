@@ -256,8 +256,8 @@
         "speed": 0,
         "cooldown": 2000,
         "description": "Just a rock",
-        "color": "#525252",
-        "image": "<svg width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" xmlns=\"http://www.w3.org/2000/svg\">\n  <polygon\n    points=\"16,1.4 30.6,12.3 25,29.6 7,29.6 1.4,12.3\"\n    fill=\"#777777\"\n    stroke=\"#606060\"\n    stroke-width=\"2\"\n    stroke-linecap=\"round\"\n  />\n</svg>",
+        "color": "#777777",
+        "image": "$rock",
         "ai_type": "passive",
         "range": 100,
         "groups": [
@@ -338,7 +338,6 @@
         "health": 125,
         "damage": 40,
         "size": 1.5,
-        "visual_scale": 1.4,
         "random_size": [
             1,
             2
@@ -346,8 +345,8 @@
         "speed": 2,
         "cooldown": 2000,
         "description": "Unpredictable",
-        "color": "#ffe796",
-        "image": "<svg width=\"32\" height=\"32\" viewBox=\"-125 -125 250 250\" xmlns=\"http://www.w3.org/2000/svg\">\n  <style>\n    .hexagon {\n      /* Shared styles from the code */\n      /* stroke-width is set to radius/5. For the largest hexagon (radius=90), this is 18. */\n      stroke-width: 18;\n      stroke-linecap: round;\n      stroke-linejoin: round;\n    }\n  </style>\n\n  <g>\n    <animateTransform \n      attributeName=\"transform\"\n      type=\"rotate\"\n      from=\"0 0 0\"\n      to=\"360 0 0\"\n      dur=\"1s\"\n      repeatCount=\"indefinite\" />\n\n    <polygon \n      class=\"hexagon\"\n      fill=\"#d5c7a6\" \n      stroke=\"#d5c7a6\"\n      points=\"90,0 45,77.94 -45,77.94 -90,0 -45,-77.94 45,-77.94\" />\n\n    <g>\n      <animateTransform \n        attributeName=\"transform\"\n        type=\"rotate\"\n        from=\"0 0 0\"\n        to=\"360 0 0\"\n        dur=\"1s\"\n        repeatCount=\"indefinite\" />\n\n      <polygon \n        class=\"hexagon\"\n        fill=\"#c0b395\" \n        stroke=\"#c0b395\"\n        points=\"60,0 30,51.96 -30,51.96 -60,0 -30,-51.96 30,-51.96\" />\n      \n      <g>\n        <animateTransform \n          attributeName=\"transform\"\n          type=\"rotate\"\n          from=\"0 0 0\"\n          to=\"360 0 0\"\n          dur=\"1s\"\n          repeatCount=\"indefinite\" />\n\n        <polygon \n          class=\"hexagon\"\n          fill=\"#ab9f85\" \n          stroke=\"#ab9f85\"\n          points=\"30,0 15,25.98 -15,25.98 -30,0 -15,-25.98 15,-25.98\" />\n      </g>\n    </g>\n  </g>\n</svg>",
+        "color": "#d5c7a6",
+        "image": "$sandstorm",
         "ai_type": "sandstorm",
         "range": 100,
         "groups": [
@@ -365,17 +364,34 @@
             1,
             2
         ],
-        "visual_scale": 1.5,
         "speed": 0,
         "cooldown": 2000,
         "description": "Spiky",
-        "color": "#16b302",
-        "image": "<svg width=\"150\" height=\"150\" viewBox=\"-75 -75 150 150\" xmlns=\"http://www.w3.org/2000/svg\">\n  <path fill=\"#222222\" d=\"M 60.00 0.00 L 50.50 3.00 L 50.50 -3.00 Z M 48.54 35.27 L 39.09 32.11 L 42.62 27.26 Z M 18.54 57.06 L 12.75 48.96 L 18.23 45.19 Z M -18.54 57.06 L -18.23 45.19 L -12.75 48.96 Z M -48.54 35.27 L -42.62 27.26 L -39.09 32.11 Z M -60.00 0.00 L -50.50 -3.00 L -50.50 3.00 Z M -48.54 -35.27 L -39.09 -32.11 L -42.62 -27.26 Z M -18.54 -57.06 L -12.75 -48.96 L -18.23 -45.19 Z M 18.54 -57.06 L 18.23 -45.19 L 12.75 -48.96 Z M 48.54 -35.27 L 42.62 -27.26 L 39.09 -32.11 Z\"/>\n\n  <path fill=\"#32a852\" stroke=\"#217337\" stroke-width=\"5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M 50.00 0.00 Q 42.80 13.92 40.45 29.39 Q 26.45 36.41 15.45 47.55 Q 0.00 45.00 -15.45 47.55 Q -26.45 36.41 -40.45 29.39 Q -42.80 13.92 -50.00 0.00 Q -42.80 -13.92 -40.45 -29.39 Q -26.45 -36.41 -15.45 -47.55 Q 0.00 -45.00 15.45 -47.55 Q 26.45 -36.41 40.45 -29.39 Q 42.80 -13.92 50.00 0.00 Z\"/>\n</svg>",
+        "color": "#32a852",
+        "image": "$cactus",
         "ai_type": "passive",
         "range": 100,
         "groups": [
             "desert"
         ]
+    },
+    "scorpion": {
+        "name": "Scorpion",
+        "health": 100,
+        "damage": 20,
+        "size": 1.75,
+        "speed": 2.8,
+        "cooldown": 2000,
+        "description": "It stings, and the sting is poisonous",
+        "color": "#c69a2d",
+        "image": "$scorpion",
+        "ai_type": "hostile",
+        "range": 400,
+        "groups": [
+            "desert"
+        ],
+        "poison": 0.006,
+        "poisonDuration": 2500
     },
     "beetle": {
         "name": "Beetle",

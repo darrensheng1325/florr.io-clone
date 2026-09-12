@@ -516,17 +516,16 @@ private:
     struct Bot {
         Entity entity = NULL_ENTITY;
         std::string name;
-        /// This bot's own identity for everything the reference seeds off its
-        /// socket id rather than its name: its persona, its strafe direction
-        /// and which of the map's farming zones it gravitates to. A bot has no
-        /// id string here, so it is given a number at creation and keeps it
-        /// across every death -- two bots that happen to share a NAME still
-        /// play differently, which is what the reference's random ids do.
+        /// This bot's own identity, separate from its name: its persona, its
+        /// strafe direction, its slot in a raid ring and which patch of ground
+        /// it gravitates to. A bot has no id string here, so it is given a
+        /// number at creation and keeps it across every death -- two bots that
+        /// happen to share a NAME still play differently.
         std::uint32_t id = 0;
-        /// Where the bot currently calls home, and how far it may stray from
-        /// it. Both are re-derived every tick by the mode controller (raid
-        /// rally point, group centroid, or its band's farming zone); they are
-        /// held only so the wander and tether branches agree within a tick.
+        /// Where the bot is working right now: its hunting ground, or the
+        /// rally point of whatever it has been pulled onto. Mirrored out of
+        /// the AI state each tick for anything outside the controller that
+        /// wants to know where a bot considers itself to be.
         Vec2 anchor;
         bool hasAnchor = false;
         /// Wall-clock at which a dead bot's body is replaced. A corpse that
@@ -564,94 +563,136 @@ private:
 
     // -- bot AI ------------------------------------------------------------
     //
-    // All of this is server/bot_ai.cpp. It is a port of the reference's
-    // src/server/botManager.ts decision tree, and the names are that file's so
-    // the two can be read side by side.
+    // All of this is server/bot_ai.cpp, whose header explains the shape: one
+    // sensing pass per tick, then an activity machine that holds whatever it
+    // chose for at least a dwell period. server/bot_ai.h carries the tuning.
 
     /// One bot's decision for this tick, written into its PlayerInput.
     void stepOneBot(Bot&, double nowMillis);
 
-    /// What a bot is doing right now, and the ground that goes with it.
-    enum class BotMode : std::uint8_t { Raid, HighRarity, Normal };
-    struct BotModeContext {
-        BotMode kind = BotMode::Normal;
-        Vec2 anchor;
-        bool hasAnchor = false;
-        double tetherRadius = 0;
-        double returnRadius = 0;
+    /// Everything one bot can see this tick, gathered in ONE broadphase query
+    /// so that the decision and the steering cannot disagree about what is in
+    /// the world -- which is exactly how the old controller ended up walking
+    /// bots through mobs its targeting had filtered out.
+    struct BotSenses {
+        Vec2 at;
+        double bodyRadius = kPlayerBaseRadius;
+        double healthRatio = 1.0;
+        /// The distance at which this bot's petals connect, at full attack
+        /// extension. The whole combat controller is built on it.
+        double reach = 0;
+
+        /// The best thing to fight, already through the notice ranges, the
+        /// leash and the stickiness bonus.
+        Entity target = NULL_ENTITY;
+        double targetDist = 0;
+        double targetRadius = 0;
+        bool targetIsBoss = false;
+
+        /// A mob close enough that carrying on would walk into it. Always
+        /// worth engaging, whatever the bot thought it was doing -- it is
+        /// scored so far above everything else that it becomes `target`, which
+        /// is why nothing below needs its distance.
+        Entity blocker = NULL_ENTITY;
+
+        /// The nearest mob actively hunting this bot, and the nearest drop.
+        Entity threat = NULL_ENTITY;
+        Entity pickup = NULL_ENTITY;
+
+        /// How many live mobs were in sense range at all. What tells a bot its
+        /// patch has gone barren and it is time to move on.
+        int mobsInRange = 0;
     };
-    BotModeContext computeBotMode(Bot&, double nowMillis);
+    void botSense(Bot&, double nowMillis, BotSenses& out);
+
+    /// Picks and maintains the patch of ground a bot works.
+    ///
+    /// Ambient mobs are stocked around HUMANS, so a patch is chosen around one
+    /// -- far enough out not to crowd them, inside the neighbourhood the
+    /// spawner actually fills. With nobody online it falls back to a spawn
+    /// band suited to the bot's gear, so a joining player arrives into a world
+    /// that already looks inhabited.
+    void botUpdateHome(Bot&, double nowMillis, const BotSenses&);
+    bool botPickHuntingGround(const Bot&, Vec2& out);
+
+    /// The activities. Each one writes the bot's input and nothing else.
+    void botFight(Bot&, const BotSenses&, double nowMillis);
+    void botHunt(Bot&, const BotSenses&, double nowMillis);
+    void botLoot(Bot&, const BotSenses&, double nowMillis);
+    void botRetreat(Bot&, const BotSenses&, double nowMillis);
+    void botTravel(Bot&, const BotSenses&, double nowMillis, Vec2 goal);
+    void botRoam(Bot&, const BotSenses&, double nowMillis);
+    void botRevive(Bot&, const BotSenses&, double nowMillis, Entity downed);
+
+    /// Moves a bot into a new activity, resetting whatever the old one owned.
+    void botEnter(Bot&, BotActivity, double nowMillis);
 
     /// Per-tick indexes, built once for the whole pass rather than per bot.
     void rebuildBotBossIndex(double nowMillis);
-    void computeBotGroups();
+    /// A coarse count of where the overworld's mobs are standing.
+    ///
+    /// A bot sees kBotSenseRadius and no further, so left to itself it picks
+    /// somewhere to work by geometry and finds out whether anything lives
+    /// there by walking to it. Measured, that is most of the population
+    /// wandering most of the time. This is the part a player has that a bot
+    /// does not -- a sense of where the action is -- and it is one pass over
+    /// the mobs per tick rather than a query per bot.
+    void rebuildBotMobHeat();
+    int botMobHeatAt(Vec2) const;
     void computeBotRaidSlots(double nowMillis);
     void updateBotSquads(double nowMillis);
     /// Bots call fresh super/unique sightings out in chat, which is also what
-    /// rallies the raid -- the reference's chat trigger cannot fire for a line
-    /// the server emitted itself.
+    /// rallies the population onto one.
     void announceNewBosses(double nowMillis);
-
     /// Rallies every bot onto the best boss in the world (unique over super,
-    /// never ultra). Also the chat handler's entry point: someone typing
-    /// "super" is how a raid usually starts.
+    /// then most recently seen, then closest to a human). Returns whether one
+    /// was found; the chat handler answers the player either way.
     bool triggerBotRaid(double nowMillis);
-    /// The forced rally point while one is live and its tier still exists.
+    /// The rally point every bot is currently pulled toward, if any.
     bool activeForcedRaidAnchor(double nowMillis, Vec2& out);
+    /// The nearest boss within rally range of this bot, preferring uniques.
+    bool botNearestBoss(const Bot&, Vec2& out, double& distOut);
 
     // -- bot movement primitives -------------------------------------------
 
     /// Writes the finished heading into the bot's input: separation from other
-    /// bots, repulsion from every mob body except the one being engaged, the
-    /// persona's bias, and a turn-rate limit on top.
-    void botDriveMove(Bot&, Vec2 direction, double speedMultiplier, double petalExtension,
-                      double agility = 1.0, Entity avoidExcept = NULL_ENTITY);
-    /// Stands still, petals neutral. The reference's `useMouse = false`.
-    void botHold(Bot&, double petalExtension = 1.0);
+    /// bots, repulsion from the mobs it is NOT engaging, the turn-rate limit,
+    /// and the petal state.
+    ///
+    /// `avoidStrength` is how hard the mob repulsion pushes, which differs by
+    /// what the bot is doing -- see kBotAvoidStrengthTravel/Fight.
+    void botDrive(Bot&, Vec2 direction, double speedMultiplier, double avoidStrength,
+                  double agility = 1.0, Entity engaging = NULL_ENTITY);
+    /// Stands still. Petal state is left to the caller's last request.
+    void botHold(Bot&);
+    /// Extends or retracts the ring, with a hold so it cannot flicker.
+    void botSetPetals(Bot&, bool out, double nowMillis, bool defending = false);
 
-    /// The reference's sampled wall raycast, sample for sample: every half
-    /// tile along the segment. Deliberately NOT Terrain::segmentBlocked, whose
-    /// exact walk refuses gaps this one steers through.
+    /// The reference's sampled raycast. Deliberately not the terrain's exact
+    /// swept test: this one steers through the diagonal seams and narrow gaps
+    /// the exact one refuses, which is where bots are willing to walk.
     bool botRayHitsWall(Vec2 from, Vec2 to) const;
-    /// Probes the requested direction then progressively wider offsets, and
-    /// answers with the first clear one.
+    /// Rotates a heading to the first probe offset with no wall in it.
     Vec2 botSteerAroundWalls(Vec2 from, Vec2 direction,
-                             double probeDistance = kTileSize * 1.4) const;
-    Vec2 botAvoidNearbyMobs(Vec2 at, Entity except);
+                             double probeDistance = kTileSize * 1.2) const;
+    /// A steering bias away from every nearby mob except the one being fought.
+    Vec2 botAvoidMobs(Vec2 at, Entity except);
+    /// Watches for the one unambiguous fault: a bot asking to move and not
+    /// moving. Returns true while an escape manoeuvre is running.
+    bool botHandleStuck(Bot&, double nowMillis);
 
-    /// Follows (and lazily computes) an A* path toward a goal. False when no
-    /// path is available or it is finished, so the caller falls back to the
-    /// cheap steering probe.
+    /// Follows a cached A* path toward `goal`, recomputing when it goes stale
+    /// and smoothing it against line of sight. False when there is no usable
+    /// path, which is the caller's cue to steer directly.
     bool botFollowPath(Bot&, double nowMillis, Vec2 goal, double speedMultiplier,
-                       double petalExtension, Entity avoidExcept = NULL_ENTITY);
-    /// A* over the tile grid. Fills `out` with waypoints from the tile after
-    /// the start through the goal; false when no route was found.
+                       double avoidStrength, Entity engaging = NULL_ENTITY);
     bool botFindPath(Vec2 start, Vec2 goal, std::vector<Vec2>& out);
     void botClearPath(BotAiState&);
+    int botStrafeDirection(Bot&, double nowMillis);
 
-    // -- bot decisions -----------------------------------------------------
-
-    bool botDetectOscillation(Bot&, double nowMillis);
-    void botResetOscillation(Bot&, double nowMillis);
-    Vec2 botPickUnstickDirection(const Bot&);
-    int botTangentDirection(Bot&, double nowMillis);
-
-    /// The best mob to fight, or NULL_ENTITY. Scored priority-first with a
-    /// bonus for the tier this bot's gear says it should be farming, and a
-    /// flat bonus for whatever it is already committed to.
-    Entity botPickTarget(const Bot&, const BotModeContext&, double nowMillis, double& distOut);
-    /// A non-target mob sitting in the bot's path close enough to body-slam.
-    Entity botFindInterceptingMob(Vec2 at, Vec2 direction, Entity except, double range,
-                                  double& distOut);
-    Entity botFindPickup(const Bot&, const BotModeContext&, double& distOut);
     /// The closest downed bot worth diverting to revive, or NULL_ENTITY.
     Entity botFindReviveTarget(const Bot&) const;
     bool botHasNearbyBuddy(const Bot&, double range) const;
-    /// The nearest boss within raid range of this bot, preferring uniques and
-    /// then the most recently seen.
-    bool botNearestBoss(const Bot&, Vec2& out, double& distOut);
-    bool botHasHighRarityMobNearby(const Bot&, double range);
-    bool botPickFarmZone(const Bot&, int rarityIndex, int rotation, Vec2& out) const;
 
     // -- bot loadout swaps -------------------------------------------------
 
@@ -663,16 +704,21 @@ private:
     // -- bot reach ---------------------------------------------------------
 
     /// The farthest a petal edge can be from this bot's centre, plus the
-    /// standoff buffer -- the one number the whole combat controller is built
-    /// on. Derived from the ring's own geometry rather than mirrored.
+    /// standoff buffer. Derived from the ring's own geometry rather than
+    /// copied from it: a hand copy that drifts does not fail, it just parks
+    /// the bot outside the range its petals actually reach.
     double botPetalReach(const Bot&, double petalExtension) const;
     /// Highest petal rarity across the bot's active row, which is what decides
-    /// the tier it hunts and the zone it farms.
+    /// the ground it wants to farm.
     int botMaxRarityIndex(const Bot&) const;
-
-    /// Long-haul raid routing: hop through a teleporter when one puts the bot
-    /// meaningfully closer. True when this tick is handled.
-    bool botRaidShortcut(Bot&, double nowMillis, Vec2 anchor, double distToAnchor);
+    /// The best tier anything on this map actually spawns at.
+    ///
+    /// A bot's standards are relative to its gear, and a bot geared past
+    /// everything the world contains would otherwise have standards no mob can
+    /// meet and walk past the lot. Resolved once from the maps' bands; the
+    /// staged set does not change while the server is up.
+    int botMapTierCeiling() const;
+    mutable int botMapCeiling_ = -1;
 
     // -- tick phases -------------------------------------------------------
     void runSystems(double nowMillis, double dt);
@@ -694,6 +740,15 @@ private:
     WorldMaps worldMaps_;
     SpatialGrid grid_;
     Rng rng_;
+    /// The bots' OWN stream, separate from the world's.
+    ///
+    /// A controller that draws from rng_ decides what every other system rolls
+    /// as well: change how often a bot pauses and the arena's crowd lands
+    /// somewhere else, a drop table comes up differently, and a test that
+    /// pinned any of it fails for a reason that has nothing to do with what
+    /// changed. Bots are the most-tuned thing on the server, so they get their
+    /// own stream and the world's rolls stop moving underneath them.
+    Rng botRng_;
 
     Database database_;
     /// Registration and login limits, keyed on the peer address rather than on
@@ -754,11 +809,22 @@ private:
     /// so this is the list it gets.
     std::vector<RealmPoint> activePlayers_;
     /// The same, restricted to real connections. The spawner drives population
-    /// and the unseen-despawn census off THIS one: bots must not each pull a
-    /// neighbourhood of mobs into existence, nor keep the whole world alive.
+    /// and the unseen-despawn census off THIS one: a bot must not stock the
+    /// bands it wanders through, nor keep what is already standing alive
+    /// against the unseen-despawn sweep.
     std::vector<RealmPoint> humanPlayers_;
 
     std::vector<Bot> bots_;
+    /// Where the humans are standing, collected once per bot pass. Bots leave
+    /// the mobs around a real player alone (kBotPlayerClaimRadius), and asking
+    /// the session table per candidate mob per bot per tick would be a walk
+    /// over it a few thousand times a second.
+    std::vector<Vec2> botHumanSpots_;
+    /// The heat grid rebuildBotMobHeat() fills, in kBotHeatCellSize cells over
+    /// the overworld.
+    std::vector<std::uint16_t> botMobHeat_;
+    int botHeatCols_ = 0;
+    int botHeatRows_ = 0;
     /// Broadphase scratch for the bot controller, reused so a per-tick scan
     /// over two dozen bots does not allocate two dozen times.
     std::vector<Entity> botCandidates_;
@@ -792,17 +858,21 @@ private:
     };
     BotForcedRaid botForcedRaid_;
 
-    /// This tick's bot grouping for high-rarity mode, and the angular slot each
-    /// raider owns around its boss. Rebuilt per tick: the centroids follow the
-    /// group as it moves, and the slots are redealt as raiders join and die.
-    struct BotGroup {
-        Vec2 centre;
-        int size = 0;
+    /// The angular slot each raider owns around its rally point, so a raid
+    /// spreads around a boss instead of stacking on one side of it, and how
+    /// wide the crowd it belongs to should stand. Rebuilt once per pass rather
+    /// than per bot.
+    ///
+    /// The width is sized off the RAIDER COUNT: twenty flowers rallying into a
+    /// circle a few body-widths across spend the whole fight shoving each
+    /// other, and the shoving is what reads as a crowd of bots vibrating.
+    struct BotRaidSlot {
+        double angle = 0;
+        double crowdRadius = kBotRaidRingMin;
     };
-    std::unordered_map<Entity, BotGroup> botGroups_;
-    std::unordered_map<Entity, double> botRaidSlots_;
-    /// Scratch for both of the above, so the per-tick rebuild allocates
-    /// nothing once the population has settled.
+    std::unordered_map<Entity, BotRaidSlot> botRaidSlots_;
+    /// Scratch for the above and for the cull ordering, so the per-tick
+    /// rebuild allocates nothing.
     std::vector<std::size_t> botOrderScratch_;
 
     BotPathScratch botPath_;

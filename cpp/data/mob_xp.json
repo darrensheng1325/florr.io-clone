@@ -131,6 +131,17 @@
     "super": 1200000,
     "unique": 6800000
   },
+  "scorpion": {
+    "common": 1,
+    "uncommon": 3,
+    "rare": 30,
+    "epic": 270,
+    "legendary": 1400,
+    "mythic": 32000,
+    "ultra": 150000,
+    "super": 1200000,
+    "unique": 6800000
+  },
   "beetle": {
     "common": 1,
     "uncommon": 3,

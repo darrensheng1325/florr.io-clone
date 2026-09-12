@@ -184,8 +184,8 @@ struct MobConfig {
     bool reversed = false;       ///< art is mirrored horizontally
     bool noMobCollision = false;
 
-    /// The mob never appears in a GROUP roll -- the density fill, a band or a
-    /// region naming a group never produces it. `target_dummy` declares no
+    /// The mob never appears in a GROUP roll -- a band or a region naming a
+    /// group never produces it. `target_dummy` declares no
     /// spawn_weight and would otherwise inherit the default 1.0 and take its
     /// share of every group it belongs to; it only reaches the world through
     /// a band that names it outright, which is how the dummy plots work.

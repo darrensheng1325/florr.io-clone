@@ -642,7 +642,7 @@ TEST(a_hornets_missile_reaches_the_client_at_the_size_it_was_fired_at) {
 
     // THIS hornet's shot, found through the server's Projectile.owner and
     // its net id, not the first projectile the stream happens to carry: the
-    // flower stands at the garden door, where the ambient fill puts hornets
+    // flower stands at the garden door, where the band over it puts hornets
     // of other tiers within sight, and an uncommon one firing first would
     // deliver a shot 1.3x this size that has nothing to do with the port
     // under test.

@@ -47,16 +47,6 @@ double rollSizeJitter(const MobConfig& config, Rarity rarity, Rng& rng) {
     return rng.range(config.randomSizeMin, config.randomSizeMax) / config.size * fixture;
 }
 
-/// The largest body that roll can produce. Used to space a spawn against its
-/// neighbours before the roll itself has happened.
-double sizeJitterCeiling(const MobConfig& config, Rarity rarity) {
-    const double fixture = fixtureSizeScale(config, rarity);
-    if (!(config.randomSizeMax > config.randomSizeMin) || !(config.size > 0.0)) {
-        return std::max(config.randomSizeMin, config.randomSizeMax) * fixture;
-    }
-    return config.randomSizeMax / config.size * fixture;
-}
-
 /// A mob whose body cannot hurt a player.
 ///
 /// Matched by id because the reference states the rule that way -- there is no
@@ -80,14 +70,6 @@ Vec2 escortRingPoint(Vec2 anchor, double anchorRadius, double gap, Rng& rng) {
 /// so the only pair it can confuse is two players standing inside each other,
 /// who are owed the same neighbourhood anyway.
 constexpr double kViewerMatchRadius = 24.0;
-
-/// The mobs one player is owed: the reference's world density over their own
-/// buffered viewport, which is where the default of 16 comes from
-/// (src/server/enemySpawner.ts:573-583).
-int viewerMobTarget(const SpawnSystem::Viewer& viewer) {
-    const double area = 2.0 * viewer.half.x * 2.0 * viewer.half.y;
-    return std::max(1, static_cast<int>(std::ceil(kTargetMobDensity * area)));
-}
 
 /// The luck a spawn placed at `at` is charged to: the closest flower to it in
 /// the SAME realm. What the reference does for a zone fill, which belongs to
@@ -134,9 +116,9 @@ bool nearAnyPlayer(const std::vector<SpawnSystem::Viewer>& viewers, Realm realm,
     return false;
 }
 
-/// True when a rectangle overlaps any player's buffered viewport. What decides
-/// whether a spawn zone is worth stocking at all: only the handful somebody can
-/// see are simulated.
+/// True when a band's box overlaps any player's buffered viewport. What decides
+/// whether a band is worth stocking at all: only the handful somebody can see
+/// are simulated.
 bool zoneInView(const Rect& bounds, Realm realm,
                 const std::vector<SpawnSystem::Viewer>& viewers) {
     for (const SpawnSystem::Viewer& viewer : viewers) {
@@ -242,46 +224,18 @@ std::uint16_t SpawnSystem::chooseRegionMobAt(const ContentRegistry& content, Rea
     }
     // Outside every region: the map's own default group, which is the only
     // thing left that can say what belongs here.
+    //
+    // There is no arm below this one. A map is always in hand by the time we
+    // get here: this is reached only from chooseZoneMobType, which is reached
+    // only from spawnInZone, which needs a band -- and a band exists only
+    // because rebuildZones read it off a map in `worldMaps`, whose realm
+    // therefore resolves. A harness with no map has no band, so it spawns
+    // nothing at all and never arrives here; that is what spawning.h's
+    // `worldMaps` says, and it used to be untrue while the density fill could
+    // reach this function with a bare Terrain.
     const MapData* map = worldMaps != nullptr ? worldMaps->forRealm(realm) : nullptr;
-    if (map != nullptr) {
-        return chooseGroupMob(content, content.mobGroupIndex(map->defaultMobGroup()), rarity, rng);
-    }
-    // No map at all -- a harness with a bare Terrain. Nothing can say what
-    // belongs anywhere, so everything does: one roll over every group, each
-    // member at its own weight. A test that cares which mobs come out loads a
-    // map; one that only needs mobs at all gets them.
-    double total = 0.0;
-    for (const MobGroup& group : content.mobGroups()) {
-        for (const MobGroupMember& member : group.members) {
-            if (member.weight > 0.0 && content.mobStats(member.mob, rarity).ambient) total += member.weight;
-        }
-    }
-    if (!(total > 0.0)) return kInvalidIndex;
-    double roll = rng.unit() * total;
-    std::uint16_t last = kInvalidIndex;
-    for (const MobGroup& group : content.mobGroups()) {
-        for (const MobGroupMember& member : group.members) {
-            if (!(member.weight > 0.0) || !content.mobStats(member.mob, rarity).ambient) continue;
-            last = member.mob;
-            roll -= member.weight;
-            if (roll < 0.0) return member.mob;
-        }
-    }
-    return last;
-}
-
-std::uint16_t SpawnSystem::chooseAmbientMobAt(const ContentRegistry& content, Realm realm, Vec2 at,
-                                              Rarity rarity, Rng& rng) {
-    rebuildZones(content);
-    // A difficulty band that names its own mobs wins over the ground it sits on:
-    // that is what a band naming `hornet` is for.
-    for (const SpawnZone& zone : zones_) {
-        if (zone.realm != realm) continue;
-        if (zone.resolved.empty()) continue;
-        if (!zoneContains(zone.bounds, zone.polygon, at)) continue;
-        return rollResolvedRows(content, zone.resolved, rarity, rng);
-    }
-    return chooseRegionMobAt(content, realm, at, rarity, rng);
+    if (map == nullptr) return kInvalidIndex;
+    return chooseGroupMob(content, content.mobGroupIndex(map->defaultMobGroup()), rarity, rng);
 }
 
 bool SpawnSystem::permanentFixtureExists(World& world, std::uint16_t mobIndex, Rarity rarity,
@@ -308,16 +262,16 @@ Rarity SpawnSystem::rollRarity(const MobConfig& config, double difficulty, doubl
 }
 
 double SpawnSystem::difficultyAt(Realm realm, Vec2 at) const {
-    // A band first: it is the author drawing danger onto a shape, and it wins
-    // over whatever the map says its open ground is. First match in map order,
-    // as every other shape lookup here is.
+    // A band, or nothing. The author drawing danger onto a shape is the only
+    // way a square of the world is dangerous; a square no band covers grows no
+    // mob at all, and zero is what that reads as. First match in map order, as
+    // every other shape lookup here is.
     for (const SpawnZone& zone : zones_) {
         if (zone.realm != realm) continue;
         if (!zoneContains(zone.bounds, zone.polygon, at)) continue;
         return zone.difficulty;
     }
-    const MapData* map = worldMaps != nullptr ? worldMaps->forRealm(realm) : nullptr;
-    return map != nullptr ? map->defaultDifficulty() : 0.0;
+    return 0.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,13 +360,10 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     if (netIds != nullptr) world.add<NetId>(e, NetId{netIds->next()});
 
     // The census is the OVERWORLD's population. Another realm's mobs are
-    // counted by the spawner that fills it, and a maze coordinate would land
-    // in a section of a map it is not on.
+    // counted by the spawner that fills it.
     if (realm == Realm::Overworld) {
         ++census_.mobs;
         ++census_.spawnedTotal;
-        const int section = sectionAt(at);
-        if (section >= 0) ++census_.perSection[static_cast<std::size_t>(section)];
     }
 
     if (depth < kMaxNestDepth) {
@@ -500,6 +451,11 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
     }
 }
 
+// An escort is placed by its NEST, not by a band. The ring it stands on is
+// centred on the parent and routinely reaches over the band's edge onto ground
+// no band covers -- which is legal, and deliberately ungated: the band chose
+// the nest, and the nest chose these. The same is true of a centipede's body
+// segments (spawnBodyChain).
 Entity SpawnSystem::spawnEscort(World& world, const Terrain& terrain, const ContentRegistry& content,
                                 std::uint16_t childIndex, Rarity nestRarity, Vec2 at, Realm realm,
                                 Entity parent, double nowMillis, Rng& rng, int depth) {
@@ -529,10 +485,6 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
                       const std::vector<RealmPoint>& players, Rng& rng, double nowMillis, double dt,
                       CommandBuffer& commands) {
     bind(world);
-    // The overworld's own size, off the terrain, before anything samples a
-    // point: the map says how big it is and the border band is a fraction of
-    // THAT, not of a compile-time square. See overworldExtent_.
-    overworldExtent_ = terrain.realmExtent(Realm::Overworld);
     rebuildZones(content);
     gatherViewers(world, players);
 
@@ -540,22 +492,31 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
     runNests(world, terrain, content, rng, nowMillis);
 
     // The census is O(mobs x players) and nothing about a population of a few
-    // hundred changes meaningfully inside 200ms.
+    // hundred changes meaningfully inside half a second.
     if (nowMillis >= nextPopulationMillis_) {
         nextPopulationMillis_ = nowMillis + kPopulationIntervalMillis;
         takeCensus(content, viewers_, nowMillis, commands);
-        fillNeighbourhoods(world, terrain, content, viewers_, rng, nowMillis);
     }
 
-    // Its own clock, and it reads the last census rather than taking one of
-    // its own, so the band fill is not tied to the density pass's cadence.
+    // The one ambient spawn path. Its own clock, and it reads the last census
+    // rather than taking one of its own, so it is not tied to that cadence.
     runSpawnZones(world, terrain, content, viewers_, rng, nowMillis);
+
+    // And that is all of it. There is no second pass behind the bands covering
+    // the ground the author left unbanded -- a square no band covers grows
+    // nothing, which is the point.
+    //
+    // The ARENA and the MAZE are not that rule's business: they are generated
+    // realms with no object layer to draw a band on, and ModeSpawner
+    // (mode_spawning.h) fills each one whole, every tick, through spawnMob().
+    // Their mobs are kept alive by the realm-occupied branch of takeCensus
+    // rather than by any band.
 }
 
 void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& players) {
-    // Every OVERWORLD flower, with the two facts a coordinate cannot carry. A
-    // client that reported nothing keeps the default box, exactly as the
-    // reference's `player.viewportWidth || VIEWPORT_WIDTH` does.
+    // Every flower on an authored map, with the two facts a coordinate cannot
+    // carry. A client that reported nothing keeps the default box, exactly as
+    // the reference's `player.viewportWidth || VIEWPORT_WIDTH` does.
     worldViewers_.clear();
     playerBodies_->each([&](Entity e, PlayerTag&, Transform& transform) {
         // Every flower on an authored MAP, not only the overworld's: spawn
@@ -576,10 +537,10 @@ void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& pla
         worldViewers_.push_back(viewer);
     });
 
-    // The caller's list stays the list -- it decides WHO the population is kept
-    // for -- and each entry is only paired with the flower standing on it. One
-    // that pairs with nothing is a bare coordinate from a harness, and keeps
-    // the defaults above.
+    // The caller's list stays the list -- it decides WHO the bands are stocked
+    // and the population kept for -- and each entry is only paired with the
+    // flower standing on it. One that pairs with nothing is a bare coordinate
+    // from a harness, and keeps the defaults above.
     viewers_.clear();
     viewers_.reserve(players.size());
     realmOccupied_.fill(false);
@@ -624,8 +585,6 @@ void SpawnSystem::expireEscorts(double dt, CommandBuffer& commands) {
 void SpawnSystem::takeCensus(const ContentRegistry& content, const std::vector<Viewer>& viewers,
                              double nowMillis, CommandBuffer& commands) {
     census_.mobs = 0;
-    census_.perSection.fill(0);
-    neighbours_.assign(viewers.size(), 0);
     doomed_.clear();
 
     mobPlacements_.clear();
@@ -652,19 +611,18 @@ void SpawnSystem::takeCensus(const ContentRegistry& content, const std::vector<V
             return;
         }
         bool nearAnyone = unattended;
-        for (std::size_t i = 0; i < viewers.size(); ++i) {
+        for (const Viewer& viewer : viewers) {
             // Same map first: a mob is only ever "seen" by somebody standing
             // in its own coordinate space.
-            if (viewers[i].realm != transform.realm) continue;
+            if (viewer.realm != transform.realm) continue;
             // Each flower's OWN box, not one 1920x1080 rectangle for everybody:
             // a mob at the edge of an ultrawide screen is being drawn, and
             // starting its recycle clock is what makes it blink out in front of
             // its owner (src/server/playerState.ts:1041).
-            const Vec2 offset = transform.position - viewers[i].position;
-            if (std::abs(offset.x) <= viewers[i].half.x &&
-                std::abs(offset.y) <= viewers[i].half.y) {
-                ++neighbours_[i];
+            const Vec2 offset = transform.position - viewer.position;
+            if (std::abs(offset.x) <= viewer.half.x && std::abs(offset.y) <= viewer.half.y) {
                 nearAnyone = true;
+                break;
             }
         }
 
@@ -679,37 +637,12 @@ void SpawnSystem::takeCensus(const ContentRegistry& content, const std::vector<V
         }
 
         ++census_.mobs;
+        // The placement record the band fill spaces its next spawns against.
         mobPlacements_.push_back(MobPlacement{transform.position, body.radius, transform.realm});
-        // The nine-section census is the OVERWORLD's: it is what the density
-        // fill's per-section cap reads, and that pass runs on that map alone.
-        if (transform.realm != Realm::Overworld) return;
-        const int section = sectionAt(transform.position);
-        if (section >= 0) ++census_.perSection[static_cast<std::size_t>(section)];
     });
 
     for (const Entity e : doomed_) commands.destroy(e);
     census_.despawnedTotal += static_cast<int>(doomed_.size());
-}
-
-bool SpawnSystem::placementAllowed(const Terrain& terrain, const std::vector<Viewer>& viewers,
-                                   Vec2 position, int& sectionOut) const {
-    // Overworld-only by construction: the density fill runs on that map alone
-    // (fillNeighbourhoods), which is what makes the section lookup and the
-    // overworld extent the right questions here.
-    sectionOut = sectionAt(position);
-    if (sectionOut < 0) return false;
-    // The border band is refused outright, before anything else is asked about
-    // the point.
-    if (inBorderBand(position, overworldExtent_)) return false;
-    if (terrain.blocked(position, Realm::Overworld)) return false;
-    // A spawn rectangle owns its own population, at its own difficulty. The
-    // density fill stays out of one entirely: letting it in would let a band's
-    // ground be stocked twice, once by the band's own difficulty and once by
-    // the map default the fill rolls out here
-    // (src/server/enemySpawner.ts:752-756).
-    if (inAnySpawnZone(position, sectionOut)) return false;
-    if (nearAnyPlayer(viewers, Realm::Overworld, position, kMinSpawnDistance)) return false;
-    return !crowdedAt(Realm::Overworld, position, kPreliminarySpawnRadius, kMinMobSpawnSpacing);
 }
 
 bool SpawnSystem::crowdedAt(Realm realm, Vec2 position, double halfSize,
@@ -720,123 +653,6 @@ bool SpawnSystem::crowdedAt(Realm realm, Vec2 position, double halfSize,
         if (distanceSq(mob.position, position) < reach * reach) return true;
     }
     return false;
-}
-
-bool SpawnSystem::inAnySpawnZone(Vec2 position, int section) const {
-    if (section < 0 || section >= kSectionCount) return false;
-    const std::uint16_t bit = static_cast<std::uint16_t>(1u << section);
-    for (const SpawnZone& zone : zones_) {
-        // The section mask is the OVERWORLD's grid, and so is this test: it is
-        // the density fill asking whether a point it sampled belongs to a band
-        // instead, and that fill runs on the overworld alone.
-        if (zone.realm != Realm::Overworld) continue;
-        if ((zone.sections & bit) == 0) continue;
-        if (zoneContains(zone.bounds, zone.polygon, position)) return true;
-    }
-    return false;
-}
-
-void SpawnSystem::fillNeighbourhoods(World& world, const Terrain& terrain,
-                                     const ContentRegistry& content,
-                                     const std::vector<Viewer>& viewers, Rng& rng,
-                                     double nowMillis) {
-    for (std::size_t i = 0; i < viewers.size(); ++i) {
-        const Viewer& viewer = viewers[i];
-        // The density fill is the OVERWORLD's alone. It is built out of the
-        // nine sections, the border band and the ant-hell throttle, every one
-        // of which is a property of that one map; a second map is populated
-        // entirely by the spawn bands its author drew.
-        if (viewer.realm != Realm::Overworld) continue;
-        // What this player is owed follows the size of their own screen: the
-        // reference multiplies the world's density by each buffered viewport
-        // it is asked to keep populated, so a bigger window is a bigger
-        // neighbourhood rather than a thinner one.
-        const int deficit = viewerMobTarget(viewer) - neighbours_[i];
-        if (deficit <= 0) continue;
-
-        const int budget = std::min(deficit, kMaxSpawnsPerPass);
-        for (int n = 0; n < budget; ++n) {
-            if (census_.mobs >= mobCap) return;
-
-            Vec2 at;
-            int section = -1;
-            bool placed = false;
-            for (int attempt = 0; attempt < kSpawnPlacementAttempts; ++attempt) {
-                // Sampled, then accepted or REJECTED -- never moved. Nudging a
-                // blocked point to the nearest open ground is what turns a lake
-                // into a halo of mobs around its shore and holds the population
-                // flat where the reference lets it genuinely thin out.
-                const Vec2 candidate = viewer.position +
-                                       Vec2{rng.range(-viewer.half.x, viewer.half.x),
-                                            rng.range(-viewer.half.y, viewer.half.y)};
-                if (placementAllowed(terrain, viewers, candidate, section)) {
-                    at = candidate;
-                    placed = true;
-                    break;
-                }
-            }
-            // Every sample landed in a wall, a lake or another player's lap.
-            // Give up on this player for the pass rather than burning the rest
-            // of the budget on the same geometry.
-            if (!placed) break;
-
-            // Ant Hell throttle. Placed exactly where the reference places it:
-            // after the position is final and before anything is rolled for it,
-            // so a rejected attempt costs this player one of its three spawns
-            // for the pass rather than being retried somewhere else.
-            if (section == kAntHellSection && rng.unit() > kAntHellSpawnScale) continue;
-
-            const std::size_t bucket = static_cast<std::size_t>(section);
-            if (census_.perSection[bucket] >= std::min(kSectionTargetPopulation, kMaxMobsPerSection)) {
-                continue;
-            }
-
-            // Tier before type, because a mob's eligibility depends on the
-            // tier: min_rarity takes a mob out of its groups below its floor.
-            // The DIFFICULTY of the ground decides it -- which out here, where
-            // the fill deliberately stays out of every band, is the map's own
-            // `defaultDifficulty`. The roll is charged to the player whose
-            // neighbourhood asked for the mob -- luck is what a clover loadout
-            // buys, and a spawn owned by nobody would never feel it
-            // (src/server/enemySpawner.ts:775-777).
-            Rarity rarity = rollSpawnRarity(difficultyAt(Realm::Overworld, at), viewer.luck, rng);
-            // WHAT lives here is the map's business: the band covering this
-            // point, or the map's default group when no band does.
-            std::uint16_t type = chooseAmbientMobAt(content, Realm::Overworld, at, rarity, rng);
-            if (type == kInvalidIndex) break;   // nothing the map admits here
-            rarity = clampRarity(std::max(rarityIndex(rarity),
-                                          rarityIndex(content.mob(type).minRarity)));
-
-            // A permanent fixture is admitted once per tier per section. It is
-            // never despawned and effectively unkillable, so a duplicate would
-            // stand there for the life of the server.
-            if (content.mob(type).neverAmbient &&
-                permanentFixtureExists(world, type, rarity, Realm::Overworld, section)) {
-                continue;
-            }
-            // Phase two used the same 20-unit preliminary body as TypeScript.
-            // Its finalizer then repeats the overlap test with the chosen
-            // rarity's actual body, which matters for mythic-and-up mobs.
-            const MobStats finalStats = content.mobStats(type, rarity);
-            const double finalRadius =
-                finalStats.radius * sizeJitterCeiling(content.mob(type), rarity);
-            if (crowdedAt(Realm::Overworld, at, finalRadius, 0.0)) continue;
-
-            const Entity spawned = spawnMob(world, terrain, content, type, rarity, at,
-                                            Realm::Overworld, nowMillis, rng);
-            if (spawned == NULL_ENTITY) {
-                break;
-            }
-            if (const Transform* transform = world.tryGet<Transform>(spawned)) {
-                const Body* body = world.tryGet<Body>(spawned);
-                mobPlacements_.push_back(MobPlacement{transform->position,
-                                                      body != nullptr ? body->radius : 0.0,
-                                                      Realm::Overworld});
-                announceIfNotable(content, type, rarity, transform->position, transform->realm);
-            }
-            ++neighbours_[i];
-        }
-    }
 }
 
 void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRegistry& content,
@@ -1020,22 +836,38 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             // empty.
             zone.targetMobs =
                 std::max(1, static_cast<int>(std::ceil(kTargetMobDensity * element.area())));
-            for (int section = 0; section < kSectionCount; ++section) {
-                const Rect bounds{static_cast<double>(section % kSectionsPerAxis) * kSectionSize,
-                                  static_cast<double>(section / kSectionsPerAxis) * kSectionSize,
-                                  kSectionSize, kSectionSize};
-                if (zone.bounds.intersects(bounds)) {
-                    zone.sections |= static_cast<std::uint16_t>(1u << section);
-                }
-            }
             zones_.push_back(std::move(zone));
         }
 
-        // A map with nothing to say about what lives on it has nothing to
-        // spawn: no region draws over it, no band names anything, and it
-        // declares no default. Worth one line at startup, because the symptom
-        // is an empty map -- which reads as a bug in the spawner rather than a
-        // gap in the data.
+        // A map with no band on it grows NOTHING. That is the rule, not a
+        // failure -- the author draws where the mobs are -- but the symptom is
+        // an empty world, which reads as a bug in the spawner rather than as a
+        // gap in the data, so it is said out loud here as well as on the map's
+        // own load line.
+        //
+        // Not at BOOT, though: this runs from SpawnSystem::run, and the server
+        // returns out of its tick while nobody is playing, so an idle server
+        // never reaches it. What an author staging a map sees in the boot log
+        // is the map's own `[map] ... NO SPAWN BANDS` line (map_elements.cpp);
+        // this one adds what to DO about it, the first time anyone joins.
+        const bool hasBand = std::any_of(zones_.begin(), zones_.end(), [&](const SpawnZone& band) {
+            return band.realm == map.realm();
+        });
+        if (!hasBand) {
+            if (unknownZoneMobs_.insert("<" + map.id() + ":bands>").second) {
+                std::fprintf(stderr,
+                             "[spawn] map \"%s\" has no spawn band on it, so no mob will ever "
+                             "spawn there -- draw a `spawn` object with a `difficulty` to "
+                             "populate it\n",
+                             map.id().c_str());
+            }
+            continue;
+        }
+
+        // It has bands, but nothing anywhere says WHAT they grow: no band
+        // names a roster, no region draws over the map and it declares no
+        // `defaultMobGroup`. Every fill will roll kInvalidIndex and place
+        // nothing, which looks identical to having no bands at all.
         const bool saysSomething =
             !map.defaultMobGroup().empty() ||
             std::any_of(regions_.begin(), regions_.end(),
@@ -1046,7 +878,8 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         if (!saysSomething && unknownZoneMobs_.insert("<" + map.id() + ":default>").second) {
             std::fprintf(stderr,
                          "[spawn] map \"%s\" names no mob group anywhere -- no `mobs` on any "
-                         "band, no mob region and no `defaultMobGroup`; it will stay empty\n",
+                         "band, no mob region and no `defaultMobGroup`; its bands will stay "
+                         "empty\n",
                          map.id().c_str());
         }
     }
@@ -1105,12 +938,14 @@ int SpawnSystem::countMobsInZone(const SpawnZone& zone) const {
 void SpawnSystem::runSpawnZones(World& world, const Terrain& terrain,
                                 const ContentRegistry& content,
                                 const std::vector<Viewer>& viewers, Rng& rng, double nowMillis) {
+    // No band anywhere means no ambient mob anywhere. There is no second pass
+    // behind this one that would cover the ground the author left unbanded.
     if (zones_.empty()) return;
     if (nowMillis < nextZoneMillis_) return;
     nextZoneMillis_ = nowMillis + kZoneIntervalMillis;
 
-    // Nobody online: every zone forgets where it was, so the next arrival gets
-    // a full rectangle rather than walking into one mid-trickle.
+    // Nobody online: every band forgets where it was, so the next arrival gets
+    // a full one rather than walking into one mid-trickle.
     if (viewers.empty()) {
         for (SpawnZone& zone : zones_) {
             zone.initialized = false;
@@ -1133,10 +968,10 @@ void SpawnSystem::runSpawnZones(World& world, const Terrain& terrain,
             zone.lastTrickleMillis = nowMillis;
         }
 
-        // A fill is drained a chunk at a time so a large rectangle entering
-        // view is spread over several seconds instead of arriving as one
-        // packet. A pass that placed nothing drops the rest of the debt rather
-        // than spinning on a rectangle the terrain has since walled over.
+        // A fill is drained a chunk at a time so a large band entering view is
+        // spread over several seconds instead of arriving as one packet. A
+        // pass that placed nothing drops the rest of the debt rather than
+        // spinning on a band the terrain has since walled over.
         if (zone.pendingFill > 0) {
             const int chunk = std::min(zone.pendingFill, kZoneSpawnsPerPass);
             int spawned = 0;
@@ -1159,9 +994,9 @@ void SpawnSystem::runSpawnZones(World& world, const Terrain& terrain,
             continue;
         }
 
-        // Between waves, one or two at a time, and only while the rectangle is
-        // below its target -- a player culling a zone sees it seep back rather
-        // than snap back.
+        // Between waves, one or two at a time, and only while the band is below
+        // its target -- a player culling one sees it seep back rather than snap
+        // back.
         if (nowMillis - zone.lastTrickleMillis >= kZoneTrickleIntervalMillis) {
             zone.lastTrickleMillis = nowMillis;
             const int current = countMobsInZone(zone);
@@ -1209,7 +1044,7 @@ Entity SpawnSystem::spawnInZone(World& world, const Terrain& terrain,
     }
     if (!placed) return NULL_ENTITY;
 
-    // A zone belongs to nobody's viewport, so anything charged to luck is
+    // A band belongs to nobody's viewport, so anything charged to luck is
     // charged to whoever is standing nearest its centre -- the reference's own
     // attribution rule for a zone fill. The bounding box's centre, which for a
     // concave band is not inside it; it is an attribution tiebreak, not a

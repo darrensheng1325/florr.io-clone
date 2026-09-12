@@ -399,9 +399,17 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
 
     const auto compile = [this](const std::string& source, std::uint32_t colorRgba,
                                 const std::string& label, Sprite& out) {
-        out.fallbackColor = rgbOf(colorRgba);
+        out.color = rgbOf(colorRgba);
         if (source.empty()) {
             warnings_.push_back(label + ": no artwork, drawing a plain disc");
+            return;
+        }
+        // A marker naming a painter is artwork the same way a document is:
+        // resolved once, here, so a frame never compares a string to find out
+        // how to draw a mob it has drawn a thousand times.
+        out.art = mobArtFor(source);
+        if (out.art != MobArt::None) {
+            out.usable = true;
             return;
         }
         const std::string art = resolveArtwork(source);
@@ -460,13 +468,32 @@ const SvgDocument* SpriteCache::tileArt(const std::string& file) const {
 }
 
 void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y, double diameter,
-                       double rotation, double timeSeconds, bool mirrored) const {
+                       double rotation, double timeSeconds, bool mirrored,
+                       double worldRadius) const {
     if (diameter <= 0.5) return;   // sub-pixel; not worth the transform
+
+    if (sprite.art != MobArt::None) {
+        // The painter works in world units around the origin, so the transform
+        // that fits it into `diameter` is the one a document gets from its
+        // viewBox -- with the crucial difference that the geometry is generated
+        // at the mob's true size first and only then scaled to the screen.
+        const double radius = worldRadius > 0.0 ? worldRadius : diameter * 0.5;
+        canvas.save();
+        canvas.translate(static_cast<float>(x), static_cast<float>(y));
+        if (rotation != 0.0) canvas.rotate(static_cast<float>(rotation));
+        if (mirrored) canvas.scale(-1.0f, 1.0f);
+        const double fit = (diameter * 0.5) / radius;
+        canvas.scale(static_cast<float>(fit), static_cast<float>(fit));
+        paintMobArt(canvas, sprite.art,
+                    {radius, timeSeconds * kMobWalkRadiansPerSecond, sprite.color});
+        canvas.restore();
+        return;
+    }
 
     if (!sprite.usable) {
         // A document that declares nothing draws nothing, exactly as the
         // reference's blank rasterised canvas does.
-        if (!sprite.blank) ui::disc(canvas, {x, y}, diameter * 0.5, sprite.fallbackColor);
+        if (!sprite.blank) ui::disc(canvas, {x, y}, diameter * 0.5, sprite.color);
         return;
     }
 
@@ -488,15 +515,16 @@ void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y,
 }
 
 void SpriteCache::drawMob(Canvas& canvas, std::uint16_t index, double x, double y, double diameter,
-                          double rotation, double timeSeconds, bool mirrored) const {
+                          double rotation, double timeSeconds, bool mirrored,
+                          double worldRadius) const {
     if (index >= mobs_.size()) return;
-    draw(canvas, mobs_[index], x, y, diameter, rotation, timeSeconds, mirrored);
+    draw(canvas, mobs_[index], x, y, diameter, rotation, timeSeconds, mirrored, worldRadius);
 }
 
 void SpriteCache::drawPetal(Canvas& canvas, std::uint16_t index, double x, double y,
                             double diameter, double rotation, double timeSeconds) const {
     if (index >= petals_.size()) return;
-    draw(canvas, petals_[index], x, y, diameter, rotation, timeSeconds, false);
+    draw(canvas, petals_[index], x, y, diameter, rotation, timeSeconds, false, 0.0);
 }
 
 } // namespace flix

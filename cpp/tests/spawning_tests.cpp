@@ -106,6 +106,29 @@ const WorldMaps& shippedMaps();
 const MapData& authoredMap();
 const WorldMaps& authoredMaps();
 
+/// Fills `out` with a one-map overworld carrying nothing but `bands`: one
+/// `difficulty` band per rectangle, each naming `mobs`.
+///
+/// Every test below that wants ambient mobs at all needs one of these. A Sim
+/// with no map has no bands, and a world with no bands grows NOTHING -- that
+/// is the invariant this file pins further down, and the reason a population
+/// test can no longer just stand a viewer on open ground and wait.
+void makeBandedWorld(WorldMaps& out, const std::vector<Rect>& bands, const std::string& mobs,
+                     double difficulty = 0.0);
+
+/// The population a band of these bounds is stocked to: the same figure
+/// SpawnSystem derives from kTargetMobDensity, so a test can say "its target"
+/// rather than write a number down.
+int bandTarget(const Rect& bounds);
+
+/// The centre of the first spawn band on `map`.
+///
+/// Where a test that wants the SHIPPED map to grow something has to stand its
+/// viewer: only a band somebody can see is stocked, and the author moves the
+/// bands as the map is balanced, so the spot is read out of the file rather
+/// than written down here.
+Vec2 firstBandCentre(const MapData& map);
+
 /// A world plus everything the spawner needs to be driven one tick at a time.
 struct Sim {
     World world;
@@ -152,6 +175,37 @@ struct Sim {
             if (distanceSq(t.position, centre) <= r2) ++n;
         });
         return n;
+    }
+
+    /// Mobs standing inside `bounds`, whatever put them there.
+    int mobsIn(const Rect& bounds) {
+        Query<MobTag, Transform> mobs{world};
+        int n = 0;
+        mobs.each([&](Entity, MobTag&, Transform& t) { n += bounds.contains(t.position) ? 1 : 0; });
+        return n;
+    }
+
+    /// Mobs inside `bounds` that a band fill PLACED: the escorts and body
+    /// segments their parents brought with them are left out, because they are
+    /// not spawns the band asked for and are not counted against its target.
+    int bandPlacedIn(const Rect& bounds) {
+        Query<MobTag, Transform> mobs{world};
+        int n = 0;
+        mobs.each([&](Entity e, MobTag&, Transform& t) {
+            if (bounds.contains(t.position) && !isChildOfAPlacedMob(e)) ++n;
+        });
+        return n;
+    }
+
+    /// True when this mob is the CHILD of something a band placed rather than
+    /// a spawn of its own: a nest's escort or a wave, leashed to its parent,
+    /// or a centipede's body segment trailing its head. Both are laid out on
+    /// their parent's geometry and legitimately reach over a band's edge, so
+    /// both are exempt from "every ambient mob stands inside a band".
+    bool isChildOfAPlacedMob(Entity e) {
+        if (world.has<HoleTether>(e)) return true;
+        const BodySegment* link = world.tryGet<BodySegment>(e);
+        return link != nullptr && !link->head;
     }
 };
 
@@ -478,71 +532,117 @@ TEST(an_unknown_mob_index_spawns_nothing) {
 // ---------------------------------------------------------------------------
 // Population control
 // ---------------------------------------------------------------------------
+//
+// THE INVARIANT these tests are written against: every ambient mob in the
+// world stands inside a spawn BAND, or is the escort or body segment of one
+// that does. There is no second population driver behind the bands -- the
+// per-viewer density fill that used to stock the ground an author had not
+// drawn on is gone -- so a viewer on open ground is owed nothing, and a test
+// that wants mobs has to put a band under them.
 
-TEST(population_converges_to_the_target_near_a_player) {
+TEST(a_band_converges_to_the_population_its_own_area_buys) {
+    // What "converges" means now. A band's target is kTargetMobDensity over
+    // the area of its outline; it fills to that while somebody can see it, and
+    // then holds. The number is derived here the same way the spawner derives
+    // it, so a change to the density is a change to both.
+    const Rect band{kCentre.x - 3000.0, kCentre.y - 3000.0, 6000.0, 6000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "garden 100%");
     Sim sim;
+    sim.spawner.worldMaps = &maps;
     const std::vector<Vec2> players{kCentre};
 
     for (int i = 0; i < 400; ++i) sim.tick(players);
 
-    const int near = sim.mobsWithin(kCentre, kSpawnRingMax + kSpawnScatterRadius);
-    CHECK(near >= kMobsPerPlayer);
-    // Nest escorts can push a little past the target; nothing may push past the
-    // section cap.
-    CHECK(near <= kMaxMobsPerSection);
-    CHECK(sim.spawner.census().mobs <= kSectionTargetPopulation);
+    const int target = bandTarget(band);
+    CHECK(target > 20);   // a band worth measuring convergence against
+    // Most of the way there rather than exactly there: a fill is drained a
+    // chunk per pass and a sample in somebody's lap is thrown away.
+    CHECK(sim.mobsIn(band) >= target * 3 / 4);
+    // And never past it. The bound is on what the FILL placed: a hole's brood
+    // and a centipede's body are children of a mob the band asked for rather
+    // than spawns the band asked for, and a garden roster is full of both.
+    CHECK(sim.bandPlacedIn(band) <= target);
 
-    // And it holds: a converged population does not keep creeping upward.
+    // It holds: a converged population does not keep creeping upward. The
+    // whole world this time, escorts included, because a nest going on
+    // producing forever is exactly what this would catch.
     const int settled = sim.mobCount();
     for (int i = 0; i < 400; ++i) sim.tick(players);
     CHECK(sim.mobCount() <= settled + kMaxNestChildren);
 }
 
-TEST(ambient_mobs_spawn_inside_the_buffered_viewport) {
+TEST(a_band_stocks_its_own_outline_and_never_the_open_ground_beside_it) {
+    // This replaces "ambient mobs spawn inside the buffered viewport". The
+    // viewport decides WHETHER a band fills, not WHERE its mobs land: the band
+    // here sits off to one side of the flower, well inside their viewport, and
+    // the open ground between the two stays empty because nothing fills it.
+    //
+    // `bee 100%` on purpose: bees nest nothing and tow no body chain, so every
+    // mob in the world is a spawn this pass placed and the bound is exact.
+    const Rect band{kCentre.x + 800.0, kCentre.y - 1000.0, 2000.0, 2000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "bee 100%");
     Sim sim;
-    // Section 6 (the sewers) is the one neighbourhood with no nests in it, so
-    // every mob here came from the ambient roll and the ring bound is exact --
-    // an escort is deliberately placed next to its nest and would not be.
-    const Vec2 sewers{10000.0, 50000.0};
-    const std::vector<Vec2> players{sewers};
+    sim.spawner.worldMaps = &maps;
+    const std::vector<Vec2> players{kCentre};
     for (int i = 0; i < 200; ++i) sim.tick(players);
 
     Query<MobTag, Transform> mobs{sim.world};
     int checked = 0;
     mobs.each([&](Entity, MobTag&, Transform& t) {
         ++checked;
-        const double d = distance(t.position, sewers);
-        CHECK(d >= kMinSpawnDistance);
-        CHECK(std::abs(t.position.x - sewers.x) <=
-              kSpawnViewportHalfWidth + kSpawnScatterRadius);
-        CHECK(std::abs(t.position.y - sewers.y) <=
-              kSpawnViewportHalfHeight + kSpawnScatterRadius);
+        if (!band.contains(t.position)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "a mob stands outside the only band on the map, at " +
+                                         std::to_string(t.position.x) + "," +
+                                         std::to_string(t.position.y));
+        }
+        // Still nobody's lap, whoever the band filled for.
+        CHECK(distance(t.position, kCentre) >= kMinSpawnDistance);
     });
     CHECK(checked > 0);
+    // The rest of the viewport -- the same screen, one step outside the band --
+    // is empty ground and stays that way.
+    CHECK_EQ(sim.mobsIn(Rect{kCentre.x - 1400.0, kCentre.y - 1000.0, 2000.0, 2000.0}), 0);
 }
 
 TEST(a_crowd_of_players_cannot_exceed_the_global_cap) {
-    Sim sim;
+    // Sixty-four flowers standing apart, each with a band of their own. The
+    // global cap is the one ceiling left above the bands, and it is what stops
+    // a full server from multiplying the population by the number of people on
+    // it.
     std::vector<Vec2> players;
+    std::vector<Rect> bands;
     for (int y = 0; y < 8; ++y) {
         for (int x = 0; x < 8; ++x) {
-            players.push_back(Vec2{3500.0 + x * 7500.0, 3500.0 + y * 7500.0});
+            const Vec2 at{3500.0 + x * 7500.0, 3500.0 + y * 7500.0};
+            players.push_back(at);
+            bands.push_back(Rect{at.x - 3000.0, at.y - 3000.0, 6000.0, 6000.0});
         }
     }
-    // Sixty-four TypeScript-sized neighbourhoods want 1024 mobs between them.
-    CHECK(static_cast<int>(players.size()) * kMobsPerPlayer > kMaxLiveMobs);
+    WorldMaps maps;
+    makeBandedWorld(maps, bands, "garden 100%");
+    Sim sim;
+    sim.spawner.worldMaps = &maps;
+    // Between them the bands want several times what the server will allow.
+    CHECK(static_cast<int>(bands.size()) * bandTarget(bands.front()) > kMaxLiveMobs);
 
     for (int i = 0; i < 600; ++i) sim.tick(players);
 
     CHECK(sim.mobCount() <= kMaxLiveMobs + kMaxNestChildren);
-    CHECK(sim.spawner.census().mobs > kMobsPerPlayer);
-    for (int section = 0; section < kSectionCount; ++section) {
-        CHECK(sim.spawner.census().perSection[static_cast<std::size_t>(section)] <= kMaxMobsPerSection);
-    }
+    // And the cap is what stopped it, not an empty world.
+    CHECK(sim.spawner.census().mobs > kMaxLiveMobs / 2);
 }
 
 TEST(mobs_nobody_has_been_near_are_recycled) {
+    // A band under the flower, because nothing else puts a mob in the world any
+    // more; the rule under test is the recycler, which is unchanged.
+    const Rect band{kCentre.x - 3000.0, kCentre.y - 3000.0, 6000.0, 6000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "garden 100%");
     Sim sim;
+    sim.spawner.worldMaps = &maps;
     const std::vector<Vec2> players{kCentre};
     for (int i = 0; i < 200; ++i) sim.tick(players);
     const int populated = sim.mobsWithin(kCentre, 4000.0);
@@ -575,13 +675,14 @@ TEST(mobs_nobody_has_been_near_are_recycled) {
     CHECK(sim.spawner.census().despawnedTotal >= despawnedBefore + populated);
 }
 
-TEST(the_shipped_map_stocks_its_default_group) {
-    // The new shape of the game's own data: garden.tmj draws art and a door and
-    // declares no map properties at all, so the map's biome falls back to its
-    // id and its default mob group falls back to its biome -- and that group is
-    // what the ambient fill asks for over every square no band has given a
-    // roster of its own. A map that resolved to an empty group would stand a
-    // player in an empty world, silently, which is what this pins.
+TEST(the_shipped_map_grows_its_own_biomes_roster) {
+    // The shape of the game's own data: garden.tmj draws art, a door and a
+    // handful of bands, and declares no map properties at all -- so the map's
+    // biome falls back to its id and its default mob group falls back to its
+    // biome. That group is what a band with no `mobs` of its own asks for, and
+    // it is also what the bands the author HAS written name. A map that
+    // resolved to an empty group would stand a player in an empty world,
+    // silently, which is what this pins.
     if (!shippedMaps().forRealm(Realm::Overworld)) {
         ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
         return;
@@ -590,11 +691,10 @@ TEST(the_shipped_map_stocks_its_default_group) {
     CHECK_EQ(world.defaultMobGroup(), std::string("garden"));
     const std::uint16_t garden = shipped().mobGroupIndex(world.defaultMobGroup());
     CHECK(garden != kInvalidIndex);
-    // Not "there are no bands" -- the author adds them, and gives some of them
-    // rosters of their own, as the map is balanced. What every band owes is that
-    // each row it names is something the content actually defines: a group, or a
-    // mob id. A row that resolves to neither is a typo the fill would answer
-    // with an empty zone.
+    // The author adds bands, and gives some of them rosters of their own, as
+    // the map is balanced. What every band owes is that each row it names is
+    // something the content actually defines: a group, or a mob id. A row that
+    // resolves to neither is a typo the fill would answer with an empty band.
     for (const MapElement& element : world.elements()) {
         if (!element.isSpawnBand() && !element.isMobRegion()) continue;
         for (const ZoneMobEntry& row : element.mobDistribution) {
@@ -607,36 +707,24 @@ TEST(the_shipped_map_stocks_its_default_group) {
         }
     }
 
-    // A band that names its OWN roster answers for what grows in it; the
-    // default group is what everywhere else falls back to, and that is what is
-    // being measured. Mobs standing on such a band are left out below.
-    const auto onABandWithItsOwnRoster = [&](Vec2 position) {
-        for (const MapElement& element : world.elements()) {
-            if (!element.isSpawnBand() || element.mobDistribution.empty()) continue;
-            if (element.contains(position)) return true;
-        }
-        return false;
-    };
-
     Sim sim;
     sim.spawner.worldMaps = &shippedMaps();
-    // Inside the shipped map's extent. The Sim's terrain is its own flat grid,
-    // so this is about which GROUP the fill asks for, not about walls.
-    const Vec2 at{9000.0, 9000.0};
+    // Standing where the author drew a band, because a band is the only thing
+    // that spawns anything: elsewhere on this map there is nothing to measure.
+    // The Sim's terrain is its own flat grid, so this is about which GROUP the
+    // band asks for, not about walls.
+    const Vec2 at = firstBandCentre(world);
     const std::vector<Vec2> players{at};
     for (int i = 0; i < 300; ++i) sim.tick(players);
 
     int checked = 0;
     Query<MobTag, MobType, Transform> mobs{sim.world};
     mobs.each([&](Entity e, MobTag&, MobType& type, Transform& transform) {
-        const double ring = kSpawnRingMax + kSpawnScatterRadius;
-        if (distanceSq(transform.position, at) > ring * ring) return;
         // An escort is not an ambient spawn. `ant_hole` IS a garden mob, and
         // what it puts in the world is a hell of ants that are in no garden
-        // group at all -- the fill chose the hole, the hole chose them. Same
+        // group at all -- the band chose the hole, the hole chose them. Same
         // exemption the hard-band test makes, and for the same reason.
-        if (sim.world.has<HoleTether>(e)) return;
-        if (onABandWithItsOwnRoster(transform.position)) return;
+        if (sim.isChildOfAPlacedMob(e)) return;
         ++checked;
         const MobConfig& config = shipped().mob(type.configIndex);
         bool member = false;
@@ -664,18 +752,18 @@ TEST(the_region_under_a_spawn_decides_its_group) {
     const std::vector<Vec2> players{kCentre};
     for (int i = 0; i < 300; ++i) sim.tick(players);
 
-    // The region covers the whole map and names the ant hell's roster, so
-    // everything the fill placed around the viewer has to be a member of that
-    // group. Only the neighbourhood is judged: the band fill also stocks the
-    // dummy row and the hornet band in the far corner, neither of which asked
-    // this region for anything.
+    // The band over kCentre names no mobs of its own, so it asks the ground
+    // under it -- and the region covering the whole map answers with the ant
+    // hell's roster. Only that band is judged: the map also carries the dummy
+    // row and a hornet band, both of which name their own rows and asked this
+    // region for nothing.
     const std::uint16_t antHell = shipped().mobGroupIndex("ant_hell");
     CHECK(antHell != kInvalidIndex);
-    const double ring = kSpawnRingMax + kSpawnScatterRadius;
+    const Rect regionBand{24000.0, 24000.0, 12000.0, 12000.0};
     Query<MobTag, MobType, Transform> mobs{sim.world};
     int checked = 0;
     mobs.each([&](Entity, MobTag&, MobType& type, Transform& transform) {
-        if (distanceSq(transform.position, kCentre) > ring * ring) return;
+        if (!regionBand.contains(transform.position)) return;
         ++checked;
         const MobConfig& config = shipped().mob(type.configIndex);
         bool member = false;
@@ -694,14 +782,19 @@ TEST(the_region_under_a_spawn_decides_its_group) {
 }
 
 TEST(no_mob_is_placed_inside_a_wall) {
+    const Vec2 player = Terrain::tileCenter(100, 100);
+    // A band over the flower, because nothing else places a mob any more, and a
+    // solid block of wall inside that band. Solid rather than scattered so the
+    // test asserts the invariant instead of the push-out solver's tolerance for
+    // pathological geometry.
+    const Rect band{player.x - 3000.0, player.y - 3000.0, 6000.0, 6000.0};
+    WorldMaps maps;
+    makeBandedWorld(maps, {band}, "garden 100%");
     Sim sim;
-    // A solid block of wall that the spawn ring overlaps. Solid rather than
-    // scattered so the test asserts the invariant instead of the push-out
-    // solver's tolerance for pathological geometry.
+    sim.spawner.worldMaps = &maps;
     for (int ty = 96; ty <= 104; ++ty) {
         for (int tx = 103; tx <= 109; ++tx) sim.terrain.setTile(tx, ty, Tile::Wall);
     }
-    const Vec2 player = Terrain::tileCenter(100, 100);
     const std::vector<Vec2> players{player};
 
     for (int i = 0; i < 300; ++i) sim.tick(players);
@@ -825,8 +918,8 @@ TEST(a_nest_sends_its_waves_as_it_is_worn_down_and_holds_at_the_last) {
     const Entity nest = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), hole,
                                              Rarity::Common, kCentre, Realm::Overworld, 0.0, sim.rng);
     const std::vector<Vec2> players{kCentre};
-    // Counted off the nest rather than off the world: the ambient filler is
-    // running too, and its spawns are nothing to do with this hole.
+    // Counted off the nest rather than off the world, so a band fill running
+    // beside it could never be mistaken for one of this hole's waves.
     const auto escortCount = [&] {
         return sim.world.get<NestWaves>(nest).children.size();
     };
@@ -1423,8 +1516,8 @@ std::string writeTiledFixture(const std::string& name, const std::string& body) 
 
 /// The 1x1 map body every fixture here shares: one empty cell, one tileset,
 /// whatever `spawns` objects the caller wrote, and whatever MAP properties it
-/// wants (a `defaultDifficulty` and a `defaultMobGroup`, for the tests about
-/// ground no band covers).
+/// wants (a `defaultMobGroup`, for the tests about a band with no roster of
+/// its own).
 std::string fixtureMapBody(const std::string& spawns, const std::string& properties = {}) {
     std::string out = R"({
       "type": "map", "orientation": "orthogonal", "infinite": false,
@@ -1482,6 +1575,42 @@ std::string regionObject(int id, double x, double y, double w, double h,
 std::string bandObject(int id, double x, double y, double w, double h, double difficulty,
                        const std::string& mobs) {
     return spawnObject(id, x, y, w, h, true, difficulty, mobs);
+}
+
+void makeBandedWorld(WorldMaps& out, const std::vector<Rect>& bands, const std::string& mobs,
+                     double difficulty) {
+    std::string objects;
+    int id = 1;
+    for (const Rect& band : bands) {
+        if (!objects.empty()) objects += ",";
+        objects += bandObject(id++, band.x, band.y, band.w, band.h, difficulty, mobs);
+    }
+    const std::string path = writeTiledFixture("flix_banded_world.tmj", fixtureMapBody(objects));
+    MapData map;
+    map.setId("banded");
+    std::string error;
+    if (!map.loadTiled(path, error)) {
+        std::fprintf(stderr, "[test] the banded fixture world did not load: %s\n", error.c_str());
+    }
+    std::remove(path.c_str());
+    out.adoptSingle(map);
+}
+
+int bandTarget(const Rect& bounds) {
+    // Parenthesised exactly as SpawnSystem::rebuildZones has it -- density
+    // times AREA -- because the two associations round differently: a 6000-unit
+    // square comes out 90 one way and 90.000000000000014 (so 91 after the
+    // ceiling) the other, and this figure is compared against a live count.
+    return std::max(1, static_cast<int>(std::ceil(kTargetMobDensity * (bounds.w * bounds.h))));
+}
+
+Vec2 firstBandCentre(const MapData& map) {
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand()) continue;
+        return {element.bounds.x + element.bounds.w * 0.5,
+                element.bounds.y + element.bounds.h * 0.5};
+    }
+    return {};
 }
 
 /// The authored overworld the band tests run against.
@@ -1598,8 +1727,8 @@ TEST(the_dummy_bands_actually_build_the_dps_row) {
     sim.spawner.worldMaps = &authoredMaps();
 
     // Standing in the common dummy band, which sits inside the big common
-    // spawn band -- so it is the ZONE fill that has to honour it, not the
-    // neighbourhood fill.
+    // spawn band: two bands over one square, and the inner one has to be the
+    // one that answers for what grows there.
     const Rect band = [&] {
         for (const NamedRow& row : namedBandRows()) {
             if (row.mobType == "target_dummy") return row.bounds;
@@ -1870,10 +1999,15 @@ TEST(the_border_band_is_measured_against_the_maps_own_extent) {
     const Vec2 extent = sim.terrain.realmExtent(Realm::Overworld);
     CHECK_NEAR(extent.x, side * kTileSize, 1e-6);
 
+    // One band over the whole little map, so there is something to place at
+    // all: the question here is WHERE a band fill may put a mob, not what.
+    WorldMaps maps;
+    makeBandedWorld(maps, {Rect{0.0, 0.0, extent.x, extent.y}}, "garden 100%");
+    sim.spawner.worldMaps = &maps;
+
     // Flowers hugging the FAR two walls, which is the half of the band an
     // oversized constant stops guarding -- the near walls are refused either
-    // way and are the control. No map is loaded, so the fill spawns from every
-    // group: the question here is WHERE, not what.
+    // way and are the control.
     std::vector<Vec2> players;
     for (int i = 1; i <= 3; ++i) {
         players.push_back({extent.x - 150.0, extent.y * i / 4.0});
@@ -1887,14 +2021,11 @@ TEST(the_border_band_is_measured_against_the_maps_own_extent) {
     Query<MobTag, Transform> mobs{sim.world};
     mobs.each([&](Entity e, MobTag&, Transform& transform) {
         if (transform.realm != Realm::Overworld) return;
-        // What the FILL placed. A nest's escorts ring the nest and a long
-        // mob's segments trail its head, so neither is a point this pass ever
-        // sampled -- and a centipede reversing into the edge wall is movement,
-        // not placement.
-        if (sim.world.has<HoleTether>(e)) return;
-        if (const BodySegment* link = sim.world.tryGet<BodySegment>(e)) {
-            if (link->head) return;
-        }
+        // What the BAND placed. A nest's escorts ring the nest and a long mob's
+        // segments trail its head, so neither is a point this pass ever sampled
+        // -- and a centipede reversing into the edge wall is movement, not
+        // placement.
+        if (sim.isChildOfAPlacedMob(e)) return;
         ++placed;
         const Vec2 at = transform.position;
         if (at.x < kWorldBoundaryThreshold || at.y < kWorldBoundaryThreshold) ++inNearBand;
@@ -2133,13 +2264,11 @@ TEST(a_soft_band_announces_nothing) {
 }
 
 TEST(the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares) {
-    // The SHIPPED data, end to end. garden.tmj declares no `defaultDifficulty`,
-    // so every square no band covers is difficulty zero and grows nothing but
-    // commons; the bands the author has brushed on are the only ground that is
-    // allowed to be harder, and only by as much as their own difficulty says.
-    // This is the sanity check on the whole curve -- if the default were
-    // anything but zero, a fresh flower would walk out of the one door into
-    // mobs it cannot fight.
+    // The SHIPPED data, end to end. The bands the author has brushed on are the
+    // only ground that grows anything at all, and each one may only be as hard
+    // as its own difficulty says. This is the sanity check on the whole curve:
+    // the band over the one door is difficulty 0, so a fresh flower walks out
+    // into commons.
     //
     // The ceiling is computed FROM THE FILE for each mob's own position, rather
     // than written down here, so an author raising a band's difficulty does not
@@ -2149,18 +2278,19 @@ TEST(the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares) {
         return;
     }
     const MapData& world = *shippedMaps().forRealm(Realm::Overworld);
-    CHECK_EQ(world.defaultDifficulty(), 0.0);
 
     Sim sim;
     sim.spawner.worldMaps = &shippedMaps();
-    // Inside the shipped map's extent; the Sim brings its own flat terrain, so
-    // this is about the tier, not about walls.
-    const std::vector<Vec2> players{{9000.0, 9000.0}};
+    // Standing on one of the map's own bands; the Sim brings its own flat
+    // terrain, so this is about the tier, not about walls.
+    const std::vector<Vec2> players{firstBandCentre(world)};
     for (int i = 0; i < 300; ++i) sim.tick(players);
 
     // The hardest ground the file declares anywhere, and the ceiling that buys.
     // Nothing in the world may exceed it, wherever it has since wandered to.
-    double hardest = world.defaultDifficulty();
+    // Zero when the map carries no band at all -- which would also mean no
+    // mobs, and the loop below would have nothing to walk.
+    double hardest = 0.0;
     for (const MapElement& element : world.elements()) {
         if (element.isSpawnBand()) hardest = std::max(hardest, element.difficulty);
     }
@@ -2188,11 +2318,11 @@ TEST(the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares) {
     Query<MobTag, MobType, Transform> live{sim.world};
     live.each([&](Entity e, MobTag&, MobType& type, Transform& transform) {
         // An escort is not an ambient spawn, and the ground it stands on did not
-        // choose it: a nest is placed by the fill at its OWN square's tier and
-        // then lays its brood out on a ring around itself, which routinely
-        // reaches over a band's edge onto softer ground. The nest answers for
+        // choose it: a nest is placed by a band at that band's tier and then
+        // lays its brood out on a ring around itself, which routinely reaches
+        // over the band's edge onto ground no band covers. The nest answers for
         // the tier; the ring is just where the children fit. Same exemption --
-        // and the same reason -- as the default-group test above.
+        // and the same reason -- as the roster test above.
         if (sim.world.has<HoleTether>(e)) return;
         const double difficulty = sim.spawner.difficultyAt(transform.realm, transform.position);
         // The hardest thing this square can roll at neutral luck: the upper half
@@ -2216,10 +2346,10 @@ TEST(the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares) {
             return;
         }
         ++onDefaultGround;
-        // Well away from every band, so this mob was placed on the map's default
-        // ground and has not walked in from anywhere harder. Difficulty zero is
-        // FULLY common: not "mostly", and not "common unless something drifted
-        // it". The map's whole default is this number.
+        // Well away from every band, so whatever put this mob here, it is not
+        // standing on ground that could have rolled it anything but a common.
+        // Difficulty zero is FULLY common: not "mostly", and not "common unless
+        // something drifted it".
         (void)mix;
         if (rarityIndex(type.rarity) > rarityIndex(config.minRarity)) {
             ::testing::reportFailure(__FILE__, __LINE__,
@@ -2230,8 +2360,8 @@ TEST(the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares) {
     CHECK(mobs > 0);
     // Every live mob was judged against a difficulty rather than skipped by a
     // lookup that found nothing. WHICH arm each fell into is the author's
-    // business -- the bands move as the map is balanced, and the viewer above
-    // may or may not be standing under one on any given day.
+    // business -- a mob born in a difficulty-0 band and one that wandered clear
+    // of every band are both "difficulty zero" here.
     CHECK_EQ(onDefaultGround + onBandedGround, mobs);
     // The announcement queue. Whether the map is hard enough to announce
     // ANYTHING is the author's decision -- a band at difficulty 100 is ultras
@@ -2257,18 +2387,25 @@ TEST(the_shipped_map_never_spawns_above_the_difficulty_its_ground_declares) {
     }
 }
 
-TEST(a_bands_difficulty_beats_the_maps_default) {
-    // The two sources of a difficulty, and which wins where. The map says its
-    // open ground is difficulty 100 -- ultras, with a couple of supers in a
-    // hundred -- and one band drawn on it says difficulty 0. Inside the band,
-    // commons; outside it, ultras. A map with no band at all is the shipped
-    // case and is covered by the test below this one.
+TEST(a_band_is_the_only_ground_that_grows_anything) {
+    // THE RULE, stated on one map. Its `defaultMobGroup` says garden, and one
+    // difficulty-0 band is drawn on it. Inside the band: commons, from the
+    // map's default group -- the band names no roster of its own, which is the
+    // "difficulty and distribution are orthogonal" half of the rule. Outside
+    // it, on ground the author drew nothing on: NOTHING, however long a flower
+    // stands there.
+    //
+    // This test used to be `a_bands_difficulty_beats_the_maps_default`: the map
+    // carried a `defaultDifficulty` of 100 and the second half asserted that
+    // the open ground around the band grew ultras. That property is gone --
+    // after the density fill was deleted nothing rolled against it, so a number
+    // for "the ground no band covers" configured nothing -- and what the second
+    // half pins now is that the same ground grows no mob at all.
     const std::string properties =
-        R"({"name": "defaultDifficulty", "type": "int", "value": 100},
-           {"name": "defaultMobGroup", "type": "string", "value": "garden"})";
+        R"({"name": "defaultMobGroup", "type": "string", "value": "garden"})";
     const std::string band = bandObject(1, 20000, 20000, 6000, 6000, 0.0, "");
     const std::string path =
-        writeTiledFixture("flix_default_difficulty.tmj", fixtureMapBody(band, properties));
+        writeTiledFixture("flix_one_band.tmj", fixtureMapBody(band, properties));
     MapData map;
     std::string error;
     if (!map.loadTiled(path, error)) {
@@ -2276,17 +2413,18 @@ TEST(a_bands_difficulty_beats_the_maps_default) {
         CHECK(false);
         return;
     }
-    CHECK_EQ(map.defaultDifficulty(), 100.0);
     CHECK_EQ(map.defaultMobGroup(), std::string("garden"));
+    CHECK(map.elements().size() == 1);
+    CHECK(map.elements()[0].isSpawnBand());
     std::remove(path.c_str());
 
     WorldMaps maps;
     maps.adoptSingle(map);
+    const std::uint16_t garden = shipped().mobGroupIndex("garden");
+    CHECK(garden != kInvalidIndex);
 
-    // Inside the band: the BAND's difficulty, so nothing but commons -- and the
-    // band names no mobs of its own, so its roster still comes from the map's
-    // default group. That is the "difficulty and distribution are orthogonal"
-    // rule in one assertion.
+    // Inside the band: commons, and drawn from the map's default group, because
+    // the band names nothing of its own.
     {
         Sim sim;
         sim.spawner.worldMaps = &maps;
@@ -2294,7 +2432,7 @@ TEST(a_bands_difficulty_beats_the_maps_default) {
         for (int i = 0; i < 400; ++i) sim.tick(players);
         int mobs = 0;
         Query<MobTag, MobType, Transform> live{sim.world};
-        live.each([&](Entity, MobTag&, MobType& type, Transform& t) {
+        live.each([&](Entity e, MobTag&, MobType& type, Transform& t) {
             if (!map.elements()[0].contains(t.position)) return;
             ++mobs;
             const MobConfig& config = shipped().mob(type.configIndex);
@@ -2304,33 +2442,165 @@ TEST(a_bands_difficulty_beats_the_maps_default) {
                                              std::string(rarityName(type.rarity)) + " " +
                                              config.id);
             }
+            // The default group answered for the roster. An escort is the
+            // hole's choice rather than the group's, and a body segment is in
+            // no group at all.
+            if (sim.isChildOfAPlacedMob(e) ||
+                config.id.find("_body") != std::string::npos) {
+                return;
+            }
+            bool member = false;
+            for (const MobGroupMember& entry : config.groups) member |= entry.group == garden;
+            if (!member) {
+                ::testing::reportFailure(__FILE__, __LINE__,
+                                         "a band with no roster of its own grew " + config.id +
+                                             ", which is not in the map's default group");
+            }
         });
         CHECK(mobs > 0);
     }
 
-    // Outside every band: the MAP's default, which the density fill rolls
-    // against. Difficulty 100 is the ultra anchor.
+    // Outside every band, on the same map, for as long as the band took to
+    // fill: nothing. Not commons, not one stray -- nothing samples this ground.
     {
         Sim sim;
         sim.spawner.worldMaps = &maps;
         const std::vector<Vec2> players{{40000, 40000}};
         for (int i = 0; i < 400; ++i) sim.tick(players);
-        int mobs = 0;
-        int ultras = 0;
-        Query<MobTag, MobType> live{sim.world};
-        live.each([&](Entity, MobTag&, MobType& type) {
-            ++mobs;
-            if (type.rarity == Rarity::Ultra) ++ultras;
-            if (rarityIndex(type.rarity) < rarityIndex(Rarity::Ultra)) {
-                ::testing::reportFailure(__FILE__, __LINE__,
-                                         "difficulty-100 ground grew a " +
-                                             std::string(rarityName(type.rarity)) + " " +
-                                             shipped().mob(type.configIndex).id);
-            }
-        });
-        CHECK(mobs > 0);
-        CHECK(ultras > 0);
+        CHECK_EQ(sim.mobCount(), 0);
+        CHECK_EQ(sim.spawner.census().spawnedTotal, 0);
     }
+}
+
+TEST(a_harness_with_no_map_at_all_grows_nothing) {
+    // The `worldMaps == nullptr` contract, pinned. No maps means no bands, and
+    // no bands means no mobs -- a bare-Terrain harness gets an EMPTY world and
+    // has to place what it wants itself through spawnMob().
+    //
+    // Worth its own test because the opposite used to be true: the deleted
+    // density fill reached chooseRegionMobAt with no map in hand and rolled
+    // over every mob group so that such a harness got mobs anyway. A test
+    // written against that behaviour now measures an empty world and passes
+    // vacuously, so this is the one that states which way round it is.
+    Sim sim;
+    CHECK(sim.spawner.worldMaps == nullptr);
+    const std::vector<Vec2> players{{9000, 9000}, {30000, 30000}};
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    CHECK_EQ(sim.mobCount(), 0);
+    CHECK_EQ(sim.spawner.census().spawnedTotal, 0);
+}
+
+TEST(a_map_with_no_band_at_all_grows_nothing) {
+    // The consequence stated on its own, because it is the one that looks like
+    // a bug: a map an author has drawn no band on is EMPTY. Not thinly
+    // populated -- empty. The map here has everything else a map can have to
+    // say about its mobs (a default group, and a mob region drawn over the
+    // whole of it) and still grows nothing, because a region owns no population
+    // and there is no longer a pass that fills the ground beside a band.
+    const std::string properties =
+        R"({"name": "defaultMobGroup", "type": "string", "value": "garden"})";
+    const std::string region = regionObject(1, 0, 0, 60000, 60000, "garden 100%");
+    const std::string path =
+        writeTiledFixture("flix_no_band.tmj", fixtureMapBody(region, properties));
+    MapData map;
+    std::string error;
+    if (!map.loadTiled(path, error)) {
+        std::fprintf(stderr, "[test] %s did not load: %s\n", path.c_str(), error.c_str());
+        CHECK(false);
+        return;
+    }
+    std::remove(path.c_str());
+    CHECK_EQ(map.defaultMobGroup(), std::string("garden"));
+    CHECK(map.elements().size() == 1);
+    CHECK(map.elements()[0].isMobRegion());
+    bool anyBand = false;
+    for (const MapElement& element : map.elements()) anyBand |= element.isSpawnBand();
+    CHECK(!anyBand);
+    // The load report has to say it out loud, because an empty world reads as a
+    // broken spawner rather than as an unfinished map. This is the line the
+    // author sees at boot and the only warning they get, so it is pinned here
+    // rather than trusted: bandSummary() is exactly what the `[map]` line
+    // prints for the bands clause.
+    CHECK_EQ(map.bandSummary(), std::string("NO SPAWN BANDS -- no mobs will spawn on this map"));
+
+    WorldMaps maps;
+    maps.adoptSingle(map);
+    Sim sim;
+    sim.spawner.worldMaps = &maps;
+    // Three flowers spread over the map, long enough for many fill passes.
+    const std::vector<Vec2> players{{9000, 9000}, {30000, 30000}, {48000, 12000}};
+    for (int i = 0; i < 600; ++i) sim.tick(players);
+
+    CHECK_EQ(sim.mobCount(), 0);
+    CHECK_EQ(sim.spawner.census().mobs, 0);
+    CHECK_EQ(sim.spawner.census().spawnedTotal, 0);
+}
+
+TEST(every_ambient_mob_on_the_shipped_map_stands_inside_a_band) {
+    // THE INVARIANT, driven over the game's own data with the real spawn pass.
+    //
+    // Every mob in the world is inside one of the bands the author drew, or is
+    // the escort or body segment of one that is -- a hole's brood rings the
+    // hole and a centipede's body trails its head, and both legitimately reach
+    // over the band's edge onto ground nothing fills. There is no third case:
+    // "somewhere else entirely" is what the deleted density fill used to
+    // produce, and this is the test that would catch it coming back.
+    if (!shippedMaps().forRealm(Realm::Overworld)) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load");
+        return;
+    }
+    const MapData& world = *shippedMaps().forRealm(Realm::Overworld);
+
+    // Every band, in map order. The author moves them; this reads them.
+    std::vector<const MapElement*> bands;
+    for (const MapElement& element : world.elements()) {
+        if (element.isSpawnBand()) bands.push_back(&element);
+    }
+    if (bands.empty()) {
+        // A legitimate state for the data to be in -- and then the map grows
+        // nothing, which the bandless test above already pins. Nothing to
+        // measure here.
+        return;
+    }
+
+    Sim sim;
+    sim.spawner.worldMaps = &shippedMaps();
+    // One flower on each band, so every one of them is in view and fills.
+    std::vector<Vec2> players;
+    for (const MapElement* band : bands) {
+        players.push_back({band->bounds.x + band->bounds.w * 0.5,
+                           band->bounds.y + band->bounds.h * 0.5});
+    }
+    for (int i = 0; i < 400; ++i) sim.tick(players);
+
+    int inABand = 0;
+    int children = 0;
+    int loose = 0;
+    Query<MobTag, Transform> live{sim.world};
+    live.each([&](Entity e, MobTag&, Transform& transform) {
+        bool covered = false;
+        for (const MapElement* band : bands) covered |= band->contains(transform.position);
+        if (covered) {
+            ++inABand;
+            return;
+        }
+        if (sim.isChildOfAPlacedMob(e)) {
+            ++children;
+            return;
+        }
+        ++loose;
+        ::testing::reportFailure(__FILE__, __LINE__,
+                                 "an ambient mob stands on ground no band covers, at " +
+                                     std::to_string(transform.position.x) + "," +
+                                     std::to_string(transform.position.y));
+    });
+    CHECK(inABand > 0);
+    CHECK_EQ(loose, 0);
+    // Reported rather than asserted: whether the shipped roster has a nest or a
+    // centipede in it on any given day is the author's business.
+    std::printf("  shipped map: %d mobs inside a band, %d escorts/segments outside one, %d loose\n",
+                inABand, children, loose);
 }
 
 TEST(a_neverambient_mob_never_comes_from_a_group_roll_however_hard_the_ground) {

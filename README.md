@@ -79,7 +79,11 @@ shapes when the artwork exceeds the 24-shape limit.
   teleporters. Collision is the collision shapes each tile carries in Tiled's Tile Collision
   Editor, placed per cell from every layer marked `has_collision` — so a flower walks up to the
   edge of the drawn stone, not to the cell boundary. A spawn band carries a `difficulty` number
-  rather than a rarity: 0 is fully common, 100 ultra, 200 super, 300 unique. See `maps/README.md`
+  rather than a rarity: 0 is fully common, 100 ultra, 200 super, 300 unique. **A spawn band is
+  the only thing that makes a mob** — ground no band covers grows nothing, ever, and a map with
+  no band on it is empty and says `NO SPAWN BANDS` on its load line. A nest's escorts and a
+  centipede's segments follow their parent over a band's edge, and the PVP arena and the daily
+  maze are generated realms with their own spawner. See `maps/README.md`
 - **SVG → skin converter** (`SvgToSkin.html`, `scripts/svg-to-skin.js`) for turning artwork into custom-skin commands
 - **Persistence** via custom JSON database
 - **HTTPS** support (drop `cert.crt` / `cert.key` at the project root). If that

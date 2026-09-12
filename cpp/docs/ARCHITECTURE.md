@@ -134,12 +134,22 @@ construction:
 * **Player lists** are `RealmPoint`s (position + realm): the mob LOD gate, the
   spawn census and the separation gate all pair a mob only with flowers in
   its own space.
-* **Population** — `SpawnSystem` serves the overworld by viewport as before.
+* **Population** — `SpawnSystem` stocks the **spawn bands** the map's author
+  drew on it, and nothing else. A band owns a population of its own, sized by
+  its outline's area (`kTargetMobDensity`), topped up while a player can see
+  it; ground no band covers grows nothing, ever, and a map with no band on it
+  is empty and says so on its load line (`NO SPAWN BANDS`). `maps/README.md`
+  has the format. The one mob that stands on unbanded ground is a child laid
+  out on a ring around its parent — a nest's escorts, a centipede's body — and
+  the parent is inside a band.
   `ModeSpawner` (`server/systems/mode_spawning.*`) fills the arena (a crowd
   that scales with the duellists, garden roster plus spider) and the maze
-  (the open world's density across every corridor, depth-zone tiers, two ultra
-  bosses in the deepest rooms) whole, while anyone is inside; the census keeps
-  those mobs alive on the same condition and drains them afterwards.
+  (`kTargetMobDensity` again, a stocked band's density across every corridor,
+  depth-zone tiers, two ultra bosses in the deepest rooms) whole, while anyone
+  is inside; the census keeps those mobs alive on the same condition and drains
+  them afterwards. Those two realms are generated rather than authored — there
+  is no object layer to draw a band on — so they are deliberately exempt from
+  the rule above.
 * **Joining** — the spawn picker's `"pvp"` and `"maze"` are realm choices, not
   biomes. `JoinAccepted` carries the realm and the maze day; `MazeInfo`
   restates the day when `change-maze` rotates it. The client builds the same

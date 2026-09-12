@@ -703,7 +703,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             help += "/cmd &lt;command&gt; - Execute server command (alternative)<br/>";
             help += "Available server commands: save, list-players, list-sockets, "
                     "set_max_enemies, set_bot_count &lt;0-" + std::to_string(kMaxBots) +
-                    "|default&gt;, spawn &lt;mobType&gt; &lt;rarity&gt; "
+                    "|default&gt;, bots (what the bot population is doing), spawn &lt;mobType&gt; &lt;rarity&gt; "
                     "[x] [y] [amount] [stack|unstack], killall (kill all wild mobs), teleport "
                     "&lt;playerId/username&gt; &lt;x&gt; &lt;y&gt;, teleport_all &lt;x&gt; "
                     "&lt;y&gt; (move every player and bot), teleport_bots &lt;x&gt; &lt;y&gt; "
@@ -1082,6 +1082,34 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         // wrong by the time the line is read.
         reply += " (was " + plural(static_cast<int>(bots_.size()), "bot", "bots") + ").";
         out(reply);
+        return;
+    }
+
+    if (verb == "bots") {
+        // What the population is DOING, not how big it is. A field of bots
+        // that all report "roam" is a field of bots with nothing to fight,
+        // which is a fact about the map's mob supply rather than about the
+        // controller -- and it is otherwise invisible from inside the game.
+        std::array<int, 7> tally{};
+        int alive = 0;
+        int dead = 0;
+        for (const Bot& bot : bots_) {
+            if (bot.entity == NULL_ENTITY || !world_.isAlive(bot.entity)) { ++dead; continue; }
+            if (world_.has<Dead>(bot.entity)) { ++dead; continue; }
+            ++alive;
+            const auto slot = static_cast<std::size_t>(bot.ai.activity);
+            if (slot < tally.size()) ++tally[slot];
+        }
+        std::string line = plural(alive, "bot", "bots") + " alive";
+        if (dead > 0) line += ", " + std::to_string(dead) + " down";
+        line += ":";
+        for (std::size_t i = 0; i < tally.size(); ++i) {
+            if (tally[i] == 0) continue;
+            line += " " + std::to_string(tally[i]) + " " +
+                    botActivityName(static_cast<BotActivity>(i));
+        }
+        if (alive == 0) line = "No bots.";
+        out(line);
         return;
     }
 

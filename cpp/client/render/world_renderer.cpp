@@ -2009,8 +2009,12 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
             canvas.restore();
         }
     } else if (sprites_ && sprites_->mobDrawable(mob.typeIndex)) {
+        // The world radius is handed over beside the drawn one because the mobs
+        // drawn by code cut their detail from how big the mob IS. Not the death
+        // scale and not the zoom: a rock does not gain facets while it pops,
+        // and it does not lose them when the camera pulls back.
         sprites_->drawMob(canvas, mob.typeIndex, screen.x, screen.y, diameter, rotation,
-                          timeSeconds, mirrored);
+                          timeSeconds, mirrored, mob.radius * visualScale);
     } else {
         // No artwork: the tier colour, which is at least the one fact about a
         // mob worth reading from across the screen.

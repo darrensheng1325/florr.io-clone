@@ -1,14 +1,20 @@
 #pragma once
-// Populating the two realms that are not the overworld.
+// Populating the two realms that are not an authored map.
 //
-// The neighbourhood fill in spawning.h serves the open map: mobs appear inside
-// each player's viewport and are recycled when nobody has been near them. The
-// arena and the maze are bounded rooms and the reference populates them WHOLE
+// spawning.h populates a MAP, and it does it from the spawn bands its author
+// drew: ground no band covers grows nothing there. That rule cannot reach the
+// arena or the maze, because neither is authored -- both are GENERATED, they
+// carry no object layer, and there is nowhere to draw a band. They are bounded
+// rooms, and the reference populates them WHOLE
 // (src/server/pvpArenaSpawner.ts, src/server/mazeSpawner.ts): the arena holds
 // a fixed crowd that scales with the flowers fighting in it, and the maze
-// carries the open world's mobs-per-walkable-unit across every corridor at
-// once, so exploring deeper always finds something rather than a bubble around
-// wherever the player happened to walk in.
+// carries the reference density across every corridor at once, so exploring
+// deeper always finds something rather than a bubble around wherever the
+// player happened to walk in.
+//
+// So this system is deliberately exempt from "no band, no mobs". If a realm
+// here ever became a hand-authored map, its population would move to bands and
+// this file would stop covering it.
 //
 // This system decides WHAT goes WHERE and WHEN; building the entity is still
 // SpawnSystem::spawnMob's job, which is what keeps a maze mob the same object
@@ -60,8 +66,9 @@ inline constexpr int kArenaSpawnsPerPass = 3;
 // Maze tuning (src/server/mazeSpawner.ts)
 // ---------------------------------------------------------------------------
 
-/// Mobs per floor cell: the open world's density over one cell's area, so a
-/// corridor carries exactly the regular map's mobs per walkable unit.
+/// Mobs per floor cell: the reference density (kTargetMobDensity, which is
+/// also what a map's bands are sized by) over one cell's area, so a corridor
+/// carries exactly a stocked band's mobs per walkable unit.
 inline constexpr double kMazeMobsPerFloorCell = kTargetMobDensity * kMazeCellSize * kMazeCellSize;
 /// Runaway guard above the derived target.
 inline constexpr int kMazeMaxMobs = 1500;

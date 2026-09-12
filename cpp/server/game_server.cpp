@@ -207,6 +207,9 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     if (!database_.load(config.databasePath, errorOut)) return false;
 
     rng_.reseed(config.worldSeed);
+    // Derived from the same seed, so a world is still reproducible end to end,
+    // but a stream of its own -- see botRng_.
+    botRng_.reseed(config.worldSeed ^ 0x80757331B07B07ull);
     terrain_ = std::make_unique<Terrain>();
     // Every map the data directory stages, in manifest order: each one gets a
     // realm, a tile grid inside `terrain_` and an annotation layer inside
@@ -509,10 +512,16 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // Two lists, because the reference draws the line in two different places.
     // The mob LOD counts EVERY flower as an observer, bots included -- a bot
     // fighting a mob is something worth simulating properly. The spawner
-    // counts only real connections: a world that spawns a neighbourhood's
-    // worth of mobs around each of two dozen bots fills up with mobs nobody
-    // asked for, and bots keeping the unseen-despawn census fed would stop the
-    // world ever recycling.
+    // counts only real connections: a bot in this list would make every band
+    // it worked visible, stocking that band to its full area-derived target,
+    // so two dozen of them would keep the whole map's population standing
+    // whether or not anyone was playing, and would go on feeding the
+    // unseen-despawn census so none of it ever recycled.
+    //
+    // That is also why the bot controller chooses its hunting grounds around
+    // the PEOPLE who are online (server/bot_ai.cpp, botPickHuntingGround):
+    // ground nobody can see grows nothing, so a bot sent to farm it stands in
+    // an empty field until its timer runs out.
     activePlayers_.clear();
     Query<PlayerTag, Transform> players{world_};
     players.each([&](Entity, PlayerTag&, Transform& transform) {
@@ -3136,8 +3145,8 @@ void GameServer::handlePing(net::Connection& connection, ByteReader& reader) {
 //
 // What lives here is the POPULATION: the target, the jitter, the burst cap,
 // idle retirement, and the name-seeded level and loadout. What a bot DOES --
-// the whole of src/server/botManager.ts's decision tree -- is
-// server/bot_ai.cpp.
+// sensing, hunting grounds, and the activity machine over them -- is
+// server/bot_ai.cpp, whose header explains the shape.
 
 
 // ---------------------------------------------------------------------------

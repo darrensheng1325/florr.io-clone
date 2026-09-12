@@ -1,12 +1,18 @@
 #pragma once
 // Compiled artwork: mobs, petals, and the tiles a map is painted with.
 //
-// Every sprite in the game is an inline SVG document inside mobs.json /
+// Almost every sprite in the game is an inline SVG document inside mobs.json /
 // petals.json. Those are parsed ONCE at startup into retained SvgDocuments and
 // drawn straight to the canvas thereafter -- there is no bitmap bake. Baking
 // mobs to bitmaps was tried in the original and cost more than it saved: a
 // rarity-scaled mob needs a bitmap per size, the cache thrashes as soon as a
 // crowd is on screen, and the vector path is fast enough.
+//
+// The exceptions are the mobs whose `image` names a PAINTER rather than
+// declaring a document -- `$rock`, `$cactus` -- because their picture is a
+// function of their radius and a document can only be magnified. This cache
+// resolves that marker once at build time and dispatches to mob_art.h, so
+// every call site keeps one way to draw a mob whichever kind it is.
 //
 // The map tiles are the same idea one step out, but their palette is the
 // MAP's, not this file's: a Tiled tileset names one artwork per tile, the
@@ -23,6 +29,7 @@
 #include <vector>
 
 #include "canvas.h"
+#include "client/render/mob_art.h"
 #include "svg.h"
 
 namespace flix {
@@ -43,8 +50,17 @@ public:
     /// across its own vertical axis AFTER the rotation, which is what the
     /// browser build's `reversed` mobs do -- turning them by pi instead
     /// rotates asymmetric artwork rather than reflecting it.
+    ///
+    /// `worldRadius` is the body's radius in WORLD units, and only the mobs
+    /// drawn by code read it: a rock's facets and a cactus's spines are cut
+    /// from how big the mob IS, never from how big it happens to be on this
+    /// screen, so zooming out gives you a smaller rock rather than a smoother
+    /// one. Zero means "the same as the drawn radius", which is what a call
+    /// site with no world behind it -- a bestiary tile, a contact sheet -- has
+    /// to say.
     void drawMob(Canvas&, std::uint16_t index, double x, double y, double diameter,
-                 double rotation, double timeSeconds, bool mirrored = false) const;
+                 double rotation, double timeSeconds, bool mirrored = false,
+                 double worldRadius = 0.0) const;
 
     void drawPetal(Canvas&, std::uint16_t index, double x, double y, double diameter,
                    double rotation, double timeSeconds) const;
@@ -69,7 +85,13 @@ public:
 private:
     struct Sprite {
         std::shared_ptr<SvgDocument> document;
-        std::uint32_t fallbackColor = 0xFFFFFFu;
+        /// Set when the mob's `image` names a painter instead of declaring a
+        /// document; `document` is then null and never consulted.
+        MobArt art = MobArt::None;
+        /// The mob's or petal's own `color`, which is both what a painter
+        /// bodies its artwork in and what a sprite that would not compile is
+        /// drawn as. One field because it is one fact about the entry.
+        std::uint32_t color = 0xFFFFFFu;
         bool usable = false;
         /// The artwork declares nothing to draw, so neither does this: several
         /// petals and mobs ship a literally empty <svg/>, and the browser's
@@ -80,7 +102,7 @@ private:
     };
 
     void draw(Canvas&, const Sprite&, double x, double y, double diameter,
-              double rotation, double timeSeconds, bool mirrored) const;
+              double rotation, double timeSeconds, bool mirrored, double worldRadius) const;
 
     /// Parses one optional document, recording a warning instead of failing.
     std::shared_ptr<SvgDocument> compileArt(const std::string& source, const std::string& label);

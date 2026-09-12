@@ -649,8 +649,12 @@ bool GalleryPanel::render(MenuContext& ctx) {
             const double diameter =
                 std::min(kIconCap, content().mobStats(cell.mobIndex, Rarity::Common).radius * 2.0 *
                                        kIconZoom);
+            // Cut its detail from the mob's OWN common-tier radius, not from
+            // the tile: a rock in the bestiary is the rock the garden has, at
+            // picture size, rather than a boulder squeezed into 60 units.
             ctx.sprites.drawMob(canvas, cell.mobIndex, rect.x + rect.w * 0.5,
-                                rect.y + rect.h * 0.5, diameter, 0.0, ctx.timeSeconds);
+                                rect.y + rect.h * 0.5, diameter, 0.0, ctx.timeSeconds, false,
+                                content().mobStats(cell.mobIndex, Rarity::Common).radius);
 
             // Abbreviated, unlike the drop table's own counts: five figures of
             // ant kills laid across a 60-unit plate is a smear, and a bestiary

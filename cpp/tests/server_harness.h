@@ -249,11 +249,11 @@ inline std::string fixtureDoor(const std::string& spawnId, const std::string& la
 }
 
 /// One `spawns` object with no difficulty: a mob REGION, which only says what
-/// lives on this ground.
+/// lives on this ground and owns no population of its own.
 ///
-/// A fixture map needs one of these or a `defaultMobGroup`, or the spawner has
-/// nothing to put on it -- the map's id is its default group, and `hollow` is
-/// not a group mobs.json defines.
+/// It answers a BAND standing on it that named no roster. On its own it spawns
+/// nothing: ground no band covers grows nothing at all, so a fixture map that
+/// wants mobs needs a fixtureBand() whatever else it carries.
 inline std::string fixtureRegion(double x, double y, double w, double h,
                                  const std::string& mobs) {
     return "{ \"id\": 80, \"name\": \"\", \"type\": \"spawn\", \"visible\": true,"
@@ -454,8 +454,8 @@ inline std::string twoMapDataDir(const std::string& name) {
 ///               case every "give up and use the rectangle's centre" fallback
 ///               used to hand back a point inside a wall for.
 ///
-/// Every placement path the server has -- the join, the respawn, the bots, the
-/// density fill, a drop -- runs on this, and a path that quietly gives up on a
+/// Every placement path the server has -- the join, the respawn, the bots, a
+/// band fill, a drop -- runs on this, and a path that quietly gives up on a
 /// dense map shows up here rather than in the game.
 inline std::string denseMapDataDir(const std::string& name) {
     const int side = 32;
@@ -464,10 +464,13 @@ inline std::string denseMapDataDir(const std::string& name) {
                    fixtureDoor("hollow", "Hollow", 600, 600, 1200, 1200, true, 0.0) + "," +
                        fixtureDoor("cellar", "Cellar", 3600, 4200, 300, 300, false, 1.0),
                    std::string(),
-                   // A region over the whole map, so the spawner has something
-                   // to put on it: the map's id is its default mob group and
+                   // A difficulty-0 BAND over the whole map, so the spawner has
+                   // somewhere to put anything at all: ground no band covers
+                   // grows nothing, and this fixture exists to watch mobs be
+                   // placed on awkward terrain. It names its roster outright
+                   // because the map's id is its default mob group and
                    // `hollow` is not a group mobs.json defines.
-                   fixtureRegion(0, 0, side * kTileSize, side * kTileSize, "garden 100%"),
+                   fixtureBand(0, 0, side * kTileSize, side * kTileSize, "garden 100%", 0.0),
                    denseWalls(side, side, 6, 6));
     return stageDataDir(name, {{"hollow", world}});
 }

@@ -19,6 +19,7 @@
 // through the wire: a bot is a plain player entity, so it is findable by
 // having a PlayerTag and no session behind it.
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <unordered_map>
@@ -117,10 +118,11 @@ TEST(bots_spread_out_and_stay_in_the_world) {
     }
     centre = centre / static_cast<double>(bots.size());
 
-    // Separation and the per-band farming zones between them mean the
-    // population must not be a single knot. A crowd that has collapsed onto
-    // one point is the classic failure of a controller whose anchor is the
-    // same for everyone.
+    // Separation and a hunting ground chosen per bot mean the population must
+    // not be a single knot. A crowd collapsed onto one point is the classic
+    // failure of a controller whose anchor is the same for everyone -- which
+    // is exactly what the per-band "farm the zone matching your gear" rule
+    // this replaced produced, once every bot's gear pointed at the same band.
     double spread = 0;
     for (const Entity bot : bots) {
         spread = std::max(spread, (world.get<Transform>(bot).position - centre).length());
@@ -360,4 +362,186 @@ TEST(a_bot_never_takes_a_pad) {
         return world.get<Transform>(player).realm != Realm::Overworld;
     }, ticks));
     removeDataDir(dir);
+}
+
+// ---------------------------------------------------------------------------
+// The two things the controller exists to do
+// ---------------------------------------------------------------------------
+//
+// Everything above pins that bots EXIST and move. These pin that they PLAY.
+// Both were false of the controller these replaced -- a bot would walk through
+// a mob without its petals ever coming out, and a boss could stand in the
+// middle of the population unbothered -- and neither is visible in any of the
+// properties above, because a bot walking in a straight line past a beetle
+// satisfies all of them.
+
+namespace {
+
+/// Every live ambient mob in the overworld, with its health.
+std::unordered_map<Entity, double> mobHealths(World& world) {
+    std::unordered_map<Entity, double> out;
+    Query<MobTag, Transform, Health> mobs{world};
+    mobs.each([&](Entity e, MobTag&, Transform& transform, Health& health) {
+        if (world.has<Pet>(e) || world.has<Dead>(e)) return;
+        if (transform.realm != Realm::Overworld) return;
+        out[e] = health.current;
+    });
+    return out;
+}
+
+/// `/admin spawn <mob> <rarity> <x> <y> <count>`, which is the console an
+/// operator uses -- so a test that stages a fight stages it the way the game
+/// can, rather than by assembling a mob out of components and hoping it
+/// carries everything combat needs.
+void adminSpawn(NetClient& client, const char* mob, const char* rarity, Vec2 at, int count) {
+    client.sendChat("/admin spawn " + std::string(mob) + " " + rarity + " " +
+                    std::to_string(static_cast<int>(at.x)) + " " +
+                    std::to_string(static_cast<int>(at.y)) + " " + std::to_string(count));
+}
+
+} // namespace
+
+TEST(a_bot_fights_what_is_put_in_front_of_it) {
+    Harness h("bots-fight", seedAdmin);
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("boss", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    client.joinGame(1280, 720, {}, "boss");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    h.step(200, {&client});
+
+    World& world = h.server.world();
+    std::vector<Entity> bots = botBodies(world);
+    CHECK(bots.size() > 4);
+    if (bots.size() < 5) return;
+
+    // The five bots FURTHEST from the admin's own flower. Bots deliberately
+    // leave the mobs around a human alone (kBotPlayerClaimRadius) -- that rule
+    // is what stops two dozen of them stripping the screen of whoever came to
+    // play -- so a fight staged on the player's doorstep would be testing that
+    // rule rather than this one.
+    Entity me = NULL_ENTITY;
+    Query<PlayerTag, PlayerAccount> people{world};
+    people.each([&](Entity e, PlayerTag&, PlayerAccount& account) {
+        if (account.username == "boss") me = e;
+    });
+    CHECK(me != NULL_ENTITY);
+    if (me == NULL_ENTITY) return;
+    const Vec2 human = world.get<Transform>(me).position;
+    std::sort(bots.begin(), bots.end(), [&](Entity a, Entity b) {
+        return distanceSq(world.get<Transform>(a).position, human) >
+               distanceSq(world.get<Transform>(b).position, human);
+    });
+
+    // One mob dropped right on top of each of five bots. Five rather than one
+    // because a bot may legitimately be doing something else at that instant
+    // -- running from something, standing on a drop -- and the claim is about
+    // the controller, not about any single tick of any single bot.
+    const std::unordered_map<Entity, double> before = mobHealths(world);
+    for (int i = 0; i < 5; ++i) {
+        const Vec2 at = world.get<Transform>(bots[static_cast<std::size_t>(i)]).position;
+        adminSpawn(client, "beetle", "rare", at + Vec2{90, 0}, 1);
+        // A third of a second between lines. The console is rate limited like
+        // any other chat (session.h: chatAllowance), and five commands on
+        // consecutive ticks is four commands the server never reads.
+        h.step(10, {&client});
+    }
+    h.step(3, {&client});
+
+    // Which mobs are new.
+    std::vector<Entity> staged;
+    for (const auto& entry : mobHealths(world)) {
+        if (before.count(entry.first) == 0) staged.push_back(entry.first);
+    }
+    CHECK(!staged.empty());
+    if (staged.empty()) return;
+
+    std::unordered_map<Entity, double> stagedHealth;
+    for (const Entity mob : staged) stagedHealth[mob] = world.get<Health>(mob).current;
+
+    // Four seconds: long enough for the reaction delay, for the bot to close
+    // the last few units and for a petal to come round.
+    h.step(120, {&client});
+
+    int hurt = 0;
+    for (const Entity mob : staged) {
+        // Gone counts: a beetle a bot finished off is the strongest form of
+        // the claim.
+        if (!world.isAlive(mob) || world.has<Dead>(mob)) { ++hurt; continue; }
+        if (world.get<Health>(mob).current < stagedHealth[mob] - 1e-6) ++hurt;
+    }
+    CHECK(hurt >= 3);
+}
+
+TEST(bots_rally_onto_a_boss) {
+    Harness h("bots-boss", seedAdmin);
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("boss", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    client.joinGame(1280, 720, {}, "boss");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    h.step(200, {&client});
+
+    World& world = h.server.world();
+    const std::vector<Entity> bots = botBodies(world);
+    CHECK(bots.size() > 4);
+    if (bots.size() < 5) return;
+
+    // The middle of the population, so the boss lands inside the rally range
+    // of most of it rather than off in a corner.
+    Vec2 centre{0, 0};
+    for (const Entity bot : bots) centre += world.get<Transform>(bot).position;
+    centre = centre / static_cast<double>(bots.size());
+
+    const std::unordered_map<Entity, double> before = mobHealths(world);
+    adminSpawn(client, "beetle", "super", centre, 1);
+    h.step(12, {&client});
+
+    Entity boss = NULL_ENTITY;
+    Query<MobTag, MobType> mobs{world};
+    mobs.each([&](Entity e, MobTag&, MobType& type) {
+        if (before.count(e) != 0) return;
+        if (type.rarity == Rarity::Super) boss = e;
+    });
+    CHECK(boss != NULL_ENTITY);
+    if (boss == NULL_ENTITY) return;
+
+    const auto crowdAround = [&](double radius) {
+        if (!world.isAlive(boss)) return 0;
+        const Vec2 at = world.get<Transform>(boss).position;
+        int count = 0;
+        for (const Entity bot : bots) {
+            if (!world.isAlive(bot) || world.has<Dead>(bot)) continue;
+            if (distanceSq(world.get<Transform>(bot).position, at) < radius * radius) ++count;
+        }
+        return count;
+    };
+
+    const double bossHealth = world.get<Health>(boss).current;
+
+    // Sampled over the whole window rather than read once at the end. A raid
+    // is a crowd that GATHERS: taking one reading twelve seconds later asks
+    // whether the bots happened to be on the near side of their orbit at that
+    // instant, which is a coin toss, not the property under test.
+    int peakCrowd = crowdAround(1000.0);
+    for (int i = 0; i < 30; ++i) {
+        h.step(15, {&client});
+        if (!world.isAlive(boss) || world.has<Dead>(boss)) break;
+        peakCrowd = std::max(peakCrowd, crowdAround(1000.0));
+    }
+
+    // Either the crowd gathered and chewed on it, or it gathered and killed it
+    // -- both are the boss being answered rather than ignored, which is what
+    // the old controller did with it.
+    const bool killed = !world.isAlive(boss) || world.has<Dead>(boss);
+    CHECK(peakCrowd >= 3);
+    if (!killed) CHECK(world.get<Health>(boss).current < bossHealth);
 }

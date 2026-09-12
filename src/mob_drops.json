@@ -381,6 +381,43 @@
       }
     ]
   },
+  "scorpion": {
+    "guaranteed": true,
+    "drops": [
+      {
+        "type": "petal",
+        "itemType": "pincer",
+        "rarity": "common",
+        "probability": 0.5,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "pincer",
+        "rarity": "uncommon",
+        "probability": 0.15,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "iris",
+        "rarity": "common",
+        "probability": 0.35,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "sand",
+        "rarity": "common",
+        "probability": 0.3,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      }
+    ]
+  },
   "beetle": {
     "guaranteed": true,
     "drops": [

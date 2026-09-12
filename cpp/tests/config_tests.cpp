@@ -165,11 +165,11 @@ TEST(shipped_content_loads) {
     const Shipped& s = shipped();
     if (!s.ok) std::printf("    (load error: %s)\n", s.error.c_str());
     CHECK(s.ok);
-    CHECK_EQ(s.registry.mobCount(), std::size_t(51));
-    // 74 written in petals.json plus one generated egg for each of the 49 mobs
+    CHECK_EQ(s.registry.mobCount(), std::size_t(52));
+    // 74 written in petals.json plus one generated egg for each of the 50 mobs
     // that is not a pet and has no hand-written egg -- exactly what the browser
     // build appends to BASE_PETAL_CONFIGS at import time.
-    CHECK_EQ(s.registry.petalCount(), std::size_t(123));
+    CHECK_EQ(s.registry.petalCount(), std::size_t(124));
     CHECK(s.registry.loaded());
     CHECK(s.registry.contentHash() != 0u);
 }
@@ -874,8 +874,8 @@ TEST(global_content_registry_loads_from_one_directory) {
     std::string error;
     CHECK(loadContent(dir, error));
     CHECK(error.empty());
-    CHECK_EQ(content().mobCount(), std::size_t(51));
-    CHECK_EQ(content().petalCount(), std::size_t(123));
+    CHECK_EQ(content().mobCount(), std::size_t(52));
+    CHECK_EQ(content().petalCount(), std::size_t(124));
     // Same three files in the same order as the shipped registry, so the two
     // must agree on every index and on the hash.
     CHECK_EQ(content().contentHash(), shipped().registry.contentHash());
@@ -884,11 +884,11 @@ TEST(global_content_registry_loads_from_one_directory) {
     // A failed reload of the global registry keeps what it already had.
     CHECK(!loadContent(dir + "/nowhere", error));
     CHECK(!error.empty());
-    CHECK_EQ(content().mobCount(), std::size_t(51));
+    CHECK_EQ(content().mobCount(), std::size_t(52));
 
     // A trailing slash names the same directory.
     CHECK(loadContent(dir + "/", error));
-    CHECK_EQ(content().mobCount(), std::size_t(51));
+    CHECK_EQ(content().mobCount(), std::size_t(52));
 }
 
 TEST(the_content_hash_covers_the_staged_maps) {
