@@ -50,16 +50,24 @@ constexpr int kDesignWidth = 1920;
 constexpr int kDesignHeight = 930;
 
 /// The spawn picker's two rows. A row is sized so all of its buttons fit the
-/// design width with a gap between them, and never wider or narrower than
-/// these two bounds; below the small-text width the labels drop to 12px.
+/// design width with a gap between them, shrinking from the natural width
+/// when it has to and never growing past it.
 constexpr double kPickerRowHeight = 32.0;
 /// The picker's height when it is one row of tabs-as-buttons: the height
 /// the original single biome row had.
 constexpr double kPickerSingleRowHeight = 35.0;
 constexpr double kPickerGap = 10.0;
-constexpr double kPickerMaxWidth = 150.0;
+/// A picker button's NATURAL width, and its widest: the browser build's biome
+/// button, which is 90 by 35 however many biomes the row holds. The row only
+/// ever shrinks from this. Letting a short row divide the frame between its
+/// buttons instead made every one of them a 150-wide slab -- a picker that
+/// looks like a different control depending on how many maps are staged, and
+/// nothing like the row it replaced.
+constexpr double kPickerNaturalWidth = 90.0;
+/// The floor a crowded row shrinks to. Below it the labels stop fitting, so
+/// the row is allowed to run off the frame instead -- which is what the
+/// reference does, and better than an unreadable button.
 constexpr double kPickerMinWidth = 70.0;
-constexpr double kPickerSmallTextBelow = 90.0;
 /// Breathing room the widest row keeps from the design frame's edges.
 constexpr double kPickerMargin = 10.0;
 
@@ -2207,14 +2215,15 @@ void App::drawTitlePetals(Canvas& canvas, double time) {
 
 namespace {
 
-/// A picker row's button width: the widest that lets `count` buttons and
-/// their gaps fit `rowSpace`, between the two bounds that keep a lone tab
-/// from becoming a bar and a crowded row from becoming unreadable.
+/// A picker row's button width: the natural width, shrunk only as far as a
+/// crowded row needs to fit `rowSpace`, and never below the floor that keeps
+/// its labels readable. A row with room to spare gets buttons the size the
+/// reference draws them, not the size of its share of the frame.
 double pickerButtonWidth(std::size_t count, double rowSpace) {
-    if (count == 0) return kPickerMaxWidth;
+    if (count == 0) return kPickerNaturalWidth;
     const double fitted = (rowSpace - kPickerMargin * 2.0 - (count - 1) * kPickerGap) /
                           static_cast<double>(count);
-    return clamp(fitted, kPickerMinWidth, kPickerMaxWidth);
+    return clamp(fitted, kPickerMinWidth, kPickerNaturalWidth);
 }
 
 /// One row of `count` buttons of `width` by `height`, centred on centreX at
@@ -2413,8 +2422,9 @@ void App::drawLobby(Canvas& canvas, double time) {
         style.fill = chosen ? hsvScale(colour, 0.85) : colour;
         style.outlineWidth = chosen ? 5.0 : 4.0;
         // A crowded row shrinks its type with its buttons, so "Ant Hell"
-        // still fits inside one.
-        style.textSize = box.w < kPickerSmallTextBelow ? 12.0 : 14.0;
+        // still fits inside one. A row at its natural width keeps the
+        // reference's 14.
+        style.textSize = box.w < kPickerNaturalWidth ? 12.0 : 14.0;
         button(canvas, box, text_, freeMouse && !chosen && hitInclusive(box, mouse),
                freeMouse && pressedControl_ == id, style);
     };

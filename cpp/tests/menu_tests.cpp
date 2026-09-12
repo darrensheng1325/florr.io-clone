@@ -545,13 +545,20 @@ TEST(killing_a_mob_credits_the_ledger_and_pays_its_stars) {
     if (player == NULL_ENTITY) return;
 
     // Mobs arrive on the spawner's own schedule, and the starter petals need a
-    // tick or two to reach the ring, so wait for both.
+    // tick or two to reach the ring, so wait for both -- and take a mob IN THE
+    // PLAYER'S REALM. Every map with spawn bands stocks its own, and one from
+    // another map cannot be parked on this flower: the park below moves a
+    // position, and the same position in another coordinate space is not the
+    // same place, so the two never touch and the kill never happens.
+    const Realm realm = world.get<Transform>(player).realm;
     Entity mob = NULL_ENTITY;
-    Query<MobTag, MobType> mobs{world};
+    Query<MobTag, MobType, Transform> mobs{world};
     Query<PetalInstance, Transform> petals{world};
     const bool armed = h.stepUntil({&client}, [&] {
         mob = NULL_ENTITY;
-        mobs.each([&](Entity e, MobTag&, MobType&) { if (mob == NULL_ENTITY) mob = e; });
+        mobs.each([&](Entity e, MobTag&, MobType&, Transform& at) {
+            if (mob == NULL_ENTITY && at.realm == realm) mob = e;
+        });
         bool anyPetal = false;
         petals.each([&](Entity, PetalInstance&, Transform&) { anyPetal = true; });
         return mob != NULL_ENTITY && anyPetal;

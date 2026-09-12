@@ -527,7 +527,23 @@ TEST(bots_rally_onto_a_boss) {
     h.step(200, {&client});
 
     World& world = h.server.world();
-    const std::vector<Entity> bots = botBodies(world);
+    // THE BOTS IN THIS PLAYER'S REALM, not every bot on the server. Maps are
+    // separate coordinate spaces, so averaging positions across two of them
+    // names a point in neither and the boss lands nowhere near anybody --
+    // which would read as the controller ignoring it.
+    Entity watcher = NULL_ENTITY;
+    Query<PlayerTag, PlayerAccount, Transform> watchers{world};
+    watchers.each([&](Entity e, PlayerTag&, PlayerAccount& account, Transform&) {
+        if (!account.userId.empty()) watcher = e;
+    });
+    CHECK(watcher != NULL_ENTITY);
+    if (watcher == NULL_ENTITY) return;
+    const Realm realm = world.get<Transform>(watcher).realm;
+
+    std::vector<Entity> bots;
+    for (const Entity bot : botBodies(world)) {
+        if (world.get<Transform>(bot).realm == realm) bots.push_back(bot);
+    }
     CHECK(bots.size() > 4);
     if (bots.size() < 5) return;
 
@@ -541,11 +557,21 @@ TEST(bots_rally_onto_a_boss) {
     adminSpawn(client, "beetle", "super", centre, 1);
     h.step(12, {&client});
 
+    // The Super THIS spawn made: in the player's realm, and the nearest one to
+    // where it was asked for. A map whose bands reach ultra rolls the odd
+    // Super of its own, and one of those two maps away is not the boss the
+    // bots are being asked to answer.
     Entity boss = NULL_ENTITY;
-    Query<MobTag, MobType> mobs{world};
-    mobs.each([&](Entity e, MobTag&, MobType& type) {
+    double bossDistance = 0;
+    Query<MobTag, MobType, Transform> mobs{world};
+    mobs.each([&](Entity e, MobTag&, MobType& type, Transform& at) {
         if (before.count(e) != 0) return;
-        if (type.rarity == Rarity::Super) boss = e;
+        if (type.rarity != Rarity::Super || at.realm != realm) return;
+        const double distance = distanceSq(at.position, centre);
+        if (boss == NULL_ENTITY || distance < bossDistance) {
+            boss = e;
+            bossDistance = distance;
+        }
     });
     CHECK(boss != NULL_ENTITY);
     if (boss == NULL_ENTITY) return;
