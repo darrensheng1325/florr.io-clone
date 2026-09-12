@@ -1649,6 +1649,50 @@ TEST(a_drop_is_collectable_on_the_tick_it_was_created_in) {
     CHECK_EQ(loot.pickups().size(), std::size_t(0));
 }
 
+TEST(the_pickup_cue_carries_the_drops_look_not_just_its_id) {
+    // The cue is the ONLY thing a same-tick pickup leaves behind: the entity
+    // is created and destroyed inside one tick, so no snapshot ever carried
+    // it and the client has never heard of that net id. A cue naming only the
+    // id is unplayable for exactly the flowers that collect the most -- an
+    // apex observer alone reaches 437 units -- and an unplayable cue is what
+    // "mobs stopped dropping loot" looks like from the seat.
+    World world;
+    CommandBuffer commands{world};
+    SpatialGrid grid;
+    LootSystem loot;
+    EventQueue events;
+    Rng rng(2201);
+    NetIdAllocator ids;
+    loot.netIds = &ids;
+
+    const Entity player = makePlayer(world, kCentre, 500.0, 7);
+    (void)player;
+    const std::uint16_t rose = shipped().petalIndex("rose");
+    const Entity drop =
+        loot.spawnDrop(world, rose, Rarity::Epic, kCentre, Realm::Overworld, {}, 0.0);
+    CHECK(drop != NULL_ENTITY);
+    const std::uint32_t dropNetId = world.get<NetId>(drop).value;
+    rebuildGrid(world, grid);
+
+    loot.run(world, grid, shipped(), rng, 0.0, net::kTickSeconds, commands, events);
+    commands.flush();
+
+    const WireEvent* cue = nullptr;
+    for (const WireEvent& event : events.events()) {
+        if (event.kind == net::EventKind::PickedUp) cue = &event;
+    }
+    CHECK(cue != nullptr);
+    if (cue == nullptr) return;
+    CHECK_EQ(cue->netId, dropNetId);
+    CHECK_EQ(cue->otherNetId, std::uint32_t(7));
+    CHECK_EQ(cue->position.x, kCentre.x);
+    CHECK_EQ(cue->position.y, kCentre.y);
+    // The look: the petal index in `amount` and the tier in `flag`, the two
+    // fixed fields this kind has no other use for.
+    CHECK_EQ(static_cast<std::uint16_t>(cue->amount), rose);
+    CHECK_EQ(static_cast<int>(cue->flag), rarityIndex(Rarity::Epic));
+}
+
 TEST(the_pickup_callback_sees_what_the_list_sees) {
     World world;
     CommandBuffer commands{world};

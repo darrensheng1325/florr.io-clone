@@ -132,11 +132,18 @@ public:
         events_.push_back(e);
     }
 
-    void pickedUp(std::uint32_t dropNetId, std::uint32_t byNetId, Vec2 at, Realm realm) {
+    /// `petalIndex` and `rarity` are the drop's LOOK, carried so the client can
+    /// play the pickup for an item it never held: magnetism is a pickup radius,
+    /// and loot that lands inside it is collected on the tick it spawned --
+    /// before any snapshot has carried the entity. See net::EventKind::PickedUp.
+    void pickedUp(std::uint32_t dropNetId, std::uint32_t byNetId, Vec2 at, Realm realm,
+                  std::uint16_t petalIndex, Rarity rarity) {
         WireEvent e;
         e.kind = net::EventKind::PickedUp;
         e.netId = dropNetId;
         e.otherNetId = byNetId;
+        e.amount = static_cast<double>(petalIndex);
+        e.flag = static_cast<std::uint8_t>(rarityIndex(rarity));
         e.position = at;
         e.realm = realm;
         e.positional = true;

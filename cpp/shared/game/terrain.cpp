@@ -760,6 +760,37 @@ double Terrain::collisionOverhangUnits(Realm realm) const {
     return shapeGrid(realm).overhangUnits;
 }
 
+void Terrain::collisionRingsAt(int tx, int ty, Realm realm,
+                               std::vector<CellCollisionRing>& out) const {
+    out.clear();
+    const Grid& g = grid(realm);
+    if (tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) return;
+    const ShapeGrid& store = shapeGrid(realm);
+    // The same guard the queries use: a shape store built for other
+    // dimensions describes another map, so the realm is on whole-cell
+    // collision and has no rings to hand back.
+    if (store.cols != g.cols || store.rows != g.rows || store.firstRef.empty()) return;
+    const std::size_t cell = static_cast<std::size_t>(index(g, tx, ty));
+    const std::uint32_t from = store.firstRef[cell];
+    const std::uint32_t to = store.firstRef[cell + 1];
+    out.reserve(to - from);
+    for (std::uint32_t i = from; i < to; ++i) {
+        const ShapeGrid::Ref& ref = store.refs[i];
+        // Where the ring's own cell is: the queries subtract this shift from
+        // the point, so the geometry is offset by it. See ShapeGrid::Ref.
+        const Vec2 origin{(tx + ref.dx) * kTileSize, (ty + ref.dy) * kTileSize};
+        for (const CollisionShape& shape : store.sets[ref.set].shapes) {
+            CellCollisionRing ring;
+            ring.points = &shape.points;
+            ring.origin = origin;
+            ring.layer = ref.layer;
+            ring.water = ref.water;
+            ring.ownCell = ref.dx == 0 && ref.dy == 0;
+            out.push_back(ring);
+        }
+    }
+}
+
 void Terrain::clearCollisionShapes(Realm realm) {
     ShapeGrid& store = shapeGrid(realm);
     if (store.cols == 0 && store.rows == 0 && store.refs.empty() && store.sets.empty()) return;

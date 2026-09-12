@@ -120,9 +120,11 @@ construction:
   on purpose): the overworld is the map's authored collision shapes -- the
   polygons and rectangles each tile carries in Tiled, placed per cell from
   every layer marked `has_collision`, with the one-value-per-cell tile grid
-  kept beside them as the coarse view the minimap, the flow field and the fast
-  reject use -- the maze is `activeMaze()`'s corridor lattice, and the arena is
-  open floor inside a ring.
+  kept beside them as the coarse view the flow field and the fast reject use
+  (the minimap draws the shapes themselves, through
+  `Terrain::collisionRingsAt`, because a coarse cell paints a tunnel shut) --
+  the maze is `activeMaze()`'s corridor lattice, and the arena is open floor
+  inside a ring.
   `Terrain::clampInside` is the realm's closure — the world rectangle, the
   maze square, or the ring's inside face — and replaces the old world clamp.
 * **Broadphase** — `SpatialGrid` keeps one layer per realm; `insert` files an

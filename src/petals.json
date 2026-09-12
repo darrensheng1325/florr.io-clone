@@ -474,9 +474,6 @@
         "noPhysics": true,
         "image": "<svg width=\"32\" height=\"32\" viewBox=\"-16 -16 32 32\" xmlns=\"http://www.w3.org/2000/svg\">\n  <path d=\"M 5 12.5 Q 10 -2.5 15 -12.5 Q 5 -2.5 5 12.5 Z M -5 12.5 Q -10 -2.5 -15 -12.5 Q -5 -2.5 -5 12.5 Z\"\n        fill=\"#333333\"\n        stroke=\"#222222\"\n        stroke-width=\"3\"\n        stroke-linecap=\"round\"\n        stroke-linejoin=\"round\"/>\n  <circle cx=\"15\" cy=\"-12.5\" r=\"2.5\" fill=\"#d01c1d\"/>\n  <circle cx=\"-15\" cy=\"-12.5\" r=\"2.5\" fill=\"#d01c1d\"/>\n</svg>",
         "isAdminPetal": false,
-        "playerModifiers": {
-            "magnetism": 100
-        },
         "cameraZoom": 0.85
     },
     "faster": {

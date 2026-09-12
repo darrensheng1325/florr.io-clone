@@ -376,7 +376,17 @@ enum class EventKind : std::uint8_t {
     Heal,           ///< u32 netId, u16 amount
     PetalBroke,     ///< u32 ownerNetId, u8 slot
     Killed,         ///< u32 netId  -- pop/particles at its last position
-    PickedUp,       ///< u32 dropNetId, u32 byNetId -- fly-to-player animation
+    /// A drop was collected: u32 dropNetId, u32 byNetId, and -- in the fields
+    /// no other use of this kind has -- f32 amount carrying the drop's PETAL
+    /// INDEX and u8 flag its RARITY, at `position`.
+    ///
+    /// The look rides along because the client may never have held the drop.
+    /// Magnetism is a pickup radius, so loot that lands inside it is taken on
+    /// the tick it spawned, before any snapshot could carry the entity: an
+    /// apex observer alone is a 437-unit reach, and a magnet petal 2187. A cue
+    /// that named only the id would be unplayable for exactly the flowers that
+    /// pick up the most.
+    PickedUp,
     LevelUp,        ///< u32 netId, u16 newLevel
     Explosion,      ///< f32 x, f32 y, f32 radius, u8 colorIndex
     /// A lightning strike: `position` is where it landed and `radius` its

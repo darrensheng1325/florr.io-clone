@@ -396,7 +396,8 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, do
     const NetId* dropId = world.tryGet<NetId>(candidate);
     const NetId* playerId = world.tryGet<NetId>(player);
     if (dropId != nullptr && playerId != nullptr) {
-        events.pickedUp(dropId->value, playerId->value, at->position, at->realm);
+        events.pickedUp(dropId->value, playerId->value, at->position, at->realm,
+                        drop->configIndex, drop->rarity);
     }
     drop->pickedUpBy.push_back(player);
     bool finished = false;

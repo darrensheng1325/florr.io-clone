@@ -1605,3 +1605,150 @@ TEST(writing_a_tile_by_hand_drops_the_realms_authored_shapes) {
     // ...and the cell that was half open is wholly solid again.
     CHECK(t.blocked(inCell(1, 1, 250.0, 50.0), Realm::Overworld));
 }
+
+// ---------------------------------------------------------------------------
+// Reading the geometry back out
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Crossing-number point-in-ring, written out here rather than borrowed from
+/// the engine: the point of the test below is that the rings handed back
+/// describe the same solid the engine's own tests answer from, and reusing its
+/// containment code would make that circular.
+bool ringHolds(const std::vector<Vec2>& ring, Vec2 p) {
+    bool inside = false;
+    for (std::size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+        const Vec2 a = ring[i];
+        const Vec2 b = ring[j];
+        if ((a.y > p.y) == (b.y > p.y)) continue;
+        const double x = (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x;
+        if (p.x < x) inside = !inside;
+    }
+    return inside;
+}
+
+} // namespace
+
+TEST(collision_rings_are_the_geometry_the_queries_answer_from) {
+    // What the minimap draws. A ring handed back has to be the solid the
+    // engine collides with, in world units, or the map on screen is not the
+    // map being walked on.
+    //
+    // The cell is a TURNED one: `corner` is a 150 x 75 rectangle in the tile's
+    // top-left, and the quarter turn clockwise (D | H) puts a 75 x 150 one
+    // against the cell's right edge. A ring handed back untouched by the flip
+    // bits would still look plausible -- same shape, wrong corner -- so the
+    // check is against blocked(), point by point, rather than against a
+    // rectangle typed out here.
+    const std::uint32_t H = 0x80000000u;
+    const std::uint32_t D = 0x20000000u;
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 3u | D | H;            // corner, quarter turn clockwise, at (1,1)
+    gids[5] = 6u;                    // pond, the whole cell, at (2,1)
+    gids[3] = 1u;                    // plain: art, no shapes, at (0,1)
+    Terrain t;
+    CHECK(loadShapeMap(t, "rings.tmj", 3, 3, gids));
+
+    std::vector<Terrain::CellCollisionRing> rings;
+    t.collisionRingsAt(1, 1, Realm::Overworld, rings);
+    CHECK_EQ(rings.size(), std::size_t{1});
+    if (rings.empty()) return;
+    CHECK(rings[0].ownCell);
+    CHECK(!rings[0].water);
+    CHECK_EQ(rings[0].points->size(), std::size_t{4});
+
+    // The ring in world units, which is how a caller drawing it has to read it.
+    std::vector<Vec2> world;
+    for (const Vec2& p : *rings[0].points) world.push_back(p + rings[0].origin);
+    const double h = 64.0 * kShapeScale;    // 75, the turned rectangle's width
+    const double w = 128.0 * kShapeScale;   // 150, its height
+    double left = world[0].x, right = world[0].x, top = world[0].y, bottom = world[0].y;
+    for (const Vec2& p : world) {
+        left = std::min(left, p.x); right = std::max(right, p.x);
+        top = std::min(top, p.y);   bottom = std::max(bottom, p.y);
+    }
+    CHECK_NEAR(left, kTileSize + kTileSize - h, 1e-9);
+    CHECK_NEAR(right, kTileSize + kTileSize, 1e-9);
+    CHECK_NEAR(top, kTileSize, 1e-9);
+    CHECK_NEAR(bottom, kTileSize + w, 1e-9);
+
+    // And the ring is the solid: everywhere in the cell, being inside it and
+    // being blocked are the same thing.
+    int disagreed = 0;
+    for (double ly = 4.0; ly < kTileSize; ly += 7.0) {
+        for (double lx = 4.0; lx < kTileSize; lx += 7.0) {
+            const Vec2 p = inCell(1, 1, lx, ly);
+            if (ringHolds(world, p) != t.blocked(p, Realm::Overworld)) ++disagreed;
+        }
+    }
+    CHECK_EQ(disagreed, 0);
+
+    // Water is named on the ring, because that is all that tells a drawing
+    // caller a river from a castle.
+    t.collisionRingsAt(2, 1, Realm::Overworld, rings);
+    CHECK_EQ(rings.size(), std::size_t{1});
+    if (!rings.empty()) CHECK(rings[0].water);
+}
+
+TEST(a_cell_with_no_shapes_hands_back_no_rings) {
+    // Three ways a cell has none, and none of them may invent geometry.
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[4] = 3u;                    // corner at (1,1), so the map HAS shapes
+    gids[3] = 1u;                    // plain at (0,1): art, no collision
+    Terrain t;
+    CHECK(loadShapeMap(t, "empty_cells.tmj", 3, 3, gids));
+
+    std::vector<Terrain::CellCollisionRing> rings;
+    t.collisionRingsAt(0, 1, Realm::Overworld, rings);   // painted, but shapeless
+    CHECK(rings.empty());
+    t.collisionRingsAt(0, 0, Realm::Overworld, rings);   // nothing painted at all
+    CHECK(rings.empty());
+    t.collisionRingsAt(-1, 7, Realm::Overworld, rings);  // off the grid
+    CHECK(rings.empty());
+
+    // And the case a caller has to handle itself: a realm with no authored
+    // shapes at all still blocks, over the whole cell, and has no rings to
+    // hand back. A minimap that only drew rings would show nothing here, which
+    // is why it falls back to the cell's square.
+    Terrain plain;
+    plain.setTile(3, 4, Tile::Wall, Realm::Overworld);
+    plain.collisionRingsAt(3, 4, Realm::Overworld, rings);
+    CHECK(rings.empty());
+    CHECK(plain.blocked(inCell(3, 4, 150.0, 150.0), Realm::Overworld));
+}
+
+TEST(a_shape_that_overhangs_its_tile_is_handed_back_once_per_cell_it_reaches) {
+    // `wide` is 700 units of a 256 tile, i.e. 820 on a 300-unit cell: drawn in
+    // one cell, it reaches two more. Every cell it touches is handed it -- that
+    // is what makes a query of ONE cell right -- and every one of them
+    // describes the SAME solid, at the same place in the world. `ownCell` is
+    // what a caller drawing the whole grid uses to draw it once.
+    std::vector<std::uint32_t> gids(9, 0);
+    gids[3] = 7u;                    // wide at (0,1)
+    Terrain t;
+    CHECK(loadShapeMap(t, "overhang.tmj", 3, 3, gids));
+
+    std::vector<Terrain::CellCollisionRing> rings;
+    std::vector<Vec2> owner;
+    t.collisionRingsAt(0, 1, Realm::Overworld, rings);
+    CHECK_EQ(rings.size(), std::size_t{1});
+    if (rings.empty()) return;
+    CHECK(rings[0].ownCell);
+    for (const Vec2& p : *rings[0].points) owner.push_back(p + rings[0].origin);
+
+    int reached = 0;
+    for (int tx = 1; tx < 3; ++tx) {
+        t.collisionRingsAt(tx, 1, Realm::Overworld, rings);
+        if (rings.empty()) continue;
+        ++reached;
+        CHECK(!rings[0].ownCell);
+        CHECK_EQ(rings[0].points->size(), owner.size());
+        for (std::size_t i = 0; i < owner.size() && i < rings[0].points->size(); ++i) {
+            const Vec2 p = (*rings[0].points)[i] + rings[0].origin;
+            CHECK_NEAR(p.x, owner[i].x, 1e-9);
+            CHECK_NEAR(p.y, owner[i].y, 1e-9);
+        }
+    }
+    CHECK_EQ(reached, 2);
+}

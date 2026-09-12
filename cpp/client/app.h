@@ -219,24 +219,25 @@ private:
     /// case and is why the block starts where the main HUD ends rather than
     /// reserving room for itself.
     void drawSquadHud(Canvas&);
-    /// The minimap in the top-right corner -- 200 design units square, one
-    /// section of the map the flower is standing on -- with its gold border
-    /// and its biome caption.
+    /// The minimap in the top-right corner -- 200 design units square, the
+    /// whole of the map the flower is standing on fitted into it -- with its
+    /// gold border and its map caption.
     void drawMinimap(Canvas&);
     /// The maze realm's map: the whole layout rasterised, corridors light and
     /// tinted by depth band, walls dark, with the same player dots the
-    /// overworld map draws. Replaces the section minimap inside the maze.
+    /// overworld map draws. Replaces the world minimap inside the maze.
     void drawMazeMinimap(Canvas&, bool altHeld);
     /// The arena realm has no map to show; the reference puts the live
     /// scoreboard in the minimap's corner instead.
     void drawArenaLeaderboard(Canvas&);
     /// The maze minimap's baked static layer, rebuilt when the maze rotates.
     const Canvas* mazeMinimapStatic();
-    /// The static layers of the minimap -- background, ALT spawn bands, wall
-    /// tiles, teleporter dots -- baked once per section rather than rescanned
-    /// every frame. `rarityGlow` is part of the key, not just the paint: the
-    /// bands appear and vanish with ALT, so the bake has to be redone.
-    const Canvas* minimapStatic(int section, bool rarityGlow);
+    /// The static layers of the minimap -- background, ALT spawn bands, the
+    /// map's collision geometry, teleporter dots -- baked once per map rather
+    /// than rescanned every frame. `rarityGlow` is part of the key, not just
+    /// the paint: the bands appear and vanish with ALT, so the bake has to be
+    /// redone.
+    const Canvas* minimapStatic(bool rarityGlow);
     void drawDeathCard(Canvas&, double time);
     void drawChat(Canvas&, double time);
     /// The chat input slot, shared by the title screen and the game so the two
@@ -502,14 +503,17 @@ private:
     double invulEndedAt_ = -1;
     bool wasInvulnerable_ = false;
 
-    /// The minimap's baked static layer and the section it was baked for.
-    /// Rebuilt only when the player crosses into another section -- the tile
-    /// scan is four and a half thousand cells and does not belong in a frame.
+    /// The minimap's baked static layer and the map it was baked for. Rebuilt
+    /// only when that map changes -- it fills the whole of the map's collision
+    /// geometry, which is thousands of paths and does not belong in a frame.
     std::unique_ptr<Canvas> minimapStatic_;
-    int minimapSection_ = -1;
-    /// The realm that section index counts in: every world map has its own
-    /// section grid, and section 0 of one map is not section 0 of another.
+    /// Which map the bake is of: the realm, and the dimensions of the grid
+    /// that realm is holding. Two maps are never the same realm, and the
+    /// dimensions are what notice the wire grid arriving after the join --
+    /// before it lands the realm has no map and the bake would be of nothing.
     Realm minimapRealm_ = Realm::Overworld;
+    int minimapCols_ = -1;
+    int minimapRows_ = -1;
     /// Whether the cached bake has the ALT spawn bands in it.
     bool minimapGlow_ = false;
     /// The canvas pixels per design unit the bake was rasterised at. Part of
@@ -518,7 +522,7 @@ private:
     double minimapDensity_ = 0.0;
 
     /// The maze minimap's bake, keyed on the day it was built for and the
-    /// density it was rasterised at, for the same reasons as the section one.
+    /// density it was rasterised at, for the same reasons as the world one.
     std::unique_ptr<Canvas> mazeMinimapStatic_;
     std::int64_t mazeMinimapDay_ = 0;
     bool mazeMinimapBaked_ = false;

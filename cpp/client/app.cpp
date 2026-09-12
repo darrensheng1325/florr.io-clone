@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "client/interpolation.h"
+#include "client/minimap.h"
 #include "client/render/art_cache.h"
 #include "client/ui/draw.h"
 #include "client/ui/markup.h"
@@ -2871,48 +2872,29 @@ void App::drawBossBars(Canvas& canvas, bool altHeld) {
     }
 }
 
-namespace {
-
-/// The minimap's section grid for a world map: one section per kSectionSize
-/// square of the map's extent, rounded up so a map whose size is not a whole
-/// number of sections still shows its last strip of tiles. Every map says its
-/// own size, so this is computed rather than assumed.
-struct SectionGrid {
-    int cols = 1;
-    int rows = 1;
-};
-
-SectionGrid sectionGridOf(const Terrain& terrain, Realm realm) {
-    const Vec2 extent = terrain.realmExtent(realm);
-    SectionGrid grid;
-    grid.cols = std::max(1, static_cast<int>(std::ceil(extent.x / kSectionSize - 1e-9)));
-    grid.rows = std::max(1, static_cast<int>(std::ceil(extent.y / kSectionSize - 1e-9)));
-    return grid;
-}
-
-} // namespace
-
-const Canvas* App::minimapStatic(int section, bool rarityGlow) {
+const Canvas* App::minimapStatic(bool rarityGlow) {
     // ALT is part of the key, not just the draw: the reference's bake cache is
-    // keyed `scrollX_scrollY_glow` (minimap.ts:216), so pressing ALT rebakes
-    // the layer rather than tinting a stale one.
-    // uiScale is the third key. See minimapDensity_: the bake is a bitmap and
-    // has to be rasterised at the density it will be shown at. The realm is
-    // the fourth: a section index means a different square on every map.
+    // keyed on it too (minimap.ts:216), so pressing ALT rebakes the layer
+    // rather than tinting a stale one.
+    // uiScale is the second key. See minimapDensity_: the bake is a bitmap and
+    // has to be rasterised at the density it will be shown at. The realm and
+    // the grid's dimensions are the rest of it -- together they say WHICH MAP
+    // this is, which is what the bake draws now that it draws all of one: a
+    // teleport to another realm and the wire grid landing after the join both
+    // change the picture and neither changes anything else in the key.
     const Realm realm = net_.view().realm();
+    const Terrain& terrain = net_.terrain();
     const double density = window_.uiScale();
-    if (minimapStatic_ && minimapSection_ == section && minimapRealm_ == realm &&
-        minimapGlow_ == rarityGlow && minimapDensity_ == density) {
+    const int cols = terrain.tileCols(realm);
+    const int rows = terrain.tileRows(realm);
+    if (minimapStatic_ && minimapRealm_ == realm && minimapCols_ == cols &&
+        minimapRows_ == rows && minimapGlow_ == rarityGlow && minimapDensity_ == density) {
         return minimapStatic_.get();
     }
 
-    const Terrain& terrain = net_.terrain();
-    const SectionGrid sections = sectionGridOf(terrain, realm);
-    const int sectionX = section % sections.cols;
-    const int sectionY = section / sections.cols;
-    const double scrollX = sectionX * kSectionSize;
-    const double scrollY = sectionY * kSectionSize;
-    const double scale = kMinimapSize / kSectionSize;
+    const Vec2 extent = terrain.realmExtent(realm);
+    const MinimapFit fit = minimapFit(extent, kMinimapSize);
+    const auto toBox = [&](Vec2 world) { return fit.toBox(world); };
 
     const int bakeSide =
         std::max(1, static_cast<int>(std::lround(kMinimapSize * density)));
@@ -2923,26 +2905,32 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
     // it the display's real resolution.
     map.scale(static_cast<float>(density), static_cast<float>(density));
 
+    // The map's own rectangle, in the barely-translucent paper the corner has
+    // always been drawn on, and the letterbox bars either side of it in solid
+    // black. Beyond the map's edge is void and reads as void: paper out there
+    // would show an open room the world draws black and the terrain treats as
+    // solid. A square map has no bars; a map that is not square has exactly
+    // one pair of them.
+    const double mapLeft = fit.offsetX;
+    const double mapTop = fit.offsetY;
+    const double mapWidth = extent.x * fit.scale;
+    const double mapHeight = extent.y * fit.scale;
     setFill(map, kPaper, 0.9);
-    map.fillRect(0, 0, static_cast<float>(kMinimapSize), static_cast<float>(kMinimapSize));
-    // Beyond the map's own edge is void, and reads as void: a map smaller
-    // than a section would otherwise show paper past its last wall, an open
-    // room the world draws black and the terrain treats as solid.
-    {
-        const Vec2 extent = terrain.realmExtent(realm);
-        const double edgeX = (extent.x - scrollX) * scale;
-        const double edgeY = (extent.y - scrollY) * scale;
-        setFill(map, 0x000000u);
-        if (edgeX < kMinimapSize) {
-            map.fillRect(static_cast<float>(std::max(0.0, edgeX)), 0,
-                         static_cast<float>(kMinimapSize - std::max(0.0, edgeX)),
-                         static_cast<float>(kMinimapSize));
-        }
-        if (edgeY < kMinimapSize) {
-            map.fillRect(0, static_cast<float>(std::max(0.0, edgeY)),
-                         static_cast<float>(kMinimapSize),
-                         static_cast<float>(kMinimapSize - std::max(0.0, edgeY)));
-        }
+    map.fillRect(static_cast<float>(mapLeft), static_cast<float>(mapTop),
+                 static_cast<float>(mapWidth), static_cast<float>(mapHeight));
+    setFill(map, 0x000000u);
+    if (mapLeft > 0.0) {
+        const double right = mapLeft + mapWidth;
+        map.fillRect(0, 0, static_cast<float>(mapLeft), static_cast<float>(kMinimapSize));
+        map.fillRect(static_cast<float>(right), 0,
+                     static_cast<float>(std::max(0.0, kMinimapSize - right)),
+                     static_cast<float>(kMinimapSize));
+    }
+    if (mapTop > 0.0) {
+        const double bottom = mapTop + mapHeight;
+        map.fillRect(0, 0, static_cast<float>(kMinimapSize), static_cast<float>(mapTop));
+        map.fillRect(0, static_cast<float>(bottom), static_cast<float>(kMinimapSize),
+                     static_cast<float>(std::max(0.0, kMinimapSize - bottom)));
     }
 
     // Spawn bands, under the walls, only while ALT is held. Their own palette,
@@ -2951,21 +2939,23 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
     // The annotations of the map the flower is actually standing on. The arena
     // and the maze have none, which is correct: neither is an authored map, so
     // there are no bands and no pads to draw.
-    const MapData* annotations = worldMaps_.forRealm(net_.view().realm());
+    const MapData* annotations = worldMaps_.forRealm(realm);
     if (rarityGlow && annotations != nullptr) {
         for (const MapElement& element : annotations->elements()) {
             // Difficulty BANDS only. A spawn object with no difficulty is a
-            // mob region -- a whole section, or a whole map, saying what lives
+            // mob region -- a whole area, or a whole map, saying what lives
             // there -- and painting it as a difficulty-zero band washes the
             // entire minimap in the common colour with the real common bands
             // lost in it. The world renderer's rarity glow makes the same
             // distinction.
             if (!element.isSpawnBand()) continue;
-            const double left = (element.bounds.x - scrollX) * scale;
-            const double top = (element.bounds.y - scrollY) * scale;
-            const double w = element.bounds.w * scale;
-            const double h = element.bounds.h * scale;
-            if (left + w <= 0 || left >= kMinimapSize || top + h <= 0 || top >= kMinimapSize) {
+            // The whole map is in the box, so a band is only culled when it
+            // lies off the MAP -- which an authored one never does.
+            const Vec2 topLeft = toBox({element.bounds.x, element.bounds.y});
+            const double w = element.bounds.w * fit.scale;
+            const double h = element.bounds.h * fit.scale;
+            if (topLeft.x + w <= 0 || topLeft.x >= kMinimapSize || topLeft.y + h <= 0 ||
+                topLeft.y >= kMinimapSize) {
                 continue;
             }
             // The band's DIFFICULTY decides the colour, through the one curve
@@ -2980,78 +2970,109 @@ const Canvas* App::minimapStatic(int section, bool rarityGlow) {
             if (element.polygon.size() >= 3) {
                 map.beginPath();
                 for (std::size_t i = 0; i < element.polygon.size(); ++i) {
-                    const float px = static_cast<float>((element.polygon[i].x - scrollX) * scale);
-                    const float py = static_cast<float>((element.polygon[i].y - scrollY) * scale);
-                    if (i == 0) map.moveTo(px, py);
-                    else map.lineTo(px, py);
+                    const Vec2 point = toBox(element.polygon[i]);
+                    if (i == 0) map.moveTo(static_cast<float>(point.x), static_cast<float>(point.y));
+                    else map.lineTo(static_cast<float>(point.x), static_cast<float>(point.y));
                 }
                 map.closePath();
                 map.fill();
                 continue;
             }
-            map.fillRect(static_cast<float>(left), static_cast<float>(top),
+            map.fillRect(static_cast<float>(topLeft.x), static_cast<float>(topLeft.y),
                          static_cast<float>(w), static_cast<float>(h));
         }
     }
 
-    // One section's worth of tiles, at three pixels each. Baked rather than
-    // rescanned: this is four and a half thousand cells and it only changes
-    // when the player walks into another section. Clamped to THIS realm's
-    // grid: every world map has its own, and a small map's last section is
-    // mostly off its edge.
-    const int minTileX = std::max(0, Terrain::toTileCoord(scrollX));
-    const int maxTileX =
-        std::min(terrain.tileCols(realm) - 1, Terrain::toTileCoord(scrollX + kSectionSize));
-    const int minTileY = std::max(0, Terrain::toTileCoord(scrollY));
-    const int maxTileY =
-        std::min(terrain.tileRows(realm) - 1, Terrain::toTileCoord(scrollY + kSectionSize));
-    const float tilePixels = static_cast<float>(kTileSize * scale);
-    for (int ty = minTileY; ty <= maxTileY; ++ty) {
-        for (int tx = minTileX; tx <= maxTileX; ++tx) {
-            const Tile tile = terrain.atTile(tx, ty, realm);
-            if (tile == Tile::Ground) continue;
-            // Walls are one black silhouette whatever kind of wall they are --
-            // castle, dirt, a boulder -- because the shape is what a player
-            // reads a minimap for. WATER is the exception: it blocks like a
-            // wall (tileBlocks() is true of it) but it is the one blocker the
-            // map format still distinguishes, and a river drawn in the same
-            // black as a castle turns a recognisable coastline into a blob.
-            // The tileset's `water` tag exists for exactly this and for
-            // nothing else -- it never decides whether a cell blocks, only
-            // what kind of blocker it is.
-            std::uint32_t colour = 0x000000u;
-            if (tileIsWater(tile)) colour = 0x4169E1u;
-            else if (!tileBlocks(tile)) colour = 0xFF5500u;
-            setFill(map, colour);
-            map.fillRect(static_cast<float>(tx * kTileSize * scale - scrollX * scale),
-                         static_cast<float>(ty * kTileSize * scale - scrollY * scale),
-                         tilePixels, tilePixels);
+    // The walls: THE COLLISION GEOMETRY ITSELF, ring by ring.
+    //
+    // Not the coarse grid. A cell is Wall there when ANY shape blocks ANYWHERE
+    // in it, so filling its square paints walls that are not there -- a third
+    // of the shipped garden's solid cells are only partly solid -- and it
+    // paints shut every passage narrower than the cell it runs through. With
+    // the whole map in 200 units a cell is under two pixels, so no per-cell
+    // shading would save it either. The authored rings are exact, the
+    // rasteriser anti-aliases them for free, and a gap appears on the minimap
+    // because the geometry genuinely has one.
+    //
+    // eachMinimapSolid() is what decides WHICH solids and in what order: every
+    // ring once, whatever cells it is filed under, bottom layer first. See
+    // minimap.h.
+    //
+    // ONE PATH PER RUN, not a fill per ring. Two rings that share an edge each
+    // cover about half of the pixels along it, and half painted over half is
+    // three quarters, not solid: filled one at a time, a wall mass comes out
+    // hatched with pale seams along every tile boundary -- which is exactly the
+    // "there is a tunnel there" the minimap must not invent. A nonzero fill of
+    // equally wound contours is precisely their union, and its coverage is
+    // computed over the union, so a batched path has seams nowhere and the true
+    // edges everywhere. (The rasteriser's own stroker leans on the same
+    // identity; see strokeOutline in third_party/cpp_canvas.) So the run is
+    // broken only where the COLOUR changes going up the layer stack, which on
+    // every map shipped here is once: water, then everything above it. A wall
+    // layer and a castle layer above it are one fill and one silhouette.
+    //
+    // Walls are one black silhouette whatever kind of wall they are -- castle,
+    // dirt, a boulder -- because the shape is what a player reads a minimap
+    // for. WATER is the exception: it blocks like a wall (tileBlocks() is true
+    // of it) but it is the one blocker the map format still distinguishes, and
+    // a river drawn in the same black as a castle turns a recognisable
+    // coastline into a blob. The tileset's `water` tag exists for exactly this
+    // and for nothing else -- it never decides whether a shape blocks, only
+    // what kind of blocker it is.
+    //
+    // It is a few thousand short contours, and it happens ONCE per bake: this
+    // whole layer is cached and only the key above rebuilds it.
+    Path2D run;
+    bool runWater = false;
+    const auto fillRun = [&]() {
+        if (run.empty()) return;
+        setFill(map, runWater ? 0x4169E1u : 0x000000u);
+        map.fill(run);
+        run.clear();
+    };
+    eachMinimapSolid(terrain, realm, [&](const MinimapSolid& solid) {
+        if (!run.empty() && solid.water != runWater) fillRun();
+        runWater = solid.water;
+        if (solid.ring == nullptr) {
+            // The whole-cell fallback: a blocking cell the map has no shapes
+            // for, whose collision IS its square. See eachMinimapSolid().
+            const Vec2 corner = toBox(solid.origin);
+            const float side = static_cast<float>(kTileSize * fit.scale);
+            run.rect(static_cast<float>(corner.x), static_cast<float>(corner.y), side, side);
+            return;
         }
-    }
+        const std::vector<Vec2>& ring = *solid.ring;
+        for (std::size_t i = 0; i < ring.size(); ++i) {
+            const Vec2 point = toBox(ring[i] + solid.origin);
+            if (i == 0) run.moveTo(static_cast<float>(point.x), static_cast<float>(point.y));
+            else run.lineTo(static_cast<float>(point.x), static_cast<float>(point.y));
+        }
+        run.closePath();
+    });
+    fillRun();
 
     static const std::vector<MapElement> kNoElements;
     for (const MapElement& element :
          annotations != nullptr ? annotations->elements() : kNoElements) {
         if (element.kind != MapElementKind::Teleporter) continue;
-        const Vec2 centre = element.centre();
-        const float dotX = static_cast<float>((centre.x - scrollX) * scale);
-        const float dotY = static_cast<float>((centre.y - scrollY) * scale);
+        const Vec2 dot = toBox(element.centre());
         // Strictly inside, as the reference's test is: a zero-sized teleporter
-        // sitting on the section's own edge is a dot the browser does not draw,
+        // sitting on the box's own edge is a dot the browser does not draw,
         // and a tolerance here would paint a clipped one it never shows.
-        if (dotX <= 0 || dotX >= kMinimapSize || dotY <= 0 || dotY >= kMinimapSize) continue;
+        if (dot.x <= 0 || dot.x >= kMinimapSize || dot.y <= 0 || dot.y >= kMinimapSize) continue;
         // Green, never gold: gold marks a teleporter that hands the player to
         // another server, and this build has no such thing to mark.
         setFill(map, 0x00FF00u);
-        map.fillCircle(dotX, dotY, 3.0f);
+        map.fillCircle(static_cast<float>(dot.x), static_cast<float>(dot.y), 3.0f);
         setStroke(map, kInk);
         map.setLineWidth(1.0f);
-        map.strokeCircle(dotX, dotY, 3.0f);
+        map.strokeCircle(static_cast<float>(dot.x), static_cast<float>(dot.y), 3.0f);
     }
 
     minimapStatic_ = std::move(baked);
-    minimapSection_ = section;
     minimapRealm_ = realm;
+    minimapCols_ = cols;
+    minimapRows_ = rows;
     minimapGlow_ = rarityGlow;
     minimapDensity_ = density;
     return minimapStatic_.get();
@@ -3061,10 +3082,12 @@ void App::drawMinimap(Canvas& canvas) {
     // The corner belongs to whichever realm the flower is in: the maze draws
     // its own layout there, and the arena -- which has no map worth showing --
     // puts its scoreboard there instead, as the reference does.
-    const bool altHeldNow = window_.keyDown(Key::LeftAlt) || window_.keyDown(Key::RightAlt);
+    // ALT does two things here: it reveals the other players' dots, and it is
+    // half the bake key -- the spawn bands under the walls come and go with it.
+    const bool altHeld = window_.keyDown(Key::LeftAlt) || window_.keyDown(Key::RightAlt);
     switch (net_.view().realm()) {
         case Realm::Maze:
-            drawMazeMinimap(canvas, altHeldNow);
+            drawMazeMinimap(canvas, altHeld);
             return;
         case Realm::Arena:
             drawArenaLeaderboard(canvas);
@@ -3075,28 +3098,17 @@ void App::drawMinimap(Canvas& canvas) {
 
     const double x = canvas.width() - kMinimapSize - kMinimapPadding;
     const double y = kMinimapPadding;
-    const double scale = kMinimapSize / kSectionSize;
 
-    // The map always shows exactly the section the player stands in, snapped to
-    // its corner. There is no zoom and no free scrolling: the reference's
-    // scroll and zoom entry points are both no-ops. The section grid is the
-    // realm's own: the overworld's 3x3, or however many kSectionSize squares
-    // another map's extent takes.
+    // THE WHOLE MAP, fitted into the box. There is no zoom and no scrolling --
+    // the reference's scroll and zoom entry points are both no-ops -- and
+    // there is no longer a window onto the map either: one map is in play at a
+    // time, it says how big it is, and all of it belongs in the corner. A map
+    // that is not square letterboxes rather than stretching; see minimap.h.
     const Realm realm = net_.view().realm();
-    const SectionGrid sections = sectionGridOf(net_.terrain(), realm);
+    const MinimapFit fit = minimapFit(net_.terrain().realmExtent(realm), kMinimapSize);
     const Vec2 me = net_.view().selfDrawnPosition();
-    const int sectionX = static_cast<int>(clamp(std::floor(me.x / kSectionSize), 0.0,
-                                                sections.cols - 1.0));
-    const int sectionY = static_cast<int>(clamp(std::floor(me.y / kSectionSize), 0.0,
-                                                sections.rows - 1.0));
-    const int section = sectionY * sections.cols + sectionX;
-    const double scrollX = sectionX * kSectionSize;
-    const double scrollY = sectionY * kSectionSize;
 
-    // ALT does two things here: it reveals the other players' dots, and it is
-    // half the bake key -- the spawn bands under the tiles come and go with it.
-    const bool altHeld = window_.keyDown(Key::LeftAlt) || window_.keyDown(Key::RightAlt);
-    if (const Canvas* baked = minimapStatic(section, altHeld)) {
+    if (const Canvas* baked = minimapStatic(altHeld)) {
         // Sized explicitly rather than left to drawCanvas's two-argument form:
         // that one takes the source's PIXEL size as its user-space extent,
         // which would draw a bake rasterised for a Retina display at twice
@@ -3111,10 +3123,12 @@ void App::drawMinimap(Canvas& canvas) {
                 static_cast<float>(kMinimapSize));
     canvas.clip();
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined) {
-        const double dx = x + (world.x - scrollX) * scale;
-        const double dy = y + (world.y - scrollY) * scale;
-        // Strictly inside, as the reference tests it: a dot exactly on the
-        // border belongs to the neighbouring section's map, not this one.
+        const Vec2 box = fit.toBox(world);
+        const double dx = x + box.x;
+        const double dy = y + box.y;
+        // Strictly inside, as the reference tests it: a body outside the map's
+        // own rectangle -- in the letterbox bar, or off the map altogether --
+        // is not on this map and gets no dot.
         if (dx <= x || dx >= x + kMinimapSize || dy <= y || dy >= y + kMinimapSize) return;
         setFill(canvas, fill);
         canvas.fillCircle(static_cast<float>(dx), static_cast<float>(dy),
@@ -3143,15 +3157,17 @@ void App::drawMinimap(Canvas& canvas) {
     // The camera's own rectangle, inside the clip, with hitboxes on. The
     // reference strokes it from cameraX/cameraY, which are the world-space TOP
     // LEFT of the view (core.ts:418-424), so it is visibleWorld() here and not
-    // the camera centre.
+    // the camera centre. A whole map in 200 units makes it small, which is
+    // exactly what it is: the view is a hundredth of this map.
     if (menus_.settings().render.hitboxes) {
         const Rect view = camera_.visibleWorld();
+        const Vec2 corner = fit.toBox({view.x, view.y});
         setStroke(canvas, kInk);
         canvas.setLineWidth(2.0f);
         canvas.beginPath();
-        canvas.rect(static_cast<float>(x + (view.x - scrollX) * scale),
-                    static_cast<float>(y + (view.y - scrollY) * scale),
-                    static_cast<float>(view.w * scale), static_cast<float>(view.h * scale));
+        canvas.rect(static_cast<float>(x + corner.x), static_cast<float>(y + corner.y),
+                    static_cast<float>(view.w * fit.scale),
+                    static_cast<float>(view.h * fit.scale));
         canvas.stroke();
     }
     canvas.restore();
@@ -3166,20 +3182,31 @@ void App::drawMinimap(Canvas& canvas) {
     canvas.stroke();
     canvas.restore();
 
-    TextStyle caption;
-    caption.size = 14.0;
-    caption.strokeWidth = 3.0;
-    caption.align = Align::Centre;
-    caption.baseline = Baseline::Alphabetic;
-    // The overworld's caption is the section's biome, as the reference's is;
-    // any other map has no biome table and is captioned with its own name.
-    std::string captionText;
-    if (realm == Realm::Overworld) {
-        captionText = biomeOf(section).name;
-    } else if (const MapData* map = worldMaps_.forRealm(realm)) {
-        captionText = map->displayName().empty() ? map->id() : map->displayName();
+    // The caption names the MAP, because the map is what the corner shows.
+    // It used to name the biome of the section under the flower, which is what
+    // the reference captioned a one-ninth-of-the-world minimap with; there are
+    // several maps now and each is drawn whole, so its own name is the label
+    // that means something.
+    //
+    // A client whose annotations did not load -- worldMaps_.load() failing is
+    // a warning, not a refusal to start -- has no name for the map and gets NO
+    // caption. The old fallback was the biome of the ground under the flower,
+    // which is biomeOf(sectionAt(p)): the fixed 20000-unit nine-square grid of
+    // a world that no longer exists. On a 38400-unit map it renamed the corner
+    // as the player walked past x = 20000, which is the section jump this
+    // minimap was rewritten to be rid of -- better no label than one that
+    // moves.
+    const MapData* named = worldMaps_.forRealm(realm);
+    if (named != nullptr) {
+        TextStyle caption;
+        caption.size = 14.0;
+        caption.strokeWidth = 3.0;
+        caption.align = Align::Centre;
+        caption.baseline = Baseline::Alphabetic;
+        const std::string captionText =
+            named->displayName().empty() ? named->id() : named->displayName();
+        text(canvas, captionText, x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
     }
-    text(canvas, captionText, x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
 }
 
 namespace {
@@ -3311,7 +3338,7 @@ void App::drawMazeMinimap(Canvas& canvas, bool altHeld) {
     canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(kMinimapSize),
                 static_cast<float>(kMinimapSize));
     canvas.clip();
-    // Player dots under the same rules as the section map: self always,
+    // Player dots under the same rules as the world map: self always,
     // squadmates always, everyone else only while ALT is held.
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined) {
         const double dx = x + (world.x - kMazeOriginX) * scale;

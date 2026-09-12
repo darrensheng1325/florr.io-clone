@@ -368,6 +368,44 @@ public:
     int collisionShapeSetCount(Realm realm = Realm::Overworld) const;
     int collisionShapeCellCount(Realm realm = Realm::Overworld) const;
 
+    /// One ring of a cell's authored collision, as a query sees it.
+    ///
+    /// `points` is the ring in the CELL-LOCAL units of the cell that owns the
+    /// geometry, and `origin` is where those units are measured from in world
+    /// space: a vertex is points[i] + origin whatever cell the ring was filed
+    /// under. `ownCell` is false in the one case where those two cells differ
+    /// -- a shape drawn past its tile's edge is filed in every cell it reaches
+    /// (see ShapeGrid) -- so a caller that walks the whole grid can draw each
+    /// ring once instead of once per cell it touches.
+    ///
+    /// The pointer is into the realm's shape store: it is valid until that
+    /// realm's shapes are replaced or dropped, which is the same lifetime the
+    /// collision queries themselves run inside.
+    struct CellCollisionRing {
+        const std::vector<Vec2>* points = nullptr;
+        Vec2 origin{0.0, 0.0};
+        std::uint8_t layer = 0;
+        bool water = false;
+        bool ownCell = true;
+    };
+
+    /// The authored rings filed under one cell, appended to `out` (cleared
+    /// first) in LAYER ORDER, bottom first -- the same refs, in the same
+    /// order, that blocked() and resolveWall() walk for that cell. There is no
+    /// second copy of the geometry anywhere: this hands back the store.
+    ///
+    /// EMPTY for a cell with no authored shapes, including one whose coarse
+    /// Tile blocks. That is not an omission: a shape-less blocking cell is
+    /// collided with as its whole 300-unit square (see the cell tests below),
+    /// and a caller that draws geometry has to draw that square itself rather
+    /// than be handed a ring the store does not hold.
+    ///
+    /// For DRAWING and for inspection. Nothing in the collision path calls it:
+    /// the queries walk the refs in place, and an out-parameter vector has no
+    /// business in a per-tick test.
+    void collisionRingsAt(int tx, int ty, Realm realm,
+                          std::vector<CellCollisionRing>& out) const;
+
     /// The furthest any of a realm's shapes reaches outside the cell it was
     /// painted in, in world units. Zero for a tileset whose shapes were all
     /// drawn inside their tiles; the load report says it when it is not,

@@ -629,12 +629,36 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 // The drop is erased from the snapshot in the same tick, so
                 // the flight to its taker is played from the record kept here.
                 const auto known = knownDrops_.find(event.netId);
-                if (known == knownDrops_.end()) break;
-                DyingDrop drop = known->second;
+                DyingDrop drop;
+                if (known != knownDrops_.end()) {
+                    drop = known->second;
+                    knownDrops_.erase(known);
+                } else {
+                    // Never held: magnetism is a pickup RADIUS, so loot that
+                    // lands inside it is taken on the tick it spawned and no
+                    // snapshot ever carried the entity. That is not a rare
+                    // case -- an apex observer reaches 437 units and a magnet
+                    // 2187, further than a flower's petals kill -- and playing
+                    // nothing at all is what makes a well-equipped flower look
+                    // like mobs stopped dropping loot. The cue carries the
+                    // drop's position and look for exactly this, so the item
+                    // is materialised here and takes the ordinary flight.
+                    drop.netId = event.netId;
+                    drop.position = event.position;
+                    drop.typeIndex = static_cast<std::uint16_t>(event.amount);
+                    drop.rarity = clampRarity(static_cast<int>(event.flag));
+                    for (int i = 0; i < kDropBurstCount; ++i) {
+                        pushDropGrain(drop.position, drop.rarity, kDropBurstSpeed,
+                                      kDropBurstSpeedSpread, kDropBurstLifeMs,
+                                      kDropBurstLifeSpreadMs, kDropBurstSize,
+                                      kDropBurstSizeSpread, kMaxDropSparkles);
+                    }
+                }
                 drop.takerNetId = event.otherNetId;
                 drop.ageSeconds = 0;
+                drop.seenThisFrame = false;
+                drop.sparkleCredit = 0;
                 if (dyingDrops_.size() < kMaxDyingDrops) dyingDrops_.push_back(drop);
-                knownDrops_.erase(known);
                 dropSpawns_.erase(event.netId);
                 break;
             }

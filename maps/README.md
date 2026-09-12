@@ -122,13 +122,21 @@ walls at all.
 ### The coarse grid, which is still per cell
 
 Beside the exact shapes the engine keeps the old one-value-per-cell grid, now
-meaning *"some shape in this cell blocks"*. It is what the minimap paints, what
-the bots' flow field walks, what spawn placement rejects conservatively, the
-fast reject before any shape test, and the only collision that goes over the
-wire. It over-states walls — a cell with a sliver of wall in it reads as solid —
-which is the safe direction for all four of those. Anything that asks about a
-POINT (`blocked`, `inWater`, the push-out, the segment tests, line of sight) goes
-to the shapes and is exact.
+meaning *"some shape in this cell blocks"*. It is what the bots' flow field
+walks, what spawn placement rejects conservatively, the fast reject before any
+shape test, and the only collision that goes over the wire. It over-states walls
+— a cell with a sliver of wall in it reads as solid — which is the safe
+direction for all three of those. Anything that asks about a POINT (`blocked`,
+`inWater`, the push-out, the segment tests, line of sight) goes to the shapes
+and is exact.
+
+The **minimap is not one of them**. It draws the rings themselves
+(`Terrain::collisionRingsAt`), because the coarse grid's over-statement is not
+safe in a picture: a third of this map's solid cells are only partly solid, and
+a corridor that runs between two of them is painted shut — the minimap would
+show a wall where the player can walk, and hide the way through. It falls back
+to filling a cell's square only where there are no shapes to draw, which is the
+same cell-wide solid `blocked()` itself falls back to there.
 
 A client whose data directory has no map for the realm it is in falls back to
 whole-cell collision from that wire grid. It believes in more wall than there
@@ -171,9 +179,9 @@ blocker this cell is**, never **whether it blocks**:
 | `water` | a blocking cell whose topmost blocker is tagged this reads as water rather than wall |
 | `covers_everything` | a drawing hint, not collision: see below |
 
-The difference is visible rather than physical — the minimap paints water its
-own colour, and `tileIsWater()` is what anything asking "is this thing in the
-drink" reads — because water already blocked before any of this. Tagging a
+The difference is visible rather than physical — the minimap paints a water
+shape its own colour, and `tileIsWater()` is what anything asking "is this thing
+in the drink" reads — because water already blocked before any of this. Tagging a
 tile `water` and painting it on a non-colliding layer produces plain ground:
 the kind is only ever asked about a cell that is already blocked.
 
