@@ -1,0 +1,9 @@
+<svg viewBox="0 0 256 256">
+	<path fill="#999" d="M26.5 249.5V2.5h203v247z"/>
+	<path d="M54.5 53h147v178.5h-147z"/>
+	<path fill="#4b4b4b" d="M54.5 18.5h147V53h-147zm0 173.5h147v39.5h-147z"/>
+	<path fill="#252525" d="M54.5 152.5h147V192h-147z"/>
+	<path fill="none" stroke="#3c3c3c" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" d="M54.5 53h147"/>
+	<path fill="none" stroke="#7a7a7a" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" d="M26.5 249.5V2.5h203v247m-203-18h203m-203-213h203m-28 0v213m-147 0v-213"/>
+	<path fill="#7a7a7a" stroke="#7a7a7a" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" d="M26.5 249.5h203v4h-203z"/>
+</svg>

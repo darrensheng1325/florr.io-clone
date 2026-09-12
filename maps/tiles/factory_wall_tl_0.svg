@@ -1,0 +1,11 @@
+<svg viewBox="0 0 256 256">
+	<path fill="none" stroke="#000" stroke-linejoin="round" stroke-opacity=".1" stroke-width="15" d="M0 128h96l32-32V0"/>
+	<path fill="#999" d="M0 128h96l32-32V0H0Z"/>
+	<path fill="none" stroke="#7a7a7a" stroke-linejoin="round" stroke-width="2.5" d="M128 1.25H1.25V128"/>
+	<path fill="none" stroke="#8a8a8a" stroke-linejoin="round" stroke-width="12.5" d="M0 25h13.89L25 13.89V0"/>
+	<path fill="#8a8a8a" d="M0 0v25h13.89L25 13.89V0Zm128 68-16 16v6l-22 22h-6l-16 16h28l32-32z"/>
+	<path fill="none" stroke="#8a8a8a" stroke-linejoin="round" stroke-width="5" d="m128 68-16 16v6l-22 22h-6l-16 16"/>
+	<path fill="none" stroke="#7a7a7a" stroke-linejoin="round" stroke-width="5" d="M0 128h96l32-32V0"/>
+	<path fill="#8a8a8a" stroke="#8a8a8a" stroke-linejoin="round" stroke-width="5" d="m63.425 86.716.698 4.358-3.424 2.784-4.124-1.574-.698-4.358 3.424-2.784zm34.344-71.175 2.516 6.167-4.083 5.262-6.598-.904-2.516-6.167 4.082-5.262zM26.093 64.694l-4.447 3.314-5.093-2.194-.646-5.508 4.447-3.314 5.093 2.194z"/>
+	<path fill="#7a7a7a" d="M108 48a5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5 5 5 0 0 1 5 5m-55 55a5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5 5 5 0 0 1 5 5M40.75 35.75a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/>
+</svg>

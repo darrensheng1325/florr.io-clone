@@ -1,0 +1,12 @@
+<svg viewBox="0 0 256 256">
+	<path fill="none" stroke="#000" stroke-linejoin="round" stroke-opacity=".1" stroke-width="15" d="M128 0v256"/>
+	<path fill="#999" d="M0 0h128v256H0Z"/>
+	<path fill="none" stroke="#7a7a7a" stroke-width="2.5" d="M128 254.75H1.25V1.25H128"/>
+	<path fill="#8a8a8a" d="m128 68-16 16v88l16 16Z"/>
+	<path fill="none" stroke="#8a8a8a" stroke-linejoin="round" stroke-width="5" d="m128 68-16 16v88l16 16"/>
+	<path fill="none" stroke="#7a7a7a" stroke-linejoin="round" stroke-width="5" d="M128 0v256"/>
+	<path fill="none" stroke="#8a8a8a" stroke-linejoin="round" stroke-width="12.5" d="M0 25h13.89L25 13.89V0m0 256v-13.89L13.89 231H0"/>
+	<path fill="#8a8a8a" d="M0 0v25h13.89L25 13.89V0zm0 231v25h25v-13.89L13.89 231z"/>
+	<path fill="#7a7a7a" d="M40.75 220.25a5 5 0 1 1-10 0 5 5 0 0 1 10 0m0-184.5a5 5 0 1 1-10 0 5 5 0 0 1 10 0M108 208a5 5 0 1 1-10 0 5 5 0 0 1 10 0m0-160a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/>
+	<path fill="#8a8a8a" stroke="#8a8a8a" stroke-linejoin="round" stroke-width="5" d="m18.64 200.892-3.891 1.956-3.64-2.391.25-4.349 3.892-1.956 3.64 2.391zm56.314-64.38 1.339 3.83-2.647 3.073-3.985-.756-1.339-3.829 2.647-3.073zm35.313-118.289-1.095 5.45-5.267 1.777-4.172-3.673 1.094-5.45 5.268-1.777zm-24.89 204.775-3.053 3.291-4.377-.998-1.323-4.29 3.052-3.29 4.377.998zM41.855 81.034l-1.726 6.92-6.855 1.966-5.13-4.954 1.725-6.92 6.855-1.966z"/>
+</svg>

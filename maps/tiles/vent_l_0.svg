@@ -1,0 +1,6 @@
+<svg viewBox="0 0 256 256">
+	<path fill="#737373" d="M0 0v81.5h4v93H0V256h128V0Zm11.5 81.5h8v93h-8zm15.5 0h8v93h-8z"/>
+	<path fill="none" stroke="#5c5c5c" stroke-width="2.5" d="M1.25 74V1.25H128M1.25 182v72.75H128"/>
+	<path fill="#5c5c5c" d="M0 0v3.535L124.465 128 0 252.465V256h3.535L128 131.535v-7.07L3.535 0Zm48.1 82.114a3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3m0 91.772a3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3"/>
+	<path fill="none" stroke="#5c5c5c" stroke-linejoin="round" stroke-width="5" d="M128 0v256M0 174.5h4v-93H0m11.5 0v93h8v-93zm15.5 0v93h8v-93zM0 74h54v108H0"/>
+</svg>
