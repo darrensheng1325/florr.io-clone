@@ -15,8 +15,18 @@
 // radius every frame, and this is that code, ported: the vertex counts come out
 // of `radius`, the spine and the outline widths do not.
 //
-// The scorpion is here for the other reason -- it has no document at all. Its
-// claws and legs move with a walk phase, which a static document cannot do.
+// The scorpion and the crab are here for the other reason -- neither has a
+// document at all. Their claws and legs move with a walk phase, which a static
+// document cannot do.
+//
+// The leech is here for a third reason. Its body is not a row of beads, it is
+// one smooth tube, and the reference draws it by stroking a single polyline
+// through every segment's centre. Our renderer draws one entity at a time and
+// no entity knows its neighbours -- but a segment is turned to FACE its
+// leader and held exactly `kSegmentSpacingPerRadius` radii from it, so each
+// one can paint the joint between itself and the one in front and let the
+// union of those bars be the tube. No document can express that, because the
+// length of the bar is a fact about the chain rather than about the picture.
 //
 // Every painter draws about the ORIGIN, in WORLD units, with the body's radius
 // equal to the `radius` it is handed: a caller that wants it on screen scales
@@ -33,7 +43,8 @@
 namespace flix {
 
 /// Which painter an `image` marker names. `None` is every ordinary mob.
-enum class MobArt : std::uint8_t { None, Rock, Cactus, Sandstorm, Scorpion };
+enum class MobArt : std::uint8_t { None, Rock, Cactus, Sandstorm, Scorpion, Crab, LeechHead,
+                                   LeechBody };
 
 /// How fast a walk cycle runs, in radians of phase per second.
 ///

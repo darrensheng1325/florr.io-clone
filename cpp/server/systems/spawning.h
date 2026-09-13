@@ -220,12 +220,6 @@ inline constexpr double kNestWaveIntervalMillis = 15000.0;
 /// it is the headroom a section holding a nest is measured against.
 inline constexpr int kMaxNestChildren = 12;
 
-/// A body segment trails nine tenths of a body DIAMETER behind the one in
-/// front, which is close enough that a centipede reads as one animal rather
-/// than a string of beads. Only the initial lay-out uses it; from the next
-/// tick the chain pass holds the segments at the spacing recorded on them.
-inline constexpr double kCentipedeSegmentSpacingScale = 0.9;
-
 /// How deep nesting may go. A nest whose escorts are themselves nests is legal
 /// data and would otherwise recurse until the world ran out of memory.
 inline constexpr int kMaxNestDepth = 2;

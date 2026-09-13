@@ -454,9 +454,21 @@ inline double projectilePush(double shotMass, double shotSpeed, double victimMas
     return std::min(push, kProjectileMaxPush);
 }
 
-/// A centipede is a head plus this many trailing body mobs. The count is a
-/// constant in the reference rather than a per-mob config field.
+/// A centipede -- or a leech, which is built the same way -- is a head plus
+/// this many trailing body mobs. The count is a constant in the reference
+/// rather than a per-mob config field.
 inline constexpr int kCentipedeSegmentCount = 9;
+
+/// How far a segment trails the one in front, as a multiple of its own RADIUS.
+/// Slightly under a full diameter, so the body reads as one animal rather than
+/// a string of beads.
+///
+/// Shared rather than server-private because the joint is DRAWN as well as
+/// held: a leech segment paints the bar between its own centre and its
+/// leader's, and the length of that bar is this number (see
+/// `paintLeechBody`). Two copies of it would be a chain that renders half a
+/// segment short of where it actually is.
+inline constexpr double kSegmentSpacingPerRadius = 1.8;
 
 // -- mob-carried petal rings -------------------------------------------------
 //

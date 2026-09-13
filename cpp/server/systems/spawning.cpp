@@ -458,7 +458,7 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
     // mythic animal, not a big head towing a string of common beads.
     const MobStats bodyStats = content.mobStats(config.segmentBodyIndex, rarity);
     if (!(bodyStats.radius > 0.0)) return;
-    const double spacing = bodyStats.radius * 2.0 * kCentipedeSegmentSpacingScale;
+    const double spacing = bodyStats.radius * kSegmentSpacingPerRadius;
 
     // Straight back from the head's facing, and stepped from the REQUESTED
     // points rather than the resolved ones: a segment nudged out of a wall must

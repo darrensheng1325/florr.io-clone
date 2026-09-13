@@ -196,10 +196,11 @@ struct MobConfig {
     /// contact path, so every path infects at once.
     bool glitchInfecting = false;
 
-    /// A centipede head: `segmentCount` body mobs of type `segmentBodyIndex`
-    /// trail it. Both are derived from the id at load, because the reference
-    /// expresses the head->body link as a naming rule rather than a JSON field
-    /// and every spawn path would otherwise have to repeat it.
+    /// A chain head -- a centipede or a leech: `segmentCount` body mobs of type
+    /// `segmentBodyIndex` trail it. Both are derived from the id at load,
+    /// because the reference expresses the head->body link as a naming rule
+    /// rather than a JSON field and every spawn path would otherwise have to
+    /// repeat it.
     std::uint16_t segmentBodyIndex = kInvalidIndex;
     int segmentCount = 0;
 

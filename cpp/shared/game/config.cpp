@@ -554,8 +554,9 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
         m.petHealthScale = 0.5;
         m.petDamageScale = 0.5;
     }
-    if (id == "centipede" || id == "desert_centipede" || id == "evil_centipede") {
-        m.segmentBodyIndex = ctx.link(mobIds, id + "_body", "centipede body");
+    if (id == "centipede" || id == "desert_centipede" || id == "evil_centipede" ||
+        id == "leech") {
+        m.segmentBodyIndex = ctx.link(mobIds, id + "_body", "body segment");
         m.segmentCount = m.segmentBodyIndex != kInvalidIndex ? kCentipedeSegmentCount : 0;
     }
 

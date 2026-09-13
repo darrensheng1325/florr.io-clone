@@ -237,11 +237,6 @@ inline constexpr double kPetViewHalfHeight = kViewportHeight * 0.5;
 
 // -- chains and nests --------------------------------------------------------
 
-/// Segment spacing used when BodySegment::spacing was never filled in, as a
-/// multiple of the segment's own radius. Slightly under a full diameter so the
-/// body reads as one animal rather than a string of beads.
-inline constexpr double kSegmentSpacingPerRadius = 1.8;
-
 /// Extra room beyond the nest's own body when placing an escort.
 inline constexpr double kNestSpawnMargin = 40.0;
 

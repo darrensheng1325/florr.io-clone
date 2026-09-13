@@ -1,8 +1,13 @@
 #include "test.h"
 
 #include "client/render/art_cache.h"
+#include "client/render/mob_art.h"
+#include "client/render/sprites.h"
+#include "shared/game/config.h"
 
+#include <fstream>
 #include <string>
+#include <vector>
 
 // The web tile cache rests on one property of the artwork: that a document
 // without a SMIL timeline draws the same picture at every `timeSeconds`, so
@@ -62,4 +67,88 @@ TEST(art_cache_is_a_no_op_off_the_web) {
     CHECK(entries == 0);
     CHECK(bytes == 0);
 #endif
+}
+
+
+namespace {
+
+std::string testsDir() {
+    const std::string path = __FILE__;
+    const std::size_t slash = path.find_last_of('/');
+    return slash == std::string::npos ? std::string(".") : path.substr(0, slash);
+}
+
+std::string firstExisting(const std::vector<std::string>& candidates) {
+    for (const std::string& candidate : candidates) {
+        std::ifstream probe(candidate, std::ios::binary);
+        if (probe) return candidate;
+    }
+    return {};
+}
+
+const ContentRegistry& shippedContent() {
+    static const ContentRegistry registry = [] {
+        ContentRegistry r;
+        std::string error;
+        r.loadFiles(firstExisting({testsDir() + "/../../src/mobs.json", "data/mobs.json",
+                                   "../src/mobs.json", "../../src/mobs.json", "src/mobs.json"}),
+                    firstExisting({testsDir() + "/../../src/petals.json", "data/petals.json",
+                                   "../src/petals.json", "../../src/petals.json", "src/petals.json"}),
+                    firstExisting({testsDir() + "/../data/mob_xp.json", "data/mob_xp.json",
+                                   "../data/mob_xp.json", "cpp/data/mob_xp.json"}),
+                    error);
+        return r;
+    }();
+    return registry;
+}
+
+} // namespace
+
+TEST(every_procedural_marker_in_the_shipped_mobs_compiles) {
+    // The failure this pins is SILENT. An `image` naming a painter this build
+    // does not have -- a typo, or a painter added to mobs.json and not to
+    // mobArtFor -- is not a parse error and not a warning anybody reads: the
+    // marker falls through to the document path, fails to parse as SVG, and
+    // the mob draws as a flat rarity disc in the world, in the bestiary and on
+    // its own tooltip.
+    //
+    // Asked of the '$' entries only. Four mobs ship a literally empty <svg/>
+    // and are MEANT to draw nothing (the renderer paints the garbage pile
+    // itself; the plot markers are invisible), so "declares an image" is not
+    // the same question as "should draw something".
+    const ContentRegistry& content = shippedContent();
+    CHECK(content.loaded());
+    SpriteCache sprites;
+    sprites.build(content, "data");
+
+    int markers = 0;
+    for (std::uint16_t i = 0; i < content.mobCount(); ++i) {
+        const MobConfig& config = content.mob(i);
+        if (config.image.empty() || config.image[0] != '$') continue;
+        ++markers;
+        if (!sprites.mobDrawable(i)) {
+            std::printf("    mob '%s': image \"%s\" names nothing this build can draw\n",
+                        config.id.c_str(), config.image.c_str());
+        }
+        CHECK(sprites.mobDrawable(i));
+    }
+    // The count is not the point, but a lookup that quietly found no markers
+    // at all would pass this test for the wrong reason.
+    CHECK(markers >= 7);
+}
+
+TEST(the_procedural_markers_name_painters_this_build_has) {
+    // `$sponge:` is the odd one out: a palette marker expanded into a document
+    // rather than a painter name, which is why this asks mobArtFor about the
+    // painters by name instead of about every '$' string in the file.
+    CHECK(mobArtFor("$rock") == MobArt::Rock);
+    CHECK(mobArtFor("$cactus") == MobArt::Cactus);
+    CHECK(mobArtFor("$sandstorm") == MobArt::Sandstorm);
+    CHECK(mobArtFor("$scorpion") == MobArt::Scorpion);
+    CHECK(mobArtFor("$crab") == MobArt::Crab);
+    CHECK(mobArtFor("$leech") == MobArt::LeechHead);
+    CHECK(mobArtFor("$leech_body") == MobArt::LeechBody);
+    CHECK(mobArtFor("$nothing_by_that_name") == MobArt::None);
+    CHECK(mobArtFor("<svg/>") == MobArt::None);
+    CHECK(mobArtFor("") == MobArt::None);
 }

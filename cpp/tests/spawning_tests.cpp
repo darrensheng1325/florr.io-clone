@@ -1102,6 +1102,48 @@ TEST(a_spawned_mob_carries_everything_the_simulation_needs) {
     CHECK_NEAR(sim.world.get<AmbientMob>(e).lastNearPlayerMillis, 1234.0, 1e-9);
 }
 
+TEST(a_leech_reaches_the_world_as_a_whole_animal) {
+    Sim sim;
+    // The leech is the second family built out of a head and a trailing body,
+    // and the head->body link is resolved from the ID rather than from a field
+    // -- so a leech spawning as a lone head is exactly what a typo in that rule
+    // looks like, and nothing else in the game would complain about it.
+    const std::uint16_t leech = shipped().mobIndex("leech");
+    const std::uint16_t body = shipped().mobIndex("leech_body");
+    const Entity head = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), leech,
+                                             Rarity::Rare, kCentre, Realm::Overworld, 0.0, sim.rng);
+    CHECK(head != NULL_ENTITY);
+    CHECK(sim.world.get<BodySegment>(head).head);
+
+    // Collected by the link back to the head rather than walked forwards:
+    // `behind` is the chain pass's to fill in, and none has run yet.
+    std::vector<Entity> chain(kCentipedeSegmentCount + 1, NULL_ENTITY);
+    Query<BodySegment> segments{sim.world};
+    segments.each([&](Entity e, BodySegment& link) {
+        if (link.chainHead != head || link.head) return;
+        CHECK(link.segmentIndex >= 1 && link.segmentIndex <= kCentipedeSegmentCount);
+        if (link.segmentIndex >= 1 && link.segmentIndex <= kCentipedeSegmentCount) {
+            CHECK_EQ(chain[static_cast<std::size_t>(link.segmentIndex)], NULL_ENTITY);
+            chain[static_cast<std::size_t>(link.segmentIndex)] = e;
+        }
+    });
+
+    // Every segment is a leech_body at the HEAD's tier, each trailing the one
+    // in front of it at the spacing the chain pass will hold it to.
+    const double bodyRadius = shipped().mobStats(body, Rarity::Rare).radius;
+    chain[0] = head;
+    for (int i = 1; i <= kCentipedeSegmentCount; ++i) {
+        const Entity e = chain[static_cast<std::size_t>(i)];
+        CHECK(e != NULL_ENTITY);
+        if (e == NULL_ENTITY) continue;
+        CHECK_EQ(sim.world.get<BodySegment>(e).ahead, chain[static_cast<std::size_t>(i - 1)]);
+        CHECK_EQ(sim.world.get<Replicated>(e).typeIndex, body);
+        CHECK_NEAR(sim.world.get<Body>(e).radius, bodyRadius, 1e-9);
+        CHECK_NEAR(sim.world.get<BodySegment>(e).spacing,
+                   bodyRadius * kSegmentSpacingPerRadius, 1e-9);
+    }
+}
+
 TEST(random_size_jitters_the_body_and_nothing_else) {
     Sim sim;
     // `sandstorm` ships random_size [1, 2].

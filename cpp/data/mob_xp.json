@@ -219,6 +219,39 @@
     "super": 700000,
     "unique": 2000000
   },
+  "crab": {
+    "common": 2,
+    "uncommon": 6,
+    "rare": 30,
+    "epic": 250,
+    "legendary": 1300,
+    "mythic": 30000,
+    "ultra": 150000,
+    "super": 1300000,
+    "unique": 7000000
+  },
+  "leech": {
+    "common": 2,
+    "uncommon": 7,
+    "rare": 42,
+    "epic": 340,
+    "legendary": 1700,
+    "mythic": 38000,
+    "ultra": 190000,
+    "super": 1500000,
+    "unique": 7900000
+  },
+  "leech_body": {
+    "common": 1,
+    "uncommon": 2,
+    "rare": 10,
+    "epic": 80,
+    "legendary": 400,
+    "mythic": 9000,
+    "ultra": 45000,
+    "super": 350000,
+    "unique": 1950000
+  },
   "hornet": {
     "common": 2,
     "uncommon": 8,

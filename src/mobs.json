@@ -543,6 +543,55 @@
             "ocean"
         ]
     },
+    "crab": {
+        "name": "Crab",
+        "health": 80,
+        "damage": 25,
+        "size": 1.5,
+        "speed": 2.8,
+        "cooldown": 2000,
+        "description": "Pinches with both claws",
+        "color": "#db6f4b",
+        "image": "$crab",
+        "ai_type": "hostile",
+        "range": 300,
+        "groups": [
+            "ocean"
+        ]
+    },
+    "leech": {
+        "name": "Leech",
+        "health": 35,
+        "damage": 10,
+        "size": 0.7,
+        "speed": 4.8,
+        "cooldown": 2000,
+        "description": "A fast chain that latches on",
+        "color": "#333333",
+        "image": "$leech",
+        "ai_type": "hostile",
+        "range": 500,
+        "groups": [
+            "ocean"
+        ]
+    },
+    "leech_body": {
+        "name": "Leech",
+        "health": 35,
+        "damage": 10,
+        "size": 0.7,
+        "speed": 4.8,
+        "cooldown": 2000,
+        "description": "A segment of a leech",
+        "color": "#333333",
+        "image": "$leech_body",
+        "ai_type": "hostile",
+        "range": 0,
+        "groups": {
+            "ocean": 0
+        },
+        "noEggDrop": true
+    },
     "hornet": {
         "name": "Hornet",
         "health": 60,

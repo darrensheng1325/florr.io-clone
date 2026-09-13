@@ -165,11 +165,11 @@ TEST(shipped_content_loads) {
     const Shipped& s = shipped();
     if (!s.ok) std::printf("    (load error: %s)\n", s.error.c_str());
     CHECK(s.ok);
-    CHECK_EQ(s.registry.mobCount(), std::size_t(52));
-    // 74 written in petals.json plus one generated egg for each of the 50 mobs
+    CHECK_EQ(s.registry.mobCount(), std::size_t(55));
+    // 74 written in petals.json plus one generated egg for each of the 53 mobs
     // that is not a pet and has no hand-written egg -- exactly what the browser
     // build appends to BASE_PETAL_CONFIGS at import time.
-    CHECK_EQ(s.registry.petalCount(), std::size_t(124));
+    CHECK_EQ(s.registry.petalCount(), std::size_t(127));
     CHECK(s.registry.loaded());
     CHECK(s.registry.contentHash() != 0u);
 }
@@ -429,6 +429,50 @@ TEST(special_petal_geometry_and_timers_follow_rarity_overrides) {
     const std::uint16_t lentil = r.petalIndex("lentil");
     CHECK_NEAR(r.petalStats(lentil, Rarity::Uncommon).attractionForce, 2889.0, 1e-12);
     CHECK_NEAR(r.petalStats(lentil, Rarity::Apex).modifiers.petalAttractionRadius, 100.0, 1e-12);
+}
+
+TEST(every_chain_head_links_to_its_own_body) {
+    const ContentRegistry& r = shipped().registry;
+    // The head->body link is a NAMING rule rather than a JSON field, so it is a
+    // string compare in the loader and a new chain mob that spells its body
+    // differently -- or that is left off the rule -- loads as a lone head with
+    // nothing behind it and no complaint anywhere.
+    for (const char* id : {"centipede", "desert_centipede", "evil_centipede", "leech"}) {
+        const std::uint16_t head = r.mobIndex(id);
+        CHECK(head != kInvalidIndex);
+        const MobConfig& config = r.mob(head);
+        CHECK_EQ(config.segmentBodyIndex, r.mobIndex(std::string(id) + "_body"));
+        CHECK_EQ(config.segmentCount, kCentipedeSegmentCount);
+        // A segment tows nothing of its own, or one head would spawn a tree.
+        CHECK_EQ(r.mob(config.segmentBodyIndex).segmentCount, 0);
+    }
+}
+
+TEST(the_ocean_group_holds_every_ocean_mob) {
+    const ContentRegistry& r = shipped().registry;
+    const std::uint16_t ocean = r.mobGroupIndex("ocean");
+    CHECK(ocean != kInvalidIndex);
+
+    // The roster ported from the reference. A mob missing its group is a mob
+    // that loads, draws in the bestiary and never once reaches the water.
+    for (const char* id : {"starfish", "jellyfish", "bubble", "sponge_1", "sponge_2",
+                           "shell", "crab", "leech"}) {
+        const std::uint16_t index = r.mobIndex(id);
+        CHECK(index != kInvalidIndex);
+        bool found = false;
+        for (const MobGroupMember& member : r.mob(index).groups) {
+            if (member.group == ocean) found = true;
+        }
+        CHECK(found);
+        CHECK(r.mobStats(index, Rarity::Common).ambient);
+    }
+
+    // A leech's body belongs to the group at weight zero: the chain is placed
+    // by its head, never rolled for on its own.
+    const MobConfig& body = r.mob(r.mobIndex("leech_body"));
+    CHECK_EQ(body.groups.size(), std::size_t(1));
+    CHECK_EQ(body.groups[0].group, ocean);
+    CHECK_NEAR(body.groups[0].weight, 0.0, 1e-12);
 }
 
 TEST(min_rarity_makes_a_mob_unspawnable_below_its_tier) {
@@ -874,8 +918,8 @@ TEST(global_content_registry_loads_from_one_directory) {
     std::string error;
     CHECK(loadContent(dir, error));
     CHECK(error.empty());
-    CHECK_EQ(content().mobCount(), std::size_t(52));
-    CHECK_EQ(content().petalCount(), std::size_t(124));
+    CHECK_EQ(content().mobCount(), std::size_t(55));
+    CHECK_EQ(content().petalCount(), std::size_t(127));
     // Same three files in the same order as the shipped registry, so the two
     // must agree on every index and on the hash.
     CHECK_EQ(content().contentHash(), shipped().registry.contentHash());
@@ -884,11 +928,11 @@ TEST(global_content_registry_loads_from_one_directory) {
     // A failed reload of the global registry keeps what it already had.
     CHECK(!loadContent(dir + "/nowhere", error));
     CHECK(!error.empty());
-    CHECK_EQ(content().mobCount(), std::size_t(52));
+    CHECK_EQ(content().mobCount(), std::size_t(55));
 
     // A trailing slash names the same directory.
     CHECK(loadContent(dir + "/", error));
-    CHECK_EQ(content().mobCount(), std::size_t(52));
+    CHECK_EQ(content().mobCount(), std::size_t(55));
 }
 
 TEST(the_content_hash_covers_the_staged_maps) {

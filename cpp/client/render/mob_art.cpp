@@ -6,6 +6,7 @@
 #include "client/ui/draw.h"
 #include "client/ui/theme.h"
 #include "shared/core/types.h"
+#include "shared/game/constants.h"
 
 namespace flix {
 
@@ -299,6 +300,199 @@ void paintScorpion(Canvas& canvas, const MobArtAttributes& attr) {
     canvas.restore();
 }
 
+/// The crab, ported from flooooio's MobRendererCrab.
+///
+/// Drawn at that renderer's own design radius of 25 and scaled to the body it
+/// belongs to, exactly as the scorpion above is -- and here for the same
+/// reason. A crab has eight legs that swing and two claws that open and close,
+/// so its picture is a function of the walk phase and no document in mobs.json
+/// can hold it. Facing is +x: the claws lead, the legs splay off the flanks.
+void paintCrab(Canvas& canvas, const MobArtAttributes& attr) {
+    canvas.save();
+    canvas.scale(static_cast<float>(attr.radius / 25.0), static_cast<float>(attr.radius / 25.0));
+
+    /// Legs, claws and the line around them: one dark shell-brown for all of
+    /// them, as in the reference. Only the carapace takes the mob's own colour.
+    constexpr std::uint32_t kLimb = 0x4D2621u;
+
+    // --- legs --------------------------------------------------------------
+    // Four a side. Each hangs off a hip spaced along the body's x axis, swings
+    // about that hip on its own phase and bends once at the knee; the front
+    // pair of a side bends forward and the back pair back, which is what stops
+    // all eight from moving as one comb.
+    //
+    // The reference walks the canvas transform per leg -- translate to the hip,
+    // rotate, draw, translate again to the knee -- and gets its points from it.
+    // The points are computed here instead: this canvas bakes a path's points
+    // at ADD time on the web backend and at FILL time natively, so a transform
+    // moved inside a path is the one thing the two backends disagree about.
+    ui::setStroke(canvas, kLimb);
+    roundStrokes(canvas, 5.0);
+    canvas.beginPath();
+    for (int side = 0; side < 2; ++side) {
+        const double flank = side == 0 ? -1.0 : 1.0;
+        for (int i = 0; i < 4; ++i) {
+            const double swing = 0.15 * std::sin(attr.animation + flank + 2.0 * i) + 0.15;
+            const double legDir = i < 2 ? 1.0 : -1.0;
+            const double hipX = 4.0 * i - 5.0;
+            const double knee = legDir * 0.7 * (swing + 0.3);
+            const double hip = swing * legDir;
+            const double cosHip = std::cos(hip), sinHip = std::sin(hip);
+            // Hip at the origin, knee 25 down the leg, foot 10 past the bend.
+            const double footX = -10.0 * std::sin(knee);
+            const double footY = 25.0 + 10.0 * std::cos(knee);
+            const auto px = [&](double x, double y) {
+                return static_cast<float>(x * cosHip - y * sinHip + hipX);
+            };
+            const auto py = [&](double x, double y) {
+                return static_cast<float>((x * sinHip + y * cosHip) * flank);
+            };
+            canvas.moveTo(px(0.0, 0.0), py(0.0, 0.0));
+            canvas.lineTo(px(0.0, 25.0), py(0.0, 25.0));
+            canvas.lineTo(px(footX, footY), py(footX, footY));
+        }
+    }
+    canvas.stroke();
+
+    // --- claws -------------------------------------------------------------
+    // One at a time under its own transform, the way the scorpion's are: the
+    // two are disjoint, share every style, and the transform is set BEFORE the
+    // path is opened rather than inside it.
+    //
+    // The reference carries a second, much longer path here -- the outline of
+    // stroking this one at a width of 2, baked out. Filling this path and then
+    // stroking it at 2 is that picture, and is the shape the baked one was
+    // generated from.
+    const double clawAngle = 0.15 * std::sin(attr.animation * 2.0) + 0.15;
+    ui::setFill(canvas, kLimb);
+    ui::setStroke(canvas, kLimb);
+    roundStrokes(canvas, 2.0);
+    for (int side = 0; side < 2; ++side) {
+        const double flank = side == 0 ? -1.0 : 1.0;
+        canvas.save();
+        canvas.translate(12.0f, static_cast<float>(2.0 * flank));
+        canvas.scale(1.0f, static_cast<float>(-flank));
+        canvas.rotate(static_cast<float>(clawAngle));
+        canvas.beginPath();
+        canvas.moveTo(0.0f, -14.0f);
+        canvas.quadraticCurveTo(11.0f, -20.0f, 16.0f, -9.0f);
+        canvas.lineTo(11.0f, -12.0f);
+        canvas.lineTo(13.0f, -7.0f);
+        canvas.quadraticCurveTo(6.0f, -13.0f, 0.0f, -10.0f);
+        canvas.lineTo(0.0f, -14.0f);
+        canvas.closePath();
+        canvas.fill();
+        canvas.stroke();
+        canvas.restore();
+    }
+
+    // --- carapace ----------------------------------------------------------
+    // Taller than it is wide, and laid over the legs and the claw roots. The
+    // reference fills a second baked band for the outline; a stroke at 4 is
+    // that band.
+    ui::setFill(canvas, attr.baseColor);
+    ui::setStroke(canvas, outlineOf(attr.baseColor));
+    roundStrokes(canvas, 4.0);
+    canvas.beginPath();
+    canvas.moveTo(0.0f, -23.0f);
+    canvas.quadraticCurveTo(-7.4558f, -23.0f, -12.7279f, -16.2635f);
+    canvas.quadraticCurveTo(-18.0f, -9.5269f, -18.0f, 0.0f);
+    canvas.quadraticCurveTo(-18.0f, 9.5269f, -12.7279f, 16.2635f);
+    canvas.quadraticCurveTo(-7.4558f, 23.0f, 0.0f, 23.0f);
+    canvas.quadraticCurveTo(7.4558f, 23.0f, 12.7279f, 16.2635f);
+    canvas.quadraticCurveTo(18.0f, 9.5269f, 18.0f, 0.0f);
+    canvas.quadraticCurveTo(18.0f, -9.5269f, 12.7279f, -16.2635f);
+    canvas.quadraticCurveTo(7.4558f, -23.0f, 0.0f, -23.0f);
+    canvas.closePath();
+    canvas.fill();
+    canvas.stroke();
+
+    // The two creases across the shell, in the carapace's own outline colour.
+    canvas.beginPath();
+    canvas.moveTo(-10.0f, 8.0f);
+    canvas.quadraticCurveTo(0.0f, 3.0f, 10.0f, 8.0f);
+    canvas.moveTo(-10.0f, -8.0f);
+    canvas.quadraticCurveTo(0.0f, -3.0f, 10.0f, -8.0f);
+    canvas.stroke();
+
+    canvas.restore();
+}
+
+// --- the leech -------------------------------------------------------------
+//
+// One tube, painted a joint at a time. The reference strokes a polyline
+// through every segment's centre at width 25 and again at 22; ours cannot see
+// the polyline, so each segment strokes the ONE span it does know -- its own
+// centre to its leader's -- and the spans abut into the same shape.
+//
+// Two rules make that work, and both are the chain pass's doing (placeFollower
+// in mob_ai.cpp): a segment is held exactly `kSegmentSpacingPerRadius` radii
+// behind its leader, and it is turned to point straight AT it with no turn
+// limit. So the leader's centre is at (spacing, 0) in the segment's own frame,
+// every frame, and a round-capped bar to that point lands its cap exactly on
+// the leader's own body.
+//
+// There is deliberately no outline. The reference's is 0.75 units on a body
+// 25 across -- under a pixel at any zoom the game plays at -- and drawing it
+// per segment is the one thing this scheme cannot do: a segment's outline
+// would paint over its leader's fill, and the seam that puts at every joint is
+// exactly the bead-chain look the bar is here to avoid.
+
+/// The leech's body colour, and the darker one its beak is drawn in.
+constexpr std::uint32_t kLeechBeak = 0x292929u;
+
+/// A segment: the joint between this body and the one it is following.
+///
+/// A segment whose leader has been killed is promoted to a chain of its own by
+/// the server but still draws this bar, so a leech cut in half wears a short
+/// nose until it despawns. That is the price of not knowing the chain, and it
+/// is the same shape a segment that still HAD a leader would draw.
+void paintLeechBody(Canvas& canvas, const MobArtAttributes& attr) {
+    ui::setStroke(canvas, attr.baseColor);
+    roundStrokes(canvas, attr.radius * 2.0);
+    canvas.beginPath();
+    canvas.moveTo(0.0f, 0.0f);
+    canvas.lineTo(static_cast<float>(attr.radius * kSegmentSpacingPerRadius), 0.0f);
+    canvas.stroke();
+}
+
+/// The head: the front cap of the tube, and the beak.
+///
+/// The head paints no bar -- there is nothing in front of it to reach -- and
+/// needs none: the first segment's bar ends its cap on this disc.
+void paintLeechHead(Canvas& canvas, const MobArtAttributes& attr) {
+    // gardn's beak is drawn at a body radius of 12.5 and opens on an angle the
+    // reference streams from the server. Nothing on our wire carries it, so it
+    // rides the walk phase instead, exactly as the crab's claws do -- which
+    // also means it chomps faster once the leech has locked on.
+    const double beakAngle = 0.15 * std::sin(attr.animation) + 0.15;
+    canvas.save();
+    canvas.scale(static_cast<float>(attr.radius / 12.5), static_cast<float>(attr.radius / 12.5));
+
+    // Beak first, body over it: the reference's order, which is what buries the
+    // roots of both mandibles inside the head.
+    ui::setStroke(canvas, kLeechBeak);
+    roundStrokes(canvas, 4.0);
+    for (int side = 0; side < 2; ++side) {
+        const double sign = side == 0 ? -1.0 : 1.0;
+        canvas.save();
+        canvas.rotate(static_cast<float>(beakAngle * sign));
+        canvas.beginPath();
+        canvas.moveTo(0.0f, static_cast<float>(10.0 * sign));
+        canvas.quadraticCurveTo(11.0f, static_cast<float>(10.0 * sign), 22.0f,
+                                static_cast<float>(5.0 * sign));
+        canvas.stroke();
+        canvas.restore();
+    }
+
+    ui::setFill(canvas, attr.baseColor);
+    canvas.beginPath();
+    canvas.arc(0.0f, 0.0f, 12.5f, 0.0f, static_cast<float>(kTau), false);
+    canvas.fill();
+
+    canvas.restore();
+}
+
 } // namespace
 
 MobArt mobArtFor(const std::string& image) {
@@ -308,6 +502,9 @@ MobArt mobArtFor(const std::string& image) {
     if (name == "cactus") return MobArt::Cactus;
     if (name == "sandstorm") return MobArt::Sandstorm;
     if (name == "scorpion") return MobArt::Scorpion;
+    if (name == "crab") return MobArt::Crab;
+    if (name == "leech") return MobArt::LeechHead;
+    if (name == "leech_body") return MobArt::LeechBody;
     return MobArt::None;
 }
 
@@ -318,6 +515,9 @@ void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
         case MobArt::Cactus:    paintCactus(canvas, attr); break;
         case MobArt::Sandstorm: paintSandstorm(canvas, attr); break;
         case MobArt::Scorpion:  paintScorpion(canvas, attr); break;
+        case MobArt::Crab:      paintCrab(canvas, attr); break;
+        case MobArt::LeechHead: paintLeechHead(canvas, attr); break;
+        case MobArt::LeechBody: paintLeechBody(canvas, attr); break;
         case MobArt::None:      break;
     }
 }
