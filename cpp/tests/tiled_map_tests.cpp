@@ -92,9 +92,10 @@ const std::string kTileset = std::string(R"({
 /// A SECOND tileset, drawn at 256 like maps/tileset.tsj, whose tiles carry one
 /// of each shape kind Tiled can write.
 ///
-/// 256 rather than 300 is the whole point of it: every shape here has to come
-/// out scaled by 300/256 on both axes, and a fixture at the map's own tile size
-/// could not tell a correct scale from no scale at all.
+/// 256 is the cell size, so these shapes come through 1:1 -- which is what the
+/// shipped art does and what the shape kinds are easiest to read against. The
+/// case that tells a correct scale from no scale at all is a tile drawn at
+/// ANOTHER size, and that is kMixedSizeTileset's 512 tile below.
 ///
 /// gid = local id + 1: 1 whole (a rectangle over the entire 256 tile), 2 half
 /// (its left half), 3 turned (a rectangle the author rotated 90 degrees about
@@ -761,10 +762,11 @@ TEST(a_tile_with_no_collision_shape_blocks_nothing_even_on_a_colliding_layer) {
 }
 
 TEST(a_tiles_shapes_are_scaled_from_the_tilesets_tile_size_onto_the_cell) {
-    // The tileset draws at 256 and the map's cells are 300, so every shape is
-    // stretched by 300/256 per axis. Neither number is written down in the
-    // engine: both come out of the files, and this is the fixture that would
-    // catch a hardcoded one.
+    // The tileset draws at 256 and so do the map's cells, so every shape comes
+    // through 1:1. Neither number is written down in the engine -- both come out
+    // of the files -- and this is the fixture that says a shape lands on the
+    // cell PROPORTIONALLY. A tile drawn at another size is the case that would
+    // catch a hardcoded scale, and that is the 512 tile in the test below.
     std::string error;
     write("small.tsj", kSmallTileset);
     TiledMap map;
@@ -774,8 +776,8 @@ TEST(a_tiles_shapes_are_scaled_from_the_tilesets_tile_size_onto_the_cell) {
                    error));
     CHECK(error.empty());
 
-    // A rectangle over the WHOLE 256 tile covers the whole 300 cell, corner to
-    // corner -- not 256 units of it with a walkable strip left over.
+    // A rectangle over the WHOLE 256 tile covers the whole cell, corner to
+    // corner -- not part of it with a walkable strip left over.
     const std::vector<TiledShape>& whole = map.palette()[0].shapes;
     CHECK(whole.size() == 1);
     if (whole.size() == 1) {

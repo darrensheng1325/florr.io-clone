@@ -188,7 +188,7 @@ std::string shapeMap(const std::vector<std::uint32_t>& lower,
     return R"({
  "compressionlevel": -1, "infinite": false, "orientation": "orthogonal",
  "renderorder": "right-down", "tiledversion": "1.10.1", "type": "map", "version": "1.10",
- "tilewidth": 300, "tileheight": 300, "width": 3, "height": 3,
+ "tilewidth": 256, "tileheight": 256, "width": 3, "height": 3,
  "tilesets": [ { "firstgid": 1, "source": "minimap.tsj" } ],
  "layers": [)" + layers + "] }";
 }
@@ -263,9 +263,13 @@ TEST(every_blocking_point_of_a_map_is_under_some_minimap_solid) {
     const std::vector<Solid> solids = solidsOf(t);
     CHECK(!solids.empty());
 
+    // Sampled off the half unit so no probe lands exactly ON a shape edge:
+    // `blocked` counts its boundary in and the crossing-count `covers` below
+    // counts one side of it out, and a tie between the two says nothing about
+    // whether the minimap paints what the engine collides with.
     int disagreed = 0;
-    for (double y = 5.0; y < 3 * kTileSize; y += 11.0) {
-        for (double x = 5.0; x < 3 * kTileSize; x += 11.0) {
+    for (double y = 5.5; y < 3 * kTileSize; y += 11.0) {
+        for (double x = 5.5; x < 3 * kTileSize; x += 11.0) {
             const Vec2 p{x, y};
             bool painted = false;
             for (const Solid& solid : solids) painted = painted || covers(solid, p);

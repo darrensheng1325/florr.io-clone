@@ -41,8 +41,9 @@ chosen by Tiled's **terrain (Wang) brushes**, not by a script of ours. Two
 conventions carry the rest: one about the grid, which is checked on load rather
 than assumed, and one about what a layer means.
 
-**One Tiled pixel is one world unit.** The tile size is 300×300, which is
-`kTileSize` in `cpp/shared/game/constants.h`. Because they match, an object's
+**One Tiled pixel is one world unit.** The tile size is 256×256, which is
+`kTileSize` in `cpp/shared/game/constants.h`, and it is the size the tile art is
+drawn at, so a tile lands on its cell 1:1. Because they match, an object's
 `x`/`y`/`width`/`height` in the file is already a world rectangle and nothing is
 scaled on the way in. A map saved at a different tile size is refused rather
 than guessed at — there is no scale factor that is right for the grid *and* the
@@ -104,8 +105,8 @@ else              ground
 
 So a cell is **not** solid corner to corner just because something is painted on
 it. `castle_l` draws its wall body across the left 130.5 of its 256-unit tile
-and its collision rectangle is exactly that wide, so on a 300-unit cell the wall
-face lands 152.93 units in — and a flower walks right up to the edge of the
+and its collision rectangle is exactly that wide, so on a 256-unit cell the wall
+face lands 130.5 units in — and a flower walks right up to the edge of the
 drawn stone instead of stopping half a cell short of it. An edge tile has a
 walkable rim; a diagonal tile has a diagonal you can slide along.
 
@@ -329,7 +330,7 @@ reported.
 
 ### `covers_everything`
 
-A tile with `covers_everything` fills its whole 300-unit square opaquely, so
+A tile with `covers_everything` fills its whole 256-unit square opaquely, so
 nothing painted under it can show through. The renderer uses it to stop drawing
 a cell's stack early. It is a drawing hint and nothing about the game depends on
 it; a tile that claims it wrongly shows as art missing under a translucent edge,
@@ -610,10 +611,10 @@ So **adding a tile is two things**: drop a `.svg` in `tiles/`, add a tile to
 generated and nothing is regenerated. Whether it blocks is decided later, by
 which layer it gets painted on.
 
-Art files are 256×256 drawn at the 300-unit grid size (`tilerendersize: grid`),
-but the size is for Tiled's benefit alone: `SvgDocument::renderFitted` maps a
-viewBox into whatever box it is handed, so the client fits every tile to its
-300-unit cell whatever the art's own dimensions say. **Collision** is fitted the
+Art files are 256×256, which is the grid size (`tilerendersize: grid`), but
+matching it is a convenience rather than a rule: `SvgDocument::renderFitted`
+maps a viewBox into whatever box it is handed, so the client fits every tile to
+its 256-unit cell whatever the art's own dimensions say. **Collision** is fitted the
 same way and from the same number — each tile's shapes are read in **that tile's
 own image size** and scaled onto the cell — so a tile of any size may be added
 without touching anything that already exists. That matters because `tileset.tsj`
@@ -698,7 +699,7 @@ shapes a cell ends up with)
   both fill their cell, and a spritesheet tile with no image of its own falls
   back to the tileset's size.
 - `a_tiles_shapes_are_scaled_from_the_tilesets_tile_size_onto_the_cell` — the
-  scale onto the 300-unit cell. (Its name predates the fix above and now says
+  scale onto the 256-unit cell. (Its name predates the fix above and now says
   the wrong space; what it checks is the scaling, and it is correct.)
 - `flip_bits_reach_the_art_and_turn_the_collision_shapes` and
   `all_eight_orientations_put_a_shape_where_the_art_is` — the three bits

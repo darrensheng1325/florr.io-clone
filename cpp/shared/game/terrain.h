@@ -1,7 +1,7 @@
 #pragma once
 // The tile world.
 //
-// One grid of Tile per world realm, 300 units a tile; constants.h owns the
+// One grid of Tile per world realm, 256 units a tile; constants.h owns the
 // tile size, the map file owns the dimensions. Terrain answers three questions
 // and nothing else: what is at a point, where does a circle end up once it is
 // out of the walls, and is there a clear straight line between two points.
@@ -28,7 +28,7 @@
 //
 // A realm with no shape store -- a generated map, a grid a test wrote with
 // setTile(), a client whose data directory has no map for the realm it is in --
-// falls back to the whole 300-unit square of every blocking cell, which is the
+// falls back to the whole 256-unit square of every blocking cell, which is the
 // old behaviour and is conservative: it blocks a little more than the art does,
 // never less.
 //
@@ -418,7 +418,7 @@ public:
     ///
     /// EMPTY for a cell with no authored shapes, including one whose coarse
     /// Tile blocks. That is not an omission: a shape-less blocking cell is
-    /// collided with as its whole 300-unit square (see the cell tests below),
+    /// collided with as its whole 256-unit square (see the cell tests below),
     /// and a caller that draws geometry has to draw that square itself rather
     /// than be handed a ring the store does not hold.
     ///
@@ -715,7 +715,7 @@ private:
     /// and be right. The alternative -- scanning a ring of neighbours in case
     /// some shape overhangs -- cost a measured 2-4x on blocked(), resolveWall()
     /// and the sight test for a shipped map whose worst overhang is 0.39 units,
-    /// because a whole 300-unit ring is the smallest ring there is.
+    /// because a whole 256-unit ring is the smallest ring there is.
     struct ShapeGrid {
         /// One layer's contribution to one cell: which shape set, which layer
         /// it came from (bottom is 0, so the largest wins a kind dispute),
@@ -803,7 +803,7 @@ private:
     // -- the exact tests, one cell at a time --------------------------------
     //
     // Each takes the cell it is asked about and answers from that cell's
-    // authored shapes, falling back to the whole 300-unit square when the cell
+    // authored shapes, falling back to the whole 256-unit square when the cell
     // has none but its coarse Tile blocks. That fallback is what keeps a
     // generated map, a grid a test wrote with setTile(), and a client with no
     // map file working unchanged.

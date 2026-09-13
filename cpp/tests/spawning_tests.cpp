@@ -1823,7 +1823,7 @@ std::string writeTiledFixture(const std::string& name, const std::string& body) 
 std::string fixtureMapBody(const std::string& spawns, const std::string& properties = {}) {
     std::string out = R"({
       "type": "map", "orientation": "orthogonal", "infinite": false,
-      "width": 1, "height": 1, "tilewidth": 300, "tileheight": 300,)";
+      "width": 1, "height": 1, "tilewidth": 256, "tileheight": 256,)";
     if (!properties.empty()) out += "\n      \"properties\": [" + properties + "],";
     out += R"(
       "tilesets": [{"firstgid": 1, "source": "fixture.tsj"}], "layers": [

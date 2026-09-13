@@ -91,7 +91,7 @@ inline int wrapMod(int v, int m) { return ((v % m) + m) % m; }
 // ---------------------------------------------------------------------------
 //
 // A cell blocks where its tile's authored SHAPES are, and a cell with no shapes
-// blocks over its whole 300-unit square if its coarse Tile says so. Both are
+// blocks over its whole 256-unit square if its coarse Tile says so. Both are
 // the same code here: the fallback is a four-point ring, so there is one set of
 // polygon routines and no second path to keep honest.
 //
@@ -273,7 +273,7 @@ double segmentDistSq(Vec2 a, Vec2 b, Vec2 c, Vec2 d) {
 /// turned polygon, where "grow the rectangle" is not defined: distance to the
 /// shape is the same question whichever way the shape is turned, and a body
 /// that clears a corner by more than the inflation has not touched it. eps is
-/// kCenterPathInflation, a half unit against a 300-unit cell.
+/// kCenterPathInflation, a half unit against a 256-unit cell.
 bool ringTouchesSegment(const Ring& ring, Vec2 a, Vec2 b, double eps) {
     if (ring.count < 3) return false;
     if (pointInRing(ring, a) || pointInRing(ring, b)) return true;
@@ -1376,7 +1376,7 @@ void Terrain::connectAll() {
 //
 // Each of the three below is asked about ONE IN-GRID CELL and answers from that
 // cell's authored shapes, or -- when the cell has none -- from its coarse Tile
-// over the whole 300-unit square. Which of the two is in play is a property of
+// over the whole 256-unit square. Which of the two is in play is a property of
 // the cell, not of the map: a map may perfectly well have shapes on some cells
 // and none on others, and mixing them is only ever conservative.
 
@@ -1435,7 +1435,7 @@ int Terrain::cellLayerAt(int tx, int ty, Vec2 p, Realm realm, bool& water) const
             return -1;
         }
     }
-    // The whole-cell fallback answers for THIS CELL'S 300-unit square, and only
+    // The whole-cell fallback answers for THIS CELL'S 256-unit square, and only
     // for points in it. Its two siblings below get that for free -- they test a
     // segment or a circle against the square itself, which IS the containment
     // test -- and this one has to say so. No caller violates it today, but one

@@ -912,7 +912,7 @@ TEST(the_content_hash_covers_the_staged_maps) {
 
     // A manifest and the map it names change the hash; the same bytes again
     // give the same hash; one byte in the map changes it once more.
-    const std::string tiny = R"({"type":"map","width":1,"height":1,"tilewidth":300,"tileheight":300,"tilesets":[],"layers":[]})";
+    const std::string tiny = R"({"type":"map","width":1,"height":1,"tilewidth":256,"tileheight":256,"tilesets":[],"layers":[]})";
     CHECK(writeText(dir + "/maps.json", R"({"maps": [{"file": "tiny.tmj"}]})"));
     CHECK(writeText(dir + "/tiny.tmj", tiny));
     ContentRegistry withMaps;
@@ -934,7 +934,7 @@ TEST(the_content_hash_covers_the_staged_maps) {
     // different GEOMETRY and shake hands, which is exactly what the client's
     // own collision leans on this hash to rule out.
     const std::string shaped =
-        R"({"type":"map","width":1,"height":1,"tilewidth":300,"tileheight":300,)"
+        R"({"type":"map","width":1,"height":1,"tilewidth":256,"tileheight":256,)"
         R"("tilesets":[{"firstgid":1,"source":"tiny.tsj"}],"layers":[]})";
     const std::string tileset =
         R"({"type":"tileset","name":"tiny","columns":0,"tilecount":1,"tilewidth":256,)"

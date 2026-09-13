@@ -136,7 +136,7 @@ inline constexpr std::uint8_t kTileFlipVertical = 2;
 inline constexpr std::uint8_t kTileFlipDiagonal = 4;
 
 /// Set on a cell whose tile declares `covers_everything`: the art fills its
-/// whole 300-unit square opaquely, so nothing painted under it can show
+/// whole 256-unit square opaquely, so nothing painted under it can show
 /// through and the renderer may stop there instead of drawing the layers
 /// below. A drawing hint, carried per cell so reading it costs no lookup;
 /// nothing about the game depends on it.
@@ -201,7 +201,7 @@ Vec2 orientInTile(Vec2 local, std::uint8_t flags, double side = kTileSize);
 ///
 /// Tiled draws these in the Tile Collision Editor, in the tileset's own tile
 /// space (256 square here), and writes them as an `objectgroup` on the tile.
-/// The reader scales that space onto the map's cell (300 square here, per axis)
+/// The reader scales that space onto the map's cell (256 square here, per axis)
 /// and turns the result, so what comes out needs nothing but the cell's origin
 /// added to it. A rectangle arrives as its four corners and an ellipse as a
 /// polygonised ring, so everything downstream has one shape kind to handle.

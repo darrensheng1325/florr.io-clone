@@ -74,7 +74,7 @@ double substepLength(double sanitizedRadius) {
 /// is why the caller refuses any ejection this reports.
 ///
 /// Terrain's own test, against the AUTHORED SHAPES of `realm`. It used to walk
-/// the grid here and test whole 300-unit cell rectangles, which was the same
+/// the grid here and test whole cell rectangles, which was the same
 /// question while a cell was all wall or all air -- and is a different, much
 /// stricter one now that a cell blocks only the triangle under its diagonal: a
 /// body standing legitimately inside the open half of a wall cell had every

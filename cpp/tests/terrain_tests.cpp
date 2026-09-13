@@ -817,18 +817,20 @@ TEST(a_body_resting_against_a_wall_stops_at_the_flat_face) {
     // so a body pressed into a wall comes to rest exactly one radius (plus
     // the resolver's epsilon) off the tile's geometric face, on every side.
     Terrain t;
-    for (int ty = 0; ty < kTilesPerAxis; ++ty) t.setTile(10, ty, Tile::Wall);   // x in [3000, 3300)
+    const double west = 10.0 * kTileSize;      // the wall column's two faces
+    const double east = 11.0 * kTileSize;
+    for (int ty = 0; ty < kTilesPerAxis; ++ty) t.setTile(10, ty, Tile::Wall);
     const double radius = 20.0;
 
-    const Vec2 fromWest = t.resolveCircle({3000.0 - 15.0, 5000.0}, radius, Realm::Overworld);
-    CHECK_NEAR(fromWest.x, 3000.0 - radius, 0.02);
+    const Vec2 fromWest = t.resolveCircle({west - 15.0, 5000.0}, radius, Realm::Overworld);
+    CHECK_NEAR(fromWest.x, west - radius, 0.02);
     CHECK_NEAR(fromWest.y, 5000.0, 1e-9);
-    const Vec2 fromEast = t.resolveCircle({3300.0 + 15.0, 5000.0}, radius, Realm::Overworld);
-    CHECK_NEAR(fromEast.x, 3300.0 + radius, 0.02);
+    const Vec2 fromEast = t.resolveCircle({east + 15.0, 5000.0}, radius, Realm::Overworld);
+    CHECK_NEAR(fromEast.x, east + radius, 0.02);
     CHECK_NEAR(fromEast.y, 5000.0, 1e-9);
     // Already clear by a hair: left exactly where it is.
-    const Vec2 clear = t.resolveCircle({3000.0 - radius - 0.5, 5000.0}, radius, Realm::Overworld);
-    CHECK_NEAR(clear.x, 3000.0 - radius - 0.5, 1e-12);
+    const Vec2 clear = t.resolveCircle({west - radius - 0.5, 5000.0}, radius, Realm::Overworld);
+    CHECK_NEAR(clear.x, west - radius - 0.5, 1e-12);
 
     // The same grid reinstalled cell for cell resolves to the very same
     // point: a wall is its rectangle, and nothing about how it was loaded
@@ -836,10 +838,10 @@ TEST(a_body_resting_against_a_wall_stops_at_the_flat_face) {
     std::vector<std::uint8_t> tiles(t.tiles(), t.tiles() + t.tileCount());
     Terrain copied;
     CHECK(copied.setTiles(tiles, kTilesPerAxis, kTilesPerAxis, Realm::Overworld));
-    const Vec2 again = copied.resolveCircle({3000.0 - 15.0, 5000.0}, radius, Realm::Overworld);
+    const Vec2 again = copied.resolveCircle({west - 15.0, 5000.0}, radius, Realm::Overworld);
     CHECK_NEAR(again.x, fromWest.x, 1e-12);
     CHECK_NEAR(again.y, fromWest.y, 1e-12);
-    const Terrain::WallResolution wall = copied.resolveWall({3000.0 - 15.0, 5000.0}, radius, Realm::Overworld);
+    const Terrain::WallResolution wall = copied.resolveWall({west - 15.0, 5000.0}, radius, Realm::Overworld);
     CHECK(wall.collided);
     CHECK(!wall.unresolved);
     CHECK_NEAR(wall.position.x, fromWest.x, 1e-12);
@@ -989,7 +991,7 @@ std::string shapeMap(int cols, int rows, const std::vector<std::uint32_t>& gids,
     return R"({
  "compressionlevel": -1, "infinite": false, "orientation": "orthogonal",
  "renderorder": "right-down", "tiledversion": "1.10.1", "type": "map", "version": "1.10",
- "tilewidth": 300, "tileheight": 300, "width": )" + size + R"(, "height": )" + tall + R"(,
+ "tilewidth": 256, "tileheight": 256, "width": )" + size + R"(, "height": )" + tall + R"(,
  "tilesets": [ { "firstgid": 1, "source": "shapes.tsj" } ],
  "layers": [)" + layers + "] }";
 }
@@ -1022,18 +1024,18 @@ Vec2 inCell(int tx, int ty, double lx, double ly) {
 
 TEST(a_rect_shape_blocks_inside_itself_and_leaves_the_rest_of_the_cell_walkable) {
     // The `corner` tile's shape is a 128x64 rectangle in the top-left of a 256
-    // tile, so on a 300-unit cell it covers 150 x 75 units and the other
-    // seven-eighths of the cell is walkable ground. A whole-cell reader would
-    // block all 90000 square units of it.
+    // tile, so it covers half the cell by width and a quarter by height and the
+    // other seven-eighths of the cell is walkable ground. A whole-cell reader
+    // would block every square unit of it.
     Terrain t;
     std::vector<std::uint32_t> gids(9, 0);
     gids[4] = 3;                     // corner, at cell (1,1)
     CHECK(loadShapeMap(t, "corner.tmj", 3, 3, gids));
 
-    const double w = 128.0 * kShapeScale;   // 150
-    const double h = 64.0 * kShapeScale;    // 75
-    CHECK_NEAR(w, 150.0, 1e-9);
-    CHECK_NEAR(h, 75.0, 1e-9);
+    const double w = 128.0 * kShapeScale;   // half the cell
+    const double h = 64.0 * kShapeScale;    // a quarter of it
+    CHECK_NEAR(w, kTileSize * 0.5, 1e-9);
+    CHECK_NEAR(h, kTileSize * 0.25, 1e-9);
 
     // Inside the rectangle, including right up to its corners.
     CHECK(t.blocked(inCell(1, 1, 1.0, 1.0), Realm::Overworld));
@@ -1042,7 +1044,7 @@ TEST(a_rect_shape_blocks_inside_itself_and_leaves_the_rest_of_the_cell_walkable)
     // Outside it, in the same cell. This is the whole change.
     CHECK(!t.blocked(inCell(1, 1, w + 1.0, h * 0.5), Realm::Overworld));
     CHECK(!t.blocked(inCell(1, 1, w * 0.5, h + 1.0), Realm::Overworld));
-    CHECK(!t.blocked(inCell(1, 1, 290.0, 290.0), Realm::Overworld));
+    CHECK(!t.blocked(inCell(1, 1, kTileSize - 10.0, kTileSize - 10.0), Realm::Overworld));
     // The coarse grid still calls the cell a wall: it says the cell HOLDS a
     // blocking shape, which is what the minimap and the flow field want.
     CHECK(t.atTile(1, 1) == Tile::Wall);
@@ -1053,15 +1055,16 @@ TEST(a_rect_shape_blocks_inside_itself_and_leaves_the_rest_of_the_cell_walkable)
     CHECK(!t.blocked(inCell(2, 1, 10.0, 10.0), Realm::Overworld));
     CHECK(t.atTile(2, 1) == Tile::Ground);
 
-    // A rectangle over the WHOLE 256 tile covers the WHOLE 300 cell: the scale
-    // has to reach the far corner, not stop 44 units short of it.
+    // A rectangle over the WHOLE tile covers the WHOLE cell: the scale has to
+    // reach the far corner, in both axes, rather than stopping short of it.
     Terrain whole;
     gids[4] = 2;                     // full
     CHECK(loadShapeMap(whole, "full.tmj", 3, 3, gids));
     CHECK(whole.blocked(inCell(1, 1, 0.5, 0.5), Realm::Overworld));
     CHECK(whole.blocked(inCell(1, 1, kTileSize - 0.5, kTileSize - 0.5), Realm::Overworld));
-    CHECK(whole.blocked(inCell(1, 1, 260.0, 260.0), Realm::Overworld));   // past 256
-    CHECK(!whole.blocked(inCell(0, 0, 299.0, 299.0), Realm::Overworld));
+    CHECK(whole.blocked(inCell(1, 1, kTileSize - 0.5, 0.5), Realm::Overworld));
+    CHECK(whole.blocked(inCell(1, 1, 0.5, kTileSize - 0.5), Realm::Overworld));
+    CHECK(!whole.blocked(inCell(0, 0, kTileSize - 1.0, kTileSize - 1.0), Realm::Overworld));
 }
 
 TEST(a_concave_shape_blocks_its_arms_and_not_its_notch) {
@@ -1146,8 +1149,11 @@ TEST(a_shape_that_leaves_its_tile_blocks_and_is_reported_in_every_cell_it_reache
     // cell: the coarse grid is conservative by at most the cell the shape ends
     // in, never by a cell it never entered.
     CHECK_EQ(t.atTile(5, 2), Tile::Ground);
-    CHECK(!t.blocked(inCell(4, 2, 290.0, 150.0), Realm::Overworld));
-    CHECK(t.blocked(inCell(4, 2, 200.0, 150.0), Realm::Overworld));
+    // The shape starts at cell (2, 2)'s left edge, so where it ends inside cell
+    // (4, 2) is its own length less the two cells before it.
+    const double endsAt = 700.0 * kShapeScale - 2.0 * kTileSize;
+    CHECK(!t.blocked(inCell(4, 2, endsAt + 10.0, kTileSize * 0.5), Realm::Overworld));
+    CHECK(t.blocked(inCell(4, 2, endsAt - 10.0, kTileSize * 0.5), Realm::Overworld));
 
     // Nothing the coarse grid calls open holds an exactly-blocked point -- the
     // invariant the whole-cell fallback and every coarse consumer rest on.
@@ -1156,7 +1162,8 @@ TEST(a_shape_that_leaves_its_tile_blocks_and_is_reported_in_every_cell_it_reache
             if (t.atTile(tx, ty) != Tile::Ground) continue;
             for (int sy = 0; sy < 5; ++sy) {
                 for (int sx = 0; sx < 5; ++sx) {
-                    CHECK(!t.blocked(inCell(tx, ty, 30.0 + sx * 60.0, 30.0 + sy * 60.0),
+                    CHECK(!t.blocked(inCell(tx, ty, kTileSize * (0.1 + sx * 0.2),
+                                            kTileSize * (0.1 + sy * 0.2)),
                                      Realm::Overworld));
                 }
             }
@@ -1256,7 +1263,8 @@ TEST(a_circle_stops_on_the_diagonal_edge_a_shape_draws_not_on_the_cell_boundary)
 
     // Walk in along the perpendicular to the face and check every resting place.
     for (double d = 60.0; d >= 1.0; d -= 5.0) {
-        const Vec2 start = inCell(1, 1, 150.0 + d / std::sqrt(2.0), 150.0 - d / std::sqrt(2.0));
+        const Vec2 start = inCell(1, 1, kTileSize * 0.5 + d / std::sqrt(2.0),
+                                  kTileSize * 0.5 - d / std::sqrt(2.0));
         const Terrain::WallResolution wall = t.resolveWall(start, radius, Realm::Overworld);
         CHECK(!wall.unresolved);
         // Touching is not overlapping -- the same strict test a whole-cell
@@ -1278,8 +1286,10 @@ TEST(a_circle_stops_on_the_diagonal_edge_a_shape_draws_not_on_the_cell_boundary)
 
     // A centre inside the shape leaves by the shortest way out, which is
     // perpendicular to the face and NOT out of the cell.
-    const Terrain::WallResolution deep =
-        t.resolveWall(inCell(1, 1, 100.0, 200.0), radius, Realm::Overworld);
+    // A third of the way in and two thirds down: nearer the diagonal than any
+    // edge of the cell, which is what makes the face the way out.
+    const Vec2 deepAt = inCell(1, 1, kTileSize / 3.0, kTileSize * 2.0 / 3.0);
+    const Terrain::WallResolution deep = t.resolveWall(deepAt, radius, Realm::Overworld);
     CHECK(deep.collided);
     CHECK(!deep.unresolved);
     CHECK_NEAR(fromFace(deep.position), radius + 0.01, 1e-6);
@@ -1294,8 +1304,7 @@ TEST(a_circle_stops_on_the_diagonal_edge_a_shape_draws_not_on_the_cell_boundary)
     Terrain coarse;
     CHECK(coarse.setTiles(coarseTiles, 3, 3, Realm::Overworld));
     CHECK(!coarse.hasCollisionShapes());
-    const Terrain::WallResolution whole =
-        coarse.resolveWall(inCell(1, 1, 100.0, 200.0), radius, Realm::Overworld);
+    const Terrain::WallResolution whole = coarse.resolveWall(deepAt, radius, Realm::Overworld);
     CHECK(whole.collided);
     CHECK(Terrain::toTileCoord(whole.position.x) != 1 ||
           Terrain::toTileCoord(whole.position.y) != 1);
@@ -1348,12 +1357,15 @@ TEST(the_segment_tests_agree_with_the_point_tests_along_the_same_line) {
     gids[10] = 2;   // full   at (2,2)
     CHECK(loadShapeMap(t, "segments.tmj", 4, 4, gids));
 
+    // The lines sweep the whole 4x4 fixture, corner to corner, in a grid fine
+    // enough to straddle every shape in it.
+    const double span = 4.0 * kTileSize;
     int checked = 0;
     int blockedLines = 0;
-    for (double y0 = 30.0; y0 < 1200.0; y0 += 70.0) {
-        for (double y1 = 30.0; y1 < 1200.0; y1 += 130.0) {
+    for (double y0 = 30.0; y0 < span; y0 += span / 17.0) {
+        for (double y1 = 30.0; y1 < span; y1 += span / 9.0) {
             const Vec2 a{30.0, y0};
-            const Vec2 b{1170.0, y1};
+            const Vec2 b{span - 30.0, y1};
             const bool swept = t.segmentBlocked(a, b, Realm::Overworld);
             // A fine walk of the same line with the POINT test: anything it
             // finds solid, the swept test must have found too.
@@ -1383,12 +1395,14 @@ TEST(the_segment_tests_agree_with_the_point_tests_along_the_same_line) {
     CHECK(blockedLines < checked);
 
     // A line down the middle of the notch crosses nothing, where a whole-cell
-    // reader would have called it solid.
+    // reader would have called it solid. The notch is 192 deep in the tile's own
+    // space, so how far down the cell it reaches is that times the scale.
+    const double notchFloor = 192.0 * kShapeScale;
     const Vec2 through0 = inCell(1, 1, kTileSize * 0.5, 5.0);
-    const Vec2 through1 = inCell(1, 1, kTileSize * 0.5, 215.0);
+    const Vec2 through1 = inCell(1, 1, kTileSize * 0.5, notchFloor - 10.0);
     CHECK(!t.segmentBlocked(through0, through1, Realm::Overworld));
-    CHECK(!t.hasLineOfSight(inCell(1, 1, 20.0, 100.0), inCell(1, 1, 280.0, 100.0),
-                            Realm::Overworld) ||
+    CHECK(!t.hasLineOfSight(inCell(1, 1, 20.0, kTileSize / 3.0),
+                            inCell(1, 1, kTileSize - 20.0, kTileSize / 3.0), Realm::Overworld) ||
           true);   // the arms are in the way; what matters is the notch below
     CHECK(t.hasLineOfSight(through0, through1, Realm::Overworld));
 }
@@ -1716,12 +1730,12 @@ TEST(a_cell_with_no_shapes_hands_back_no_rings) {
     plain.setTile(3, 4, Tile::Wall, Realm::Overworld);
     plain.collisionRingsAt(3, 4, Realm::Overworld, rings);
     CHECK(rings.empty());
-    CHECK(plain.blocked(inCell(3, 4, 150.0, 150.0), Realm::Overworld));
+    CHECK(plain.blocked(inCell(3, 4, kTileSize * 0.5, kTileSize * 0.5), Realm::Overworld));
 }
 
 TEST(a_shape_that_overhangs_its_tile_is_handed_back_once_per_cell_it_reaches) {
-    // `wide` is 700 units of a 256 tile, i.e. 820 on a 300-unit cell: drawn in
-    // one cell, it reaches two more. Every cell it touches is handed it -- that
+    // `wide` is 700 units of a 256 tile, i.e. most of three cells across: drawn
+    // in one cell, it reaches two more. Every cell it touches is handed it -- that
     // is what makes a query of ONE cell right -- and every one of them
     // describes the SAME solid, at the same place in the world. `ownCell` is
     // what a caller drawing the whole grid uses to draw it once.
@@ -1810,7 +1824,7 @@ std::string deckMap(int cols, int rows, const std::vector<std::uint32_t>& under,
     return R"({
  "compressionlevel": -1, "infinite": false, "orientation": "orthogonal",
  "renderorder": "right-down", "tiledversion": "1.10.1", "type": "map", "version": "1.10",
- "tilewidth": 300, "tileheight": 300, "width": )" + size + R"(, "height": )" + tall + R"(,
+ "tilewidth": 256, "tileheight": 256, "width": )" + size + R"(, "height": )" + tall + R"(,
  "tilesets": [ { "firstgid": 1, "source": "shapes.tsj" } ],
  "layers": [)" + layers + "] }";
 }
@@ -1881,19 +1895,21 @@ TEST(an_unshaped_negating_tile_clears_its_whole_cell) {
 }
 
 TEST(a_shaped_negating_tile_clears_only_its_own_shape) {
-    // `corner` is a 128x64 rectangle in the top-left of a 256 tile, i.e. 150 x
-    // 75 units of a 300-unit cell. As a DECK it is a plank laid across one
-    // corner of the cell: that corner is walkable and the rest of the cell is
-    // still the wall the layer below painted.
+    // `corner` is a 128x64 rectangle in the top-left of a 256 tile, i.e. half
+    // the cell across and a quarter of it down. As a DECK it is a plank laid
+    // across one corner of the cell: that corner is walkable and the rest of the
+    // cell is still the wall the layer below painted.
     TiledMap map;
     Terrain t;
     CHECK(loadDeckMap(map, t, "deck_partial.tmj", 3, 3, onlyMiddle(2u), onlyMiddle(3u)));
 
-    CHECK(!t.blocked(inCell(1, 1, 20.0, 20.0), Realm::Overworld));     // under the plank
-    CHECK(!t.blocked(inCell(1, 1, 140.0, 65.0), Realm::Overworld));    // still under it
-    CHECK(t.blocked(inCell(1, 1, 160.0, 65.0), Realm::Overworld));     // past its right edge
-    CHECK(t.blocked(inCell(1, 1, 20.0, 90.0), Realm::Overworld));      // past its bottom edge
-    CHECK(t.blocked(inCell(1, 1, 150.0, 150.0), Realm::Overworld));    // the middle of the cell
+    const double plankW = 128.0 * kShapeScale;   // half the cell
+    const double plankH = 64.0 * kShapeScale;    // a quarter of it
+    CHECK(!t.blocked(inCell(1, 1, 20.0, 20.0), Realm::Overworld));   // under the plank
+    CHECK(!t.blocked(inCell(1, 1, plankW - 10.0, plankH - 5.0), Realm::Overworld));   // still under
+    CHECK(t.blocked(inCell(1, 1, plankW + 10.0, plankH - 5.0), Realm::Overworld));    // past right
+    CHECK(t.blocked(inCell(1, 1, 20.0, plankH + 15.0), Realm::Overworld));            // past bottom
+    CHECK(t.blocked(inCell(1, 1, kTileSize * 0.5, kTileSize * 0.5), Realm::Overworld));   // middle
 
     // ONE TILE PER CELL CANNOT SAY "HALF OF THIS CELL". The coarse grid keeps
     // such a cell blocked and only the exact store cancels it -- the coarse
@@ -1928,7 +1944,8 @@ TEST(a_partial_deck_that_overlaps_no_collision_is_reported_as_clearing_nothing) 
     CHECK(loadDeckMap(map, t, "deck_misses.tmj", 3, 3, onlyMiddle(halfTurn), onlyMiddle(3u)));
 
     CHECK(!t.blocked(inCell(1, 1, 20.0, 20.0), Realm::Overworld));      // under the plank
-    CHECK(t.blocked(inCell(1, 1, 280.0, 280.0), Realm::Overworld));     // still the wall
+    CHECK(t.blocked(inCell(1, 1, kTileSize - 20.0, kTileSize - 20.0),
+                    Realm::Overworld));   // still the wall
     CHECK_EQ(map.layers()[2].clearedCells, 0);
     CHECK_EQ(map.layers()[2].partialDeckCells, 1);
     CHECK_EQ(map.negatedCells(), 0);
@@ -1990,7 +2007,7 @@ TEST(a_body_walks_onto_a_deck_whose_tile_carries_a_whole_cell_shape) {
     // Start in the middle of the decked cell and push west, then east: the
     // deck's own cell is open, so a body standing on it is free to move within
     // it and is stopped by the walls either side, not glued where it stands.
-    Vec2 west = inCell(4, 1, 150.0, 150.0);
+    Vec2 west = inCell(4, 1, kTileSize * 0.5, kTileSize * 0.5);
     Vec2 east = west;
     const Vec2 start = west;
     for (int tick = 0; tick < 200; ++tick) {
@@ -1999,9 +2016,9 @@ TEST(a_body_walks_onto_a_deck_whose_tile_carries_a_whole_cell_shape) {
     }
     // It reached the deck's own edges, a radius off the wall either side, and
     // was neither frozen at the start nor pushed out of the cell.
-    CHECK(west.x < inCell(4, 1, 150.0, 0.0).x - 100.0);
+    CHECK(west.x < inCell(4, 1, kTileSize * 0.5, 0.0).x - kTileSize / 3.0);
     CHECK(west.x > inCell(4, 1, 0.0, 0.0).x);
-    CHECK(east.x > inCell(4, 1, 150.0, 0.0).x + 100.0);
+    CHECK(east.x > inCell(4, 1, kTileSize * 0.5, 0.0).x + kTileSize / 3.0);
     CHECK(east.x < inCell(5, 1, 0.0, 0.0).x);
     CHECK(west.x != start.x);
     CHECK(east.x != start.x);

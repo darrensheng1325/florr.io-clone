@@ -220,7 +220,7 @@ public:
 
 private:
     /// A world realm, painted from its map's tile LAYERS: every visible cell,
-    /// bottom layer to top, each cell's artwork fitted to its 300-unit square
+    /// bottom layer to top, each cell's artwork fitted to its kTileSize square
     /// and turned by the flip bits Tiled gave it. Nothing here reads the
     /// collision grid -- what a cell looks like and what it blocks are two
     /// answers to two questions, and the picture is the map file's. Outside

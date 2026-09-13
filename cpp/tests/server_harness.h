@@ -176,13 +176,13 @@ inline bool copyFile(const std::string& from, const std::string& to) {
 /// which is what makes the background layer scenery twice over.
 ///
 /// The shapes are in the TILE'S OWN IMAGE SPACE, which is what Tiled's Tile
-/// Collision Editor draws in and what the loader reads them in -- 300 here, so
-/// the load scales them by one. (This is an image-collection tileset, so every
-/// tile declares its image size and the tileset-level tilewidth/tileheight is
-/// only the display grid; the two agree here.) The shipped tileset draws at 256
-/// into 300-unit cells and is the case that exercises the scale; a fixture that
-/// also rescaled would make every expected number in a test an arithmetic
-/// puzzle.
+/// Collision Editor draws in and what the loader reads them in -- 300 here,
+/// against 256-unit cells, so the load scales them by 256/300 and a whole-tile
+/// shape still comes out a whole cell. (This is an image-collection tileset, so
+/// every tile declares its image size and the tileset-level
+/// tilewidth/tileheight is only the display grid; the two agree here.) Every
+/// shape below is the whole tile or a fixed fraction of it, so the scale never
+/// makes an expected number in a test an arithmetic puzzle.
 ///
 /// `water` is the one tag left on a tile and it says only what KIND of blocker
 /// a colliding cell is -- exactly as maps/tileset.tsj uses it.
@@ -343,7 +343,7 @@ inline std::string fixtureMap(int cols, int rows, const std::string& doors,
  "compressionlevel": -1, "infinite": false, "orientation": "orthogonal",
  "renderorder": "right-down", "tiledversion": "1.10.1", "type": "map",
  "version": "1.10", "nextlayerid": 9, "nextobjectid": 9,
- "tilewidth": 300, "tileheight": 300,
+ "tilewidth": 256, "tileheight": 256,
  "width": )" + size + R"(, "height": )" + tall + R"(,
  "tilesets": [ { "firstgid": 1, "source": "fixture.tsj" } ],
  "layers": [
@@ -427,25 +427,34 @@ inline std::string stageDataDir(const std::string& name,
 /// The standard two-map fixture world.
 ///
 /// `meadow` is the overworld: two pickable doors, `meadow` first in button
-/// order, and a pad at (3600, 900) into `warren`. `warren` is a second,
+/// order, and a pad in cell (12, 3) into `warren`. `warren` is a second,
 /// differently-sized realm whose only door, `warren_gate`, is NOT pickable --
 /// the arrangement the picker's two lists exist for, which the shipped data no
 /// longer contains.
 inline std::string twoMapDataDir(const std::string& name) {
+    // Placed in CELLS times the cell size rather than in spelled-out pixels:
+    // a door is meant to sit on particular ground, and only the cell says
+    // which ground that is.
+    const double cell = kTileSize;
     const std::string meadow =
         fixtureMap(24, 24,
-                   fixtureDoor("meadow", "Meadow", 600, 600, 1200, 1200, true, 0.0) + "," +
-                       fixtureDoor("dunes", "Dunes", 4800, 4800, 1200, 1200, true, 1.0),
-                   fixturePad(3600, 900, "warren", "warren_gate"));
+                   fixtureDoor("meadow", "Meadow", cell * 2, cell * 2, cell * 4, cell * 4, true,
+                               0.0) +
+                       "," +
+                       fixtureDoor("dunes", "Dunes", cell * 16, cell * 16, cell * 4, cell * 4,
+                                   true, 1.0),
+                   fixturePad(cell * 12, cell * 3, "warren", "warren_gate"));
     const std::string warren =
-        fixtureMap(16, 16, fixtureDoor("warren_gate", "Warren", 900, 900, 900, 900, false, 0.0),
+        fixtureMap(16, 16,
+                   fixtureDoor("warren_gate", "Warren", cell * 3, cell * 3, cell * 3, cell * 3,
+                               false, 0.0),
                    std::string());
     return stageDataDir(name, {{"meadow", meadow}, {"warren", warren}});
 }
 
 /// A one-map world that is MOSTLY WALL, as the shipped map is.
 ///
-/// 32x32 cells (9600 units square), three fifths of it solid, with two doors:
+/// 32x32 cells, three fifths of it solid, with two doors:
 ///
 ///   `hollow` -- pickable, order 0, in the one clear room. This is where a
 ///               join with no choice lands.
@@ -459,10 +468,17 @@ inline std::string twoMapDataDir(const std::string& name) {
 /// dense map shows up here rather than in the game.
 inline std::string denseMapDataDir(const std::string& name) {
     const int side = 32;
+    const double cell = kTileSize;
     const std::string world =
         fixtureMap(side, side,
-                   fixtureDoor("hollow", "Hollow", 600, 600, 1200, 1200, true, 0.0) + "," +
-                       fixtureDoor("cellar", "Cellar", 3600, 4200, 300, 300, false, 1.0),
+                   fixtureDoor("hollow", "Hollow", cell * 2, cell * 2, cell * 4, cell * 4, true,
+                               0.0) +
+                       "," +
+                       // Cell (12, 14) exactly: denseWalls() makes it solid, and
+                       // a door over exactly one solid cell is the case the
+                       // fallback exists for.
+                       fixtureDoor("cellar", "Cellar", cell * 12, cell * 14, cell, cell, false,
+                                   1.0),
                    std::string(),
                    // A difficulty-0 BAND over the whole map, so the spawner has
                    // somewhere to put anything at all: ground no band covers

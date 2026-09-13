@@ -38,15 +38,15 @@ inline int sectionAt(Vec2 p) {
 /// Terrain is a coarse tile grid rather than polygons: collision is then a
 /// couple of array reads instead of a broadphase, and the whole map is a byte
 /// per tile.
-inline constexpr double kTileSize = 300.0;
-inline constexpr int kTilesPerAxis = static_cast<int>(kWorldSize / kTileSize);  // 200
+inline constexpr double kTileSize = 256.0;
+inline constexpr int kTilesPerAxis = static_cast<int>(kWorldSize / kTileSize);  // 234
 
 /// The widest a map may be, per axis.
 ///
 /// A cap, not a size: maps are authored at whatever dimensions suit them, and
 /// this only bounds what the engine will hold. It is what the DDA's step limit
 /// is sized from and what stops a corrupt header asking for a terabyte of
-/// grid. 512 tiles is 153600 world units on a side, eight times the shipped
+/// grid. 512 tiles is 131072 world units on a side, four times the shipped
 /// map; the grid behind it is a quarter of a megabyte, and it is run-length
 /// encoded before it ever goes on the wire.
 inline constexpr int kMaxTilesPerAxis = 512;
@@ -56,7 +56,7 @@ inline constexpr int kMaxTilesPerAxis = 512;
 /// COLLISION_BUFFER. It is NOT added to the collision shape: a body collides
 /// with a wall as a disc of exactly its own radius against the SHAPES the
 /// author drew on that cell's tile (shared/game/tiled_map.h) -- or, for a cell
-/// whose tile carries none, against its flat 300-unit rectangle.
+/// whose tile carries none, against its flat 256-unit rectangle.
 inline constexpr double kCollisionScanBuffer = 5.0;
 
 enum class Tile : std::uint8_t {

@@ -218,8 +218,8 @@ void collectLayers(const Json& list, std::vector<const Json*>& out) {
 /// How finely an ellipse is polygonised, as the greatest distance the ring may
 /// fall inside the true curve, in TILESET units.
 ///
-/// One tileset unit is a bit over one world unit here (300/256), so the error a
-/// player could feel is about a millimetre of a 300-unit cell. The ring is
+/// One tileset unit is exactly one world unit here (256/256), so the error a
+/// player could feel is one unit of a 256-unit cell. The ring is
 /// INSCRIBED, so a polygonised ellipse is very slightly smaller than the one
 /// the author drew, never larger.
 constexpr double kEllipseTolerance = 1.0;
@@ -273,10 +273,11 @@ void addRing(std::vector<Vec2> points, double scaleX, double scaleY,
 /// The tileset's size is the fallback, for a SPRITESHEET tileset whose tiles
 /// carry no image of their own; there it is the only size there is.
 ///
-/// Scaled per axis onto the map's cell, so a 256-square tile painted onto
-/// 300-unit cells stretches by 300/256 on both and a map with non-square cells
-/// would stretch differently on each. No number here is written down: they all
-/// come out of the files.
+/// Scaled per axis onto the map's cell, so a 256-square tile painted onto the
+/// shipped 256-unit cells comes through 1:1 on both, a tile drawn at another
+/// size is stretched onto the cell, and a map with non-square cells would
+/// stretch differently on each. No number here is written down: they all come
+/// out of the files.
 void readTileShapes(const Json& tile, const Json& tileset, const std::string& tileName,
                     const std::string& path, std::vector<TiledShape>& out) {
     const Json& group = tile["objectgroup"];

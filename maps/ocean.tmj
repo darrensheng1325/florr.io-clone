@@ -258,7 +258,7 @@
          "name":"player_spawns",
          "objects":[
                 {
-                 "height":1600,
+                 "height":1365.33333333333,
                  "id":1,
                  "name":"",
                  "properties":[
@@ -285,9 +285,9 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":1280,
-                 "x":15808,
-                 "y":15104
+                 "width":1092.26666666667,
+                 "x":13489.4933333333,
+                 "y":12888.7466666667
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -300,13 +300,13 @@
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.10.1",
- "tileheight":300,
+ "tileheight":256,
  "tilesets":[
         {
          "firstgid":1,
          "source":"tileset.tsj"
         }],
- "tilewidth":300,
+ "tilewidth":256,
  "type":"map",
  "version":"1.10",
  "width":108

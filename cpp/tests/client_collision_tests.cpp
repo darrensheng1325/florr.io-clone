@@ -16,7 +16,7 @@ using namespace flix;
 //
 // The wire carries one byte per cell, and a cell's collision is not one byte
 // any more: it is the shapes the author drew on the tile, which cover a
-// triangle, an L or a scatter of rectangles inside their 300-unit square. So
+// triangle, an L or a scatter of rectangles inside their own square cell. So
 // the client rebuilds the exact geometry from its own copy of the map and keeps
 // the wire's grid as the coarse view -- and the whole point of doing it that
 // way is that the two ends then agree exactly, not approximately.
@@ -73,13 +73,20 @@ double fromWall(Vec2 p) { return (p.x - p.y - kTileSize) / std::sqrt(2.0); }
 std::string stageSlopeWorld(const std::string& name) {
     const int wide = 16;
     const int small = 12;
+    // In CELLS, times the cell size: a door three cells across at cell (1, 9),
+    // and a pad in the middle of cell (3, 8). Spelling the pixels out instead
+    // put the cellar's door through its own border wall the moment the cell
+    // size moved.
+    const double cell = kTileSize;
     const std::string slope =
-        fixtureMap(wide, wide, fixtureDoor("slope", "Slope", 300, 2700, 900, 900, true, 0.0),
-                   fixturePad(1050, 2550, "cellar", "cellar_gate"), std::string(),
+        fixtureMap(wide, wide,
+                   fixtureDoor("slope", "Slope", cell, cell * 9, cell * 3, cell * 3, true, 0.0),
+                   fixturePad(cell * 3.5, cell * 8.5, "cellar", "cellar_gate"), std::string(),
                    borderOnly(wide, wide), {}, onMapDiagonal);
     const std::string cellar =
         fixtureMap(small, small,
-                   fixtureDoor("cellar_gate", "Cellar", 300, 2400, 600, 600, false, 0.0),
+                   fixtureDoor("cellar_gate", "Cellar", cell, cell * 8, cell * 2, cell * 2, false,
+                               0.0),
                    std::string(), std::string(), borderOnly(small, small), {}, onMapDiagonal);
     return stageDataDir(name, {{"slope", slope}, {"cellar", cellar}});
 }
@@ -182,9 +189,10 @@ TEST(a_client_collides_against_the_same_shapes_the_server_enforces) {
     const double radius = world.get<Body>(body).radius;
     CHECK(radius > 0.0);
     // Well clear of the wall, on the open side, and on the perpendicular
-    // through the MIDDLE of cell (9, 8)'s face -- (2850, 2550) -- so the body
-    // meets the wall in the middle of a cell rather than at a seam between two.
-    world.get<Transform>(body).position = {3300, 2100};
+    // through the MIDDLE of cell (9, 8)'s face, so the body meets the wall in
+    // the middle of a cell rather than at a seam between two.
+    const Vec2 faceMiddle{9.5 * kTileSize, 8.5 * kTileSize};
+    world.get<Transform>(body).position = {faceMiddle.x + 450.0, faceMiddle.y - 450.0};
 
     net::InputFrame input;
     input.moveAngle = kPi * 0.75;    // down and to the left: straight at the face
@@ -198,8 +206,8 @@ TEST(a_client_collides_against_the_same_shapes_the_server_enforces) {
     const Vec2 rest = world.get<Transform>(body).position;
     // It came to rest ON the face, a body radius off it -- which is INSIDE a
     // cell the coarse grid calls wall. A whole-cell resolver would have stopped
-    // it at that cell's edge instead: 140 units, half a body and a third of a
-    // tile, short of the wall the art draws.
+    // it at that cell's edge instead, most of a body short of the wall the art
+    // draws.
     //
     // A body radius and no more: the resolver ejects to touching (plus its own
     // hundredth of a unit of skin) and the movement step accepts that, so the

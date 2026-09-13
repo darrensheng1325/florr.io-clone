@@ -508,7 +508,7 @@
          "name":"player_spawns",
          "objects":[
                 {
-                 "height":2850,
+                 "height":2432,
                  "id":1,
                  "name":"",
                  "properties":[
@@ -535,9 +535,9 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":2083.33333333333,
-                 "x":29400,
-                 "y":1050
+                 "width":1777.77777777777,
+                 "x":25088,
+                 "y":896
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -551,7 +551,7 @@
          "name":"spawns",
          "objects":[
                 {
-                 "height":4950,
+                 "height":4224,
                  "id":2,
                  "name":"common zone",
                  "properties":[
@@ -568,12 +568,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":3400,
-                 "x":28750,
-                 "y":200
+                 "width":2901.33333333333,
+                 "x":24533.3333333333,
+                 "y":170.666666666667
                 }, 
                 {
-                 "height":9150,
+                 "height":7808,
                  "id":3,
                  "name":"ultra zone",
                  "properties":[
@@ -590,12 +590,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":8833.33333333333,
-                 "x":233.333333333333,
-                 "y":23033.3333333333
+                 "width":7537.77777777778,
+                 "x":199.111111111111,
+                 "y":19655.1111111111
                 }, 
                 {
-                 "height":3483.33333333334,
+                 "height":2972.44444444445,
                  "id":4,
                  "name":"javascript zone",
                  "properties":[
@@ -612,12 +612,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":8783.33333333333,
-                 "x":250,
-                 "y":19400
+                 "width":7495.11111111111,
+                 "x":213.333333333333,
+                 "y":16554.6666666667
                 }, 
                 {
-                 "height":5616.66666666667,
+                 "height":4792.88888888889,
                  "id":5,
                  "name":"mythic zone",
                  "properties":[
@@ -634,12 +634,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":8766.66666666667,
-                 "x":216.666666666667,
-                 "y":166.666666666667
+                 "width":7480.88888888889,
+                 "x":184.888888888889,
+                 "y":142.222222222223
                 }, 
                 {
-                 "height":3866.66666666667,
+                 "height":3299.55555555556,
                  "id":6,
                  "name":"rare zone",
                  "properties":[
@@ -656,12 +656,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":5466.66666666667,
-                 "x":23066.6666666667,
-                 "y":216.666666666667
+                 "width":4664.88888888889,
+                 "x":19683.5555555556,
+                 "y":184.888888888889
                 }, 
                 {
-                 "height":4766.66666666667,
+                 "height":4067.55555555556,
                  "id":7,
                  "name":"unusual zone",
                  "properties":[
@@ -678,12 +678,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":5600,
-                 "x":23050,
-                 "y":4200
+                 "width":4778.66666666667,
+                 "x":19669.3333333333,
+                 "y":3584
                 }, 
                 {
-                 "height":9550,
+                 "height":8149.33333333333,
                  "id":8,
                  "name":"legendary zone",
                  "properties":[
@@ -700,12 +700,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":4633.33333333333,
-                 "x":9083.33333333333,
-                 "y":166.666666666667
+                 "width":3953.77777777778,
+                 "x":7751.11111111111,
+                 "y":142.222222222223
                 }, 
                 {
-                 "height":3866.66666666667,
+                 "height":3299.55555555556,
                  "id":9,
                  "name":"dust zone",
                  "properties":[
@@ -722,12 +722,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":8666.66666666667,
-                 "x":250,
-                 "y":5900
+                 "width":7395.55555555556,
+                 "x":213.333333333333,
+                 "y":5034.66666666667
                 }, 
                 {
-                 "height":8383.33333333334,
+                 "height":7153.77777777778,
                  "id":11,
                  "name":"epic zone",
                  "properties":[
@@ -744,12 +744,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":5416.66666666666,
-                 "x":26800,
-                 "y":23850
+                 "width":4622.22222222222,
+                 "x":22869.3333333333,
+                 "y":20352
                 }, 
                 {
-                 "height":9416.66666666667,
+                 "height":8035.55555555556,
                  "id":12,
                  "name":"glitch flower zone",
                  "properties":[
@@ -766,12 +766,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":8783.33333333333,
-                 "x":250,
-                 "y":9833.33333333333
+                 "width":7495.11111111111,
+                 "x":213.333333333333,
+                 "y":8391.11111111111
                 }, 
                 {
-                 "height":9472,
+                 "height":8082.77333333333,
                  "id":13,
                  "name":"epic zone",
                  "properties":[
@@ -788,12 +788,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":8768,
-                 "x":14016,
-                 "y":192
+                 "width":7482.02666666667,
+                 "x":11960.32,
+                 "y":163.84
                 }, 
                 {
-                 "height":14144,
+                 "height":12069.5466666667,
                  "id":14,
                  "name":"glitch zone",
                  "properties":[
@@ -810,12 +810,12 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":9152,
-                 "x":23040,
-                 "y":9408
+                 "width":7809.70666666667,
+                 "x":19660.8,
+                 "y":8028.16
                 }, 
                 {
-                 "height":22208,
+                 "height":18950.8266666667,
                  "id":15,
                  "name":"mythic zone",
                  "properties":[
@@ -832,9 +832,9 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":13440,
-                 "x":9216,
-                 "y":9984
+                 "width":11468.8,
+                 "x":7864.32,
+                 "y":8519.68
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -847,13 +847,13 @@
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.10.1",
- "tileheight":300,
+ "tileheight":256,
  "tilesets":[
         {
          "firstgid":1,
          "source":"tileset.tsj"
         }],
- "tilewidth":300,
+ "tilewidth":256,
  "type":"map",
  "version":"1.10",
  "width":108

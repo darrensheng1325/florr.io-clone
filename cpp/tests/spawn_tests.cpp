@@ -1134,7 +1134,7 @@ TEST(a_door_that_is_not_pickable_is_joined_only_by_an_admin) {
 // in a wall.
 
 TEST(a_door_drawn_over_solid_ground_still_lands_a_body_on_open_ground) {
-    // `cellar` is one 300-unit cell and every point in it is wall. Fifty
+    // `cellar` is one cell and every point in it is wall. Fifty
     // rejection samples find nothing, which is the case the fallback exists
     // for -- and the fallback used to be the rectangle's own CENTRE, i.e. the
     // middle of that wall. The centre is now where the search STARTS: the

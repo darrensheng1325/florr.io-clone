@@ -86,11 +86,19 @@ struct Fixture {
     Vec2 positionOf(Entity e) { return world.get<Transform>(e).position; }
     Vec2 velocityOf(Entity e) { return world.get<Motion>(e).velocity; }
 
-    /// A full-height wall at tile column `tx`, i.e. x in [tx*300, tx*300+300).
+    /// A full-height wall at tile column `tx`, i.e. x in
+    /// [tx*kTileSize, (tx+1)*kTileSize).
     void wallColumn(int tx) {
         for (int ty = 0; ty < terrain.tileRows(); ++ty) terrain.setTile(tx, ty, Tile::Wall);
     }
 };
+
+/// The faces of the wall every test here paints, written from kTileSize rather
+/// than spelled out: the cell size lives in constants.h and nowhere else, so a
+/// change to it moves these tests with it instead of failing them.
+constexpr double kWallWest = 10.0 * kTileSize;
+constexpr double kWallEast = 11.0 * kTileSize;
+constexpr double kWallMid = (kWallWest + kWallEast) * 0.5;
 
 } // namespace
 
@@ -195,8 +203,8 @@ TEST(water_blocks_a_player_like_a_wall) {
 
     const Vec2 at = fx.positionOf(player);
     CHECK(!fx.terrain.blocked(at, Realm::Overworld));
-    CHECK(at.x <= 3000.0 - kPlayerBaseRadius + 1e-6);
-    CHECK(at.x >= 3000.0 - kPlayerBaseRadius - 20.1);
+    CHECK(at.x <= kWallWest - kPlayerBaseRadius + 1e-6);
+    CHECK(at.x >= kWallWest - kPlayerBaseRadius - 20.1);
     // TypeScript resolves position but keeps the attempted velocity while the
     // input remains held, so the following tick continues pressing the face.
     CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 1.0);
@@ -308,7 +316,7 @@ TEST(a_nonsense_impulse_is_dropped_rather_than_propagated) {
 
 TEST(a_player_driven_at_a_wall_stops_against_it) {
     Fixture fx;
-    fx.wallColumn(10);                       // x in [3000, 3300)
+    fx.wallColumn(10);                       // x in [kWallWest, kWallEast)
     const Entity player = fx.spawnPlayer({2000, 5000});
     fx.drive(player, 0.0, 1.0);
     fx.step(200);
@@ -317,20 +325,20 @@ TEST(a_player_driven_at_a_wall_stops_against_it) {
     CHECK(!fx.terrain.blocked(at, Realm::Overworld));
     // Resting against the tile's flat face: the edge a wall is drawn with
     // lies inside the tile, so the rectangle is where the body stops.
-    CHECK(at.x <= 3000.0 - kPlayerBaseRadius + 1e-6);
-    CHECK(at.x >= 3000.0 - kPlayerBaseRadius - 0.1);
+    CHECK(at.x <= kWallWest - kPlayerBaseRadius + 1e-6);
+    CHECK(at.x >= kWallWest - kPlayerBaseRadius - 0.1);
     CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 1.0);
 }
 
 TEST(a_wall_removes_only_the_velocity_that_points_into_it) {
     Fixture fx;
     fx.wallColumn(10);
-    const Entity player = fx.spawnPlayer({2900, 5000});
+    const Entity player = fx.spawnPlayer({kWallWest - 100.0, 5000});
     fx.drive(player, kPi * 0.25, 1.0);       // hard into the wall, and +y
     fx.step(60);
 
     CHECK(!fx.terrain.blocked(fx.positionOf(player), Realm::Overworld));
-    CHECK(fx.positionOf(player).x <= 3000.0 - kPlayerBaseRadius + 1e-6);
+    CHECK(fx.positionOf(player).x <= kWallWest - kPlayerBaseRadius + 1e-6);
     // Sliding: the tangential half of the input survives the contact.
     CHECK(fx.positionOf(player).y > 5100.0);
     CHECK(fx.velocityOf(player).y > kPlayerMaxSpeed * 0.5);
@@ -339,7 +347,7 @@ TEST(a_wall_removes_only_the_velocity_that_points_into_it) {
 TEST(a_body_spawned_inside_a_wall_is_ejected_without_gaining_speed) {
     Fixture fx;
     fx.wallColumn(10);
-    const Entity mob = fx.spawnMob({3150, 5000});   // dead centre of the wall
+    const Entity mob = fx.spawnMob({kWallMid, 5000});   // dead centre of the wall
     fx.step(1);
 
     const Vec2 at = fx.positionOf(mob);
@@ -361,10 +369,10 @@ TEST(an_absurd_velocity_cannot_tunnel_through_a_wall) {
         fx.step(1);
         const Vec2 at = fx.positionOf(mob);
         CHECK(!fx.terrain.blocked(at, Realm::Overworld));
-        CHECK(at.x <= 3000.0 - 20.0 + 1e-6);
+        CHECK(at.x <= kWallWest - 20.0 + 1e-6);
     }
     // It did travel -- the cap slows it, it does not freeze it.
-    CHECK(fx.positionOf(mob).x > 2500.0);
+    CHECK(fx.positionOf(mob).x > 2000.0 + (kWallWest - 2000.0) * 0.5);
 }
 
 TEST(one_tick_of_travel_is_bounded_by_the_substep_budget) {
@@ -396,7 +404,7 @@ TEST(a_zero_or_nan_radius_terminates_and_stays_out_of_walls) {
 
     CHECK(std::isfinite(fx.positionOf(pointBody).x));
     CHECK(!fx.terrain.blocked(fx.positionOf(pointBody), Realm::Overworld));
-    CHECK(fx.positionOf(pointBody).x < 3000.0);
+    CHECK(fx.positionOf(pointBody).x < kWallWest);
     // A NaN velocity is dropped, so the body never left its start.
     CHECK(std::isfinite(fx.positionOf(nanBody).x));
     CHECK_NEAR(fx.positionOf(nanBody).x, 2000.0, 1e-9);
@@ -473,7 +481,7 @@ TEST(water_blocks_a_mob_like_a_wall) {
 
     const Vec2 at = fx.positionOf(mob);
     CHECK(!fx.terrain.blocked(at, Realm::Overworld));
-    CHECK(at.x <= 3000.0 - 20.0 + 1e-6);
+    CHECK(at.x <= kWallWest - 20.0 + 1e-6);
 }
 
 TEST(movement_does_not_apply_the_ai_owned_mob_slow_twice) {
@@ -594,12 +602,12 @@ TEST(the_lifetime_backstop_never_cuts_an_ordinary_flight_short) {
 TEST(a_projectile_that_hits_terrain_is_spent_where_it_hit) {
     Fixture fx;
     fx.wallColumn(10);
-    const Entity shot = fx.spawnProjectile({2900, 5000}, {800, 0}, 100000.0);
+    const Entity shot = fx.spawnProjectile({kWallWest - 100.0, 5000}, {800, 0}, 100000.0);
     fx.step(40);
 
     CHECK_NEAR(fx.world.get<Projectile>(shot).remainingDistance, 0.0, 1e-12);
     CHECK(fx.world.has<Dead>(shot));
-    CHECK(fx.positionOf(shot).x < 3000.0);
+    CHECK(fx.positionOf(shot).x < kWallWest);
     CHECK(!fx.terrain.blocked(fx.positionOf(shot), Realm::Overworld));
 }
 
@@ -740,7 +748,7 @@ TEST(a_zero_dt_tick_changes_nothing_but_still_resolves_geometry) {
     CHECK_NEAR(fx.positionOf(player).x, 5000.0, 1e-12);
 
     // ...but a body sitting in geometry is still pushed out of it.
-    const Entity stuck = fx.spawnMob({3150, 5000});
+    const Entity stuck = fx.spawnMob({kWallMid, 5000});
     fx.step(1, 0.0);
     CHECK(!fx.terrain.blocked(fx.positionOf(stuck), Realm::Overworld));
 }
@@ -749,14 +757,14 @@ TEST(step_collide_is_usable_without_a_world) {
     Terrain terrain;
     for (int ty = 0; ty < terrain.tileRows(); ++ty) terrain.setTile(10, ty, Tile::Wall);
 
-    Vec2 position{2900, 5000};
+    Vec2 position{kWallWest - 100.0, 5000};
     const StepOutcome open = stepCollide(terrain, Realm::Overworld, position, {100, 0}, 20.0, 0.04);
     CHECK(!open.blocked);
     CHECK_NEAR(open.displacement.x, 4.0, 1e-9);
 
     const StepOutcome hit = stepCollide(terrain, Realm::Overworld, position, {5000, 0}, 20.0, 0.04);
     CHECK(hit.blocked);
-    CHECK(position.x <= 3000.0 - 20.0 + 1e-6);
+    CHECK(position.x <= kWallWest - 20.0 + 1e-6);
     CHECK(hit.displacement.x > 0.0);
 
     // Sanitisers are total.
