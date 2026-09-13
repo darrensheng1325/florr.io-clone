@@ -403,27 +403,6 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
 // Chrome
 // ---------------------------------------------------------------------------
 
-/// The card: a border-coloured rounded rect with a SHARP-cornered body inset
-/// by the border width. The shared panelCard() rounds the body by radius - 2;
-/// the reference passes a literal 0, and at a 3px outer radius the difference
-/// is visible on all four corners.
-void galleryCard(Canvas& canvas, Rect panel) {
-    setFill(canvas, kGallerySkin.border);
-    canvas.beginPath();
-    canvas.roundRect(static_cast<float>(panel.x), static_cast<float>(panel.y),
-                     static_cast<float>(panel.w), static_cast<float>(panel.h),
-                     static_cast<float>(kMenuRadius));
-    canvas.fill();
-
-    setFill(canvas, kGallerySkin.fill);
-    canvas.beginPath();
-    canvas.roundRect(static_cast<float>(panel.x + kMenuBorder),
-                     static_cast<float>(panel.y + kMenuBorder),
-                     static_cast<float>(panel.w - kMenuBorder * 2),
-                     static_cast<float>(panel.h - kMenuBorder * 2), 0.0f);
-    canvas.fill();
-}
-
 /// The gallery's own scrollbar: a bare thumb in the card's own frame colour,
 /// with NO groove behind it. The reference draws only the thumb, so an
 /// unscrolled panel shows one short bar in the top corner rather than a track
@@ -520,7 +499,10 @@ bool GalleryPanel::render(MenuContext& ctx) {
     // wheel and press only exist while the pointer is over the card.
     const bool overPanel = panel.contains(mouse);
 
-    galleryCard(canvas, panel);
+    // The overlay frame, not the tall list panels' 7px one: the bestiary is a
+    // corner panel, and it sat in that row wearing a frame almost twice as
+    // thick as settings' and changelog's either side of it.
+    overlayCard(canvas, panel, kGallerySkin);
 
     TextStyle title = galleryStyle(24.0, kPaper, 4.0);
     title.align = Align::Centre;

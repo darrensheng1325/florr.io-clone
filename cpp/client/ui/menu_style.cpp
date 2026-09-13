@@ -82,10 +82,18 @@ void strokeRound(Canvas& canvas, Rect r, double radius, std::uint32_t rgb, doubl
 // The card
 // ---------------------------------------------------------------------------
 
-void overlayCard(Canvas& canvas, Rect r, std::uint32_t fill, std::uint32_t border) {
+void cardFrame(Canvas& canvas, Rect r, std::uint32_t fill, std::uint32_t border,
+               double borderWidth, double radius) {
     if (r.w <= 0 || r.h <= 0) return;
-    fillRound(canvas, r, kOverlayRadius, border);
-    fillRound(canvas, overlayBody(r), kOverlayInnerRadius, fill);
+    fillRound(canvas, r, radius, border);
+    const double inset = std::min(borderWidth, std::min(r.w, r.h) * 0.5);
+    setFill(canvas, fill);
+    canvas.fillRect(static_cast<float>(r.x + inset), static_cast<float>(r.y + inset),
+                    static_cast<float>(r.w - inset * 2), static_cast<float>(r.h - inset * 2));
+}
+
+void overlayCard(Canvas& canvas, Rect r, std::uint32_t fill, std::uint32_t border) {
+    cardFrame(canvas, r, fill, border, kOverlayBorder, kOverlayRadius);
 }
 
 void overlayCard(Canvas& canvas, Rect r, const PanelSkin& skin) {
@@ -109,7 +117,7 @@ void inlaid(Canvas& canvas, Rect r, std::uint32_t fill, std::uint32_t border, do
 }
 
 void panelCard(Canvas& canvas, Rect r, const PanelSkin& skin, double borderWidth, double radius) {
-    inlaid(canvas, r, skin.fill, skin.border, borderWidth, radius);
+    cardFrame(canvas, r, skin.fill, skin.border, borderWidth, radius);
 }
 
 void panelTitle(Canvas& canvas, Rect panel, const std::string& title,

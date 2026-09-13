@@ -881,7 +881,8 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
 
         // Two filled rects rather than a stroke: the face keeps the frame's own
         // rounding one step tighter, where a centred stroke would blow the
-        // outer radius out by half its width.
+        // outer radius out by half its width. A BUTTON, so its face is rounded
+        // -- the square inner body is the panels' shape, not the controls'.
         setFill(canvas, slot.border);
         canvas.beginPath();
         canvas.roundRect(static_cast<float>(r.x), static_cast<float>(r.y),

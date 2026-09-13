@@ -42,34 +42,38 @@ void strokeRound(Canvas&, Rect, double radius, std::uint32_t rgb, double width);
 // The card
 // ---------------------------------------------------------------------------
 
+/// A CARD: a rounded rect in the border colour with a SQUARE body dropped into
+/// it. The reference draws every panel this way -- one `round_rect` fill, then
+/// a plain `ctx.rect()` for the body (Ui::Element::on_render) -- and that
+/// square shoulder inside a soft outer corner is what makes the frame read as
+/// a frame rather than as a second, smaller card.
+///
+/// Panels only. A button's face stays rounded (`inlaid` below): the reference
+/// gives its controls one filled round_rect and a stroke, so nothing about
+/// them has a square shoulder to match.
+void cardFrame(Canvas&, Rect, std::uint32_t fill, std::uint32_t border, double borderWidth,
+               double radius);
+
 /// The overlay panels' frame. Thick enough to read as a border at a distance,
-/// and a corner just round enough to soften it -- the guild panel's 6/4, which
-/// the settings panel had spelled out as 5 and a sharp body.
+/// and a corner just round enough to soften it.
 inline constexpr double kOverlayBorder = 4.0;
 inline constexpr double kOverlayRadius = 6.0;
-inline constexpr double kOverlayInnerRadius = 4.0;
 
 /// The frame every top-row menu wears: settings, changelog, notifications,
 /// leaderboard, guild, skins and debug. Use it for the panel itself; `inlaid`
-/// below is the same treatment at an arbitrary size, for the pieces on it.
+/// below is the button treatment, for the controls on it.
 void overlayCard(Canvas&, Rect, std::uint32_t fill, std::uint32_t border);
 void overlayCard(Canvas&, Rect, const PanelSkin&);
 
-/// The first content edge inside an overlay card, on either axis.
-inline Rect overlayBody(Rect panel) {
-    return {panel.x + kOverlayBorder, panel.y + kOverlayBorder, panel.w - kOverlayBorder * 2,
-            panel.h - kOverlayBorder * 2};
-}
-
-/// The two-fill treatment at an arbitrary size, for slots and buttons. The
-/// inner corner is derived as `radius - 2`, which the tall list panels' cells
-/// are drawn to; `overlayCard` does not use it because a panel's inner corner
-/// is its own value, not a constant off the outer one.
+/// The two-fill treatment at an arbitrary size, for slots and buttons. Unlike
+/// `cardFrame` the inner corner is ROUNDED, derived as `radius - 2`: this is
+/// the controls' shape, and a square-shouldered chip at 20px tall reads as a
+/// mis-drawn panel rather than as a button.
 void inlaid(Canvas&, Rect, std::uint32_t fill, std::uint32_t border, double borderWidth,
             double radius, double alpha = 1.0);
 
-/// The tall list panels' card. Same two fills, but the border width and the
-/// radius are the panel's to choose.
+/// The tall list panels' card: `cardFrame` with the panel's own border width
+/// and radius.
 void panelCard(Canvas&, Rect, const PanelSkin&, double borderWidth = kMenuBorder,
                double radius = kMenuRadius);
 

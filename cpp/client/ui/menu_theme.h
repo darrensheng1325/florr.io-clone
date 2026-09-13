@@ -44,11 +44,11 @@ inline constexpr PanelSkin kGallerySkin{0xE6D64Cu, 0xA89D36u, 0xA89D36u};
 /// in it, which is what makes the fan read as part of the card.
 inline constexpr PanelSkin kTalentsSkin{0xCC625Eu, 0xA44F4Cu, 0xA44F4Cu};
 /// The shop is the one panel drawn against a reference screenshot rather than
-/// against the browser build's CSS, so its greens are that shot's -- and it is
-/// also the one card with NO frame: the green ring around it in that shot is
-/// the page behind the card, not a border. Border and accent are the body
-/// colour deliberately, so a shared helper that draws either paints nothing.
-inline constexpr PanelSkin kShopSkin{0x65c359u, 0x65c359u, 0x7DC065u};
+/// against the browser build's CSS, so its greens are that shot's. Its frame
+/// is NOT in that shot -- the shot's card runs to its own edge -- but a shop
+/// with no frame is the one menu in the game that is not a card, so it wears
+/// the same border every other panel does: its own green at 0.8 value.
+inline constexpr PanelSkin kShopSkin{0x65c359u, 0x519C47u, 0x7DC065u};
 /// The skin studio is the one panel whose border is LIGHTER than its body --
 /// it borrows the strip button's own purple as the frame.
 inline constexpr PanelSkin kSkinsSkin{0x8737B6u, 0x9A3FD0u, 0x9A3FD0u};

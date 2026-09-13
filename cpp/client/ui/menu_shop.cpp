@@ -44,10 +44,12 @@ namespace {
 
 // --- the card ---------------------------------------------------------------
 
-/// The card has no frame. The green ring around it in the reference shot is
-/// the page BEHIND the card, not a border, so the body runs to the edge on a
-/// corner just round enough to soften it.
-constexpr double kCardRadius = 3.0;
+/// The card wears the overlay frame every other corner panel does -- a rounded
+/// rect in the skin's border green with a square body inset into it. The
+/// reference shot has no frame here, but its card is the only one in the game
+/// without one, and a frameless green slab beside the framed settings and
+/// bestiary cards reads as a panel that failed to draw.
+constexpr double kCardRadius = kOverlayRadius;
 
 /// The inset both light plates keep from that edge, top and bottom alike.
 constexpr double kPlateInset = 8.0;
@@ -643,9 +645,9 @@ bool ShopPanel::render(MenuContext& ctx) {
                           : profile.stars;
 
     // --- card ---------------------------------------------------------------
-    // One flat fill: no frame, and no shadow bleeding into the game behind it.
-    // The reference card sits on its page with nothing between the two.
-    fillRounded(canvas, panel, kCardRadius, kShopSkin.fill);
+    // No shadow: the reference card sits on its page with nothing between it
+    // and the game behind it. The frame is the shared one.
+    overlayCard(canvas, panel, kShopSkin);
 
     // --- header -------------------------------------------------------------
     const Rect header{panel.x + kPlateInset, panel.y + kPlateInset, panel.w - kPlateInset * 2,

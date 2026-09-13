@@ -242,37 +242,6 @@ std::string effectLine(SkillId skill, int tier) {
     return buffer;
 }
 
-/// The card's `box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5)`.
-///
-/// A CSS blur radius of 20 is a Gaussian of sigma 10, so the shadow's alpha at
-/// distance d outside its edge is `0.5 * 0.5 * erfc(d / (sigma * sqrt2))`.
-/// Painted as disjoint rings at exactly that alpha rather than as stacked
-/// fills: rings do not overlap, so each one's alpha is the final answer, and
-/// only the fringe is ever rasterised instead of the whole card fifteen times.
-void dropShadow(Canvas& canvas, Rect card, double radius) {
-    constexpr double kBand = 2.0;
-    constexpr int kOuterBands = 12;
-    /// Rings inside the shadow's edge, so the strip the +4px offset exposes
-    /// below the card is not painted as if it were outside the shadow.
-    constexpr int kInnerBands = 3;
-    const double falloff = 10.0 * std::sqrt(2.0);
-
-    canvas.save();
-    canvas.setLineCap("butt");
-    canvas.setLineJoin("round");
-    canvas.setLineWidth(static_cast<float>(kBand));
-    for (int i = -kInnerBands; i < kOuterBands; ++i) {
-        const double d = (i + 0.5) * kBand;
-        setStroke(canvas, kInk, 0.25 * std::erfc(d / falloff));
-        canvas.beginPath();
-        canvas.roundRect(static_cast<float>(card.x - d), static_cast<float>(card.y + 4.0 - d),
-                         static_cast<float>(card.w + d * 2.0), static_cast<float>(card.h + d * 2.0),
-                         static_cast<float>(radius + d));
-        canvas.stroke();
-    }
-    canvas.restore();
-}
-
 /// One blade of the absorption rotor: a comma that starts thin at the hub and
 /// widens to a rounded tip, swept a fixed arc around the centre.
 ///
@@ -625,7 +594,6 @@ bool TalentsPanel::render(MenuContext& ctx) {
     canvas.save();
     canvas.translate(0.0f, static_cast<float>(slide));
 
-    dropShadow(canvas, panel, kCardRadius);
     panelCard(canvas, panel, kTalentsSkin, kMenuBorder, kCardRadius);
 
     // Everything else is drawn inside the card, tooltip included: a branch
